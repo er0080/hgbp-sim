@@ -36,7 +36,7 @@ LOOPS = {
     "dpv": dict(label="Discharge pressure", pv="P_d", unit="bar", valve=0, scale=1e5, valve_label="1 discharge pressure valve"),
     "spv": dict(label="Suction pressure", pv="P_s", unit="bar", valve=1, scale=1e5, valve_label="2 suction pressure (HGBP) valve"),
     "stv": dict(label="Suction superheat", pv="SH", unit="K", valve=2, scale=1.0, valve_label="3 suction temperature (liquid) valve"),
-    "water": dict(label="Intermediate pressure", pv="P_i", unit="bar", valve=3, scale=1e5, valve_label="4 cooling water valve"),
+    "water": dict(label="Intermediate (liquid) pressure", pv="P_i", unit="bar", valve=3, scale=1e5, valve_label="4 cooling water valve"),
 }
 HISTORY_CHANNELS = (
     "t", "P_s", "P_d", "P_i", "Tsat_s", "Tsat_d", "Tsat_i", "T_s", "T_d", "T_co", "T_wi", "T_wo",
