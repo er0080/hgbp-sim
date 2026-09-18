@@ -8,7 +8,7 @@ Quick start::
     obs, r, term, trunc, info = env.step(env.action_space.sample())
 """
 from .control import PID, BaselineController  # noqa: F401
-from .env import OBS_NAMES, EnvConfig, HGBPEnv, HGBPVecEnv  # noqa: F401
+from .env import OBS_GROUPS, OBS_NAMES, STATE_NAMES, EnvConfig, HGBPEnv, HGBPVecEnv  # noqa: F401
 from .params import PlantParams, nominal_charge  # noqa: F401
 from .plant import HGBPPlant  # noqa: F401
 from .properties import RefrigerantTables, get_tables  # noqa: F401

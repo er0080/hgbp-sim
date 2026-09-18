@@ -12,8 +12,13 @@ controllers that automate compressor performance testing.
 * fully **vectorized**: thousands of stands integrate in lock-step with numpy
   (~6 000 control steps / s at 1024 parallel environments on a laptop)
 * `gymnasium`-compatible single environment plus a batched environment for
-  high-throughput training
+  high-throughput training, with refrigerant-agnostic observations (saturation
+  temperatures, normalized flow and power, compressor and refrigerant context), an
+  interlocked compressor start/stop action, dwell-based test-point completion and
+  training labels for a charge estimator
 * baseline four-loop PID controller (expert for imitation learning, reference for RL)
+* a controller specification for the neural-network development
+  (`docs/NN_CONTROLLER_SPEC.md`)
 * steady-state solver for warm starts, feasibility checks and performance maps
 * domain randomization of plant parameters, charge, sensor noise/lag, actuator dynamics
 
@@ -75,8 +80,8 @@ High-throughput batched environment (recommended for training):
 ```python
 from hgbp_sim import HGBPVecEnv, EnvConfig
 env = HGBPVecEnv(1024, EnvConfig(), seed=0)
-obs = env.reset()                            # (1024, 33)
-obs, r, term, trunc, info = env.step(actions)   # actions (1024, 4) in [-1, 1]
+obs = env.reset()                            # (1024, 51)
+obs, r, term, trunc, info = env.step(actions)   # actions (1024, 4) in [-1, 1] (5 with start_stop_action)
 ```
 
 Direct plant access (custom experiments, MPC, system identification):
@@ -209,36 +214,50 @@ Fixed-step RK4 (default `dt = 0.05 s`; matches a 5 ms reference to 1e-4 bar). `h
 
 ## Environment (`env.py`)
 
-**Observation** (33 values, normalized, names in `hgbp_sim.OBS_NAMES`): measured
-suction / discharge / intermediate pressure, suction, discharge and condenser-outlet
-temperature, superheat, subcooling, mass flow, power, water inlet/outlet temperature,
-ambient, speed, the four valve positions, setpoints (P_suc, P_dis, SH, P_int, speed),
-tracking errors, clipped integrated errors, running flag and time on the current test
-point.
+**Observation** (51 values, scaled to O(1), names in `hgbp_sim.OBS_NAMES`, groups in
+`OBS_GROUPS`): measurements in refrigerant-agnostic form (pressures as saturation
+temperatures, superheat, subcooling, mass flow normalized by swept volume x speed x
+suction vapor density, power normalized by swept volume x speed x suction pressure,
+temperatures, speed, valve positions), setpoints, tracking errors and clipped integrated
+errors in kelvin, context (swept volume, nominal speed, eight physical refrigerant
+descriptors) and the status of the start/stop interlock. One environment instance is one
+refrigerant; run one instance per fluid to train across refrigerants.
 
-**Action**: 4 values in `[-1, 1]` for valves 1..4. `action_mode="incremental"` (default)
-moves each valve command by `a * max_rate`; `"absolute"` maps to the command directly.
+**Action**: 4 values in `[-1, 1]` for valves 1..4, plus an optional 5th run-request
+action (`start_stop_action=True`). `action_mode="incremental"` (default) moves each
+valve command by `a * max_rate`; `"absolute"` maps to the command directly. An interlock
+state machine (OFF / STARTING / RUNNING / STOPPING with permissives and anti-short-cycle
+timers) has authority over the compressor; without the run action the compressor is
+started automatically and stopped after the last point.
 
 **Episodes**: 1-3 test points sampled from `Envelope` (evaporating -30..12 degC,
 condensing 30..65 degC, superheat 3..25 K, intermediate temperature between the cooling
 water and the condensing temperature, 50-140 % speed, feasibility filters including an
-estimated discharge temperature), each held 5-15 min. Start modes: `warm` (equilibrium at
-the first point or at a random other point, via the steady-state solver), `cold`
-(equalized stand at ambient with liquid in the accumulator, compressor started after a
-random delay), or `random`. Per episode the physical parameters, ambient and water
-temperatures, the charge (`charge_range`, plus a share `p_charge_extreme` of episodes in
-`charge_extreme_range`) and the cold-start liquid distribution are randomized.
+estimated discharge temperature and an equilibrium check at nominal charge). A point is
+completed once the three test variables have
+stayed inside the tolerance band (0.3 K, 0.2 K, 0.5 K) for `dwell_required` seconds, or
+when its maximum hold time elapses; after the last point the compressor must be stopped
+and the episode terminates successfully. Start modes: `warm` (equilibrium at the first
+point or at a random other point, via the steady-state solver), `cold` (equalized stand
+at ambient with liquid in the accumulator), or `random`. Per episode the physical
+parameters, ambient and water temperatures, the charge (`charge_range`, plus a share
+`p_charge_extreme` of episodes in `charge_extreme_range`) and the cold-start liquid
+distribution are randomized.
 
-**Reward** (per step, weights in `EnvConfig`): minus the normalized tracking errors
-(scales 0.1 bar, 0.2 bar, 1 K, 0.3 bar; the intermediate pressure with half weight), a
-bonus when suction pressure, discharge pressure and superheat are all inside the
-tolerance band (0.02 bar, 0.05 bar, 0.5 K, in the spirit of test-standard stability
-criteria), an actuator-movement penalty, penalties for liquid at the compressor inlet and
-for approaching the discharge temperature limit, and a large penalty plus termination on
-a safety trip.
+**Reward** (per step, weights in `EnvConfig`): minus the normalized tracking errors in
+kelvin (the intermediate pressure with half weight), a bonus inside the tolerance band, a
+bonus when a point completes by dwell, an actuator-movement penalty, penalties for liquid
+at the compressor inlet, for approaching the discharge temperature limit, for idling when
+a start is possible, for blocked start requests and for running during shutdown, a
+shutdown bonus, and a large penalty plus termination on a safety trip.
 
-`env.expert_action()` returns the baseline PID action in the env's action space, for
-behaviour cloning, DAgger or reward shaping.
+`info` carries noise-free process values, the true charge factor and a `steady` flag
+(labels for a charge estimator), privileged states for an asymmetric critic, and every
+reward component. `env.expert_action()` returns the baseline PID action (and run
+request) in the env's action space, for behaviour cloning, DAgger or reward shaping.
+
+The controller architecture, training plan, safety predicates and deployment path built
+on this interface are specified in `docs/NN_CONTROLLER_SPEC.md`.
 
 ## Baseline controller
 
@@ -296,8 +315,9 @@ hgbp_sim/
   steady_state.py  batched Levenberg-Marquardt equilibrium solver (charge- or fill-constrained)
   control.py       PID and 4-loop BaselineController
   scenarios.py     operating envelope, named points, schedules
-  env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium)
+  env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium), interlock state machine
   data/            prebuilt property tables
+docs/              NN_CONTROLLER_SPEC.md: controller architecture, training and deployment spec
 examples/          closed-loop, open-loop, dataset, behaviour cloning, benchmark
 tests/             property accuracy, conservation, charge effects, steady state, controllers, env API
 ```

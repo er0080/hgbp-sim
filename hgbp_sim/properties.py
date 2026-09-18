@@ -460,6 +460,28 @@ class RefrigerantTables:
     def h_sat_liquid(self, P):
         return self.sat(P)["h_l"]
 
+    # ------------------------------------------------------------ descriptors
+    DESCRIPTOR_NAMES = ("T_crit", "P_crit", "M_molar", "P_sat_ref", "h_fg_ref",
+                        "rho_v_ref", "rho_l_ref", "dPsat_dT_ref")
+    DESCRIPTOR_SCALE = np.array([400.0, 5e6, 0.1, 5e5, 2e5, 20.0, 1200.0, 1e4])
+
+    def descriptors(self, T_ref: float = 273.15) -> dict:
+        """Physical descriptors of the refrigerant used as controller context
+        (critical point, molar mass, saturation properties at ``T_ref``)."""
+        T_ref = float(np.clip(T_ref, self.T_sat_min + 5.0, self.T_sat_max - 5.0))
+        P = self.P_sat(np.array([T_ref]))
+        s = self.sat(P)
+        dPdT = 1.0 / float(s["dT_l_dP"][0])
+        return dict(T_crit=self.T_crit, P_crit=self.P_crit, M_molar=self.M_molar,
+                    P_sat_ref=float(P[0]), h_fg_ref=float(s["h_v"][0] - s["h_l"][0]),
+                    rho_v_ref=float(s["rho_v"][0]), rho_l_ref=float(s["rho_l"][0]),
+                    dPsat_dT_ref=dPdT, T_ref=T_ref)
+
+    def descriptor_vector(self, T_ref: float = 273.15) -> np.ndarray:
+        """Normalized descriptor vector (order ``DESCRIPTOR_NAMES``)."""
+        d = self.descriptors(T_ref)
+        return np.array([d[k] for k in self.DESCRIPTOR_NAMES]) / self.DESCRIPTOR_SCALE
+
     def __repr__(self) -> str:  # pragma: no cover
         return (f"RefrigerantTables({self.fluid!r}, P=[{self.p_min/1e5:.2f}, "
                 f"{self.p_max/1e5:.1f}] bar, T=[{self.t_min:.0f}, {self.t_max:.0f}] K, "

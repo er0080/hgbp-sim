@@ -121,7 +121,7 @@ class PlantParams:
     # ------------------------------------------------------------- limits
     P_d_max: float = 26e5       # high discharge pressure trip [Pa]
     P_s_min: float = 0.3e5      # low suction pressure trip [Pa]
-    P_s_max: float = 9e5        # high suction pressure trip [Pa]
+    P_s_max: float = 12e5       # high suction pressure trip [Pa]
     T_d_max: float = 135.0 + 273.15  # high discharge temperature trip [K]
 
     # ------------------------------------------------- baseline control aid
