@@ -30,7 +30,7 @@ def test_interlock_sequence():
 
 
 def test_live_stand_operation():
-    st = LiveStand(seed=1)
+    st = LiveStand(seed=1, dt_ctrl=1.0)
     s = st.snapshot()
     assert s["compressor"]["state"] == "OFF" and s["compressor"]["permissive_ok"]
     st.set_compressor(run=True, speed=1450.0)
@@ -74,7 +74,7 @@ def test_live_stand_operation():
 
 
 def test_live_warm_start_applies_pending_fluid():
-    st = LiveStand(seed=2)
+    st = LiveStand(seed=2, dt_ctrl=1.0)
     st.set_params({"fluid": "R404A"})
     assert st.warm_start("MT_standard")
     s = st.snapshot()

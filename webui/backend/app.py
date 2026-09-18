@@ -187,9 +187,9 @@ def post_charge(cmd: ChargeCmd):
 
 
 @app.get("/api/history")
-def get_history(since: float = -1.0, stride: int = 1):
+def get_history(since: float = -1.0, stride: int = 1, max_points: int = 15000):
     with runner.lock:
-        return stand.history_since(since, max(1, stride))
+        return stand.history_since(since, max(1, stride), max_points=max(100, max_points))
 
 
 @app.get("/api/export.csv")
@@ -208,14 +208,19 @@ def export_csv():
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
+    """One message per control step when the client keeps up; otherwise the
+    message carries every history row produced since the last message so the
+    client's trend buffer stays complete at high speed factors."""
     await websocket.accept()
-    last = -1
+    last_step, last_t = -1, -1.0
     try:
         while True:
-            snap, row = runner.snapshot, runner.row
-            if snap["step"] != last:
-                last = snap["step"]
-                await websocket.send_json({"type": "step", "data": snap, "row": row})
+            snap = runner.snapshot
+            if snap["step"] != last_step:
+                with runner.lock:
+                    rows = stand.history_since(last_t) if last_t >= 0 else stand.history_since(snap["t"] - 1e-9)
+                last_step, last_t = snap["step"], snap["t"]
+                await websocket.send_json({"type": "step", "data": snap, "rows": rows})
             else:
                 await asyncio.sleep(0.02)
     except WebSocketDisconnect:

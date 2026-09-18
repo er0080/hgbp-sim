@@ -4,7 +4,7 @@ import PidFaceplate from "./PidFaceplate";
 import CompressorPanel from "./CompressorPanel";
 import KpiTiles from "./KpiTiles";
 
-const ORDER = ["dpv", "spv", "stv", "water"];
+const ORDER = ["spv", "dpv", "stv", "water"];
 
 export default function OperatorPanel({ snap }: { snap: Snapshot }) {
   return (

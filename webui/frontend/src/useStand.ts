@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { History, Snapshot } from "./types";
 
-const MAX_POINTS = 4 * 3600;
+const MAX_POINTS = 60000;
 
 export function useStand() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -16,7 +16,7 @@ export function useStand() {
     let timer: number | undefined;
     const connect = async () => {
       try {
-        const h = await api<History>("/api/history");
+        const h = await api<History>("/api/history?max_points=15000");
         history.current = h;
         setHistVersion((v) => v + 1);
       } catch { /* backend not ready yet */ }
@@ -27,18 +27,18 @@ export function useStand() {
         const msg = JSON.parse(ev.data);
         if (msg.type !== "step") return;
         setSnap(msg.data as Snapshot);
-        const row = msg.row as Record<string, number> | null;
-        if (row) {
+        const rows = msg.rows as Record<string, number[]> | undefined;
+        if (rows && rows.t && rows.t.length) {
           const h = history.current;
           const tArr = h.t;
-          if (tArr.length && row.t < tArr[tArr.length - 1]) {
-            // history was reset on the backend: reload
-            for (const k of Object.keys(h)) h[k] = [];
+          if (tArr.length && rows.t[0] < tArr[tArr.length - 1]) {
+            for (const k of Object.keys(h)) h[k] = [];       // backend history restarted
           }
-          for (const k of Object.keys(row)) {
+          for (const k of Object.keys(rows)) {
             if (!h[k]) h[k] = [];
-            h[k].push(row[k]);
-            if (h[k].length > MAX_POINTS) h[k].shift();
+            const arr = h[k];
+            for (const v of rows[k]) arr.push(v);
+            if (arr.length > MAX_POINTS) arr.splice(0, arr.length - MAX_POINTS);
           }
           setHistVersion((v) => v + 1);
         }

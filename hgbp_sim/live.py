@@ -47,8 +47,8 @@ HISTORY_CHANNELS = (
 
 
 class LiveStand:
-    def __init__(self, params: PlantParams | None = None, dt_ctrl: float = 1.0, dt_sim: float = 0.05,
-                 seed: int | None = 0, history_len: int = 4 * 3600, T_amb: float = 25.0,
+    def __init__(self, params: PlantParams | None = None, dt_ctrl: float = 0.25, dt_sim: float = 0.05,
+                 seed: int | None = 0, history_len: int = 60000, T_amb: float = 25.0,
                  T_wi: float = 20.0):
         self.params = params if params is not None else PlantParams()
         self.dt_ctrl = float(dt_ctrl)
@@ -213,7 +213,7 @@ class LiveStand:
         if noise is not None:
             self.noise = bool(noise)
         if dt_ctrl is not None:
-            self.dt_ctrl = float(np.clip(dt_ctrl, 0.2, 10.0))
+            self.dt_ctrl = float(np.clip(dt_ctrl, 0.1, 10.0))
 
     def set_conditions(self, T_amb: float | None = None, T_wi: float | None = None) -> None:
         if T_amb is not None:
@@ -341,9 +341,14 @@ class LiveStand:
     def last_row(self) -> dict:
         return dict(self._last_row)
 
-    def history_since(self, t0: float = -1.0, stride: int = 1) -> dict:
+    def history_since(self, t0: float = -1.0, stride: int = 1, max_points: int | None = None) -> dict:
+        """Rows with t > t0 (all rows if t0 < 0).  ``max_points`` picks a
+        stride automatically so that at most that many rows are returned."""
         t = np.fromiter(self.history["t"], float)
         i0 = int(np.searchsorted(t, t0, side="right")) if t0 >= 0 else 0
+        n = len(t) - i0
+        if max_points is not None and n > max_points:
+            stride = max(stride, int(np.ceil(n / max_points)))
         out = {}
         for k, dq in self.history.items():
             arr = np.fromiter(dq, float)[i0::stride]

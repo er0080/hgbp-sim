@@ -18,7 +18,7 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const [gains, setGains] = useState<Record<string, { Kp: string; Ki: string; Kd: string }>>({});
-  const [sim, setSim] = useState({ dt_ctrl: String(snap.dt_ctrl), T_amb: snap.meas.T_amb.toFixed(1), T_wi: snap.meas.T_wi.toFixed(1) });
+  const [sim, setSim] = useState({ T_amb: snap.meas.T_amb.toFixed(1), T_wi: snap.meas.T_wi.toFixed(1) });
   const reload = () => api<ParamsView>("/api/params").then((v) => { setView(v); setEdits({}); });
   useEffect(() => { reload(); }, []);
   useEffect(() => {
@@ -62,8 +62,8 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
     setMsg(`${snap.loops[k].label} gains applied`);
   };
   const applySim = async () => {
-    await api("/api/sim", { dt_ctrl: Number(sim.dt_ctrl), T_amb: Number(sim.T_amb), T_wi: Number(sim.T_wi) });
-    setMsg("simulation settings applied");
+    await api("/api/sim", { T_amb: Number(sim.T_amb), T_wi: Number(sim.T_wi) });
+    setMsg("ambient and water temperature applied");
   };
   if (!view) return <p className="note">loading parameters...</p>;
   const dirty = Object.keys(edits).length;
@@ -78,11 +78,13 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
                 {[0.5, 1, 2, 5, 10, 20, 50].map((v) => <option key={v} value={v}>{v}x</option>)}</select></td></tr>
             <tr><td className="n">sensor noise</td><td className="d">measurement noise on/off</td><td className="i">
               <input type="checkbox" checked={snap.noise} onChange={(e) => api("/api/sim", { noise: e.target.checked })} /></td></tr>
-            <tr><td className="n">dt_ctrl</td><td className="d">control interval (PID and UI update)</td><td className="i"><input type="number" step={0.1} value={sim.dt_ctrl} onChange={(e) => setSim({ ...sim, dt_ctrl: e.target.value })} /> s</td></tr>
+            <tr><td className="n">control interval</td><td className="d">PID execution and display update period (applied immediately)</td><td className="i">
+              <select value={snap.dt_ctrl} onChange={(e) => api("/api/sim", { dt_ctrl: Number(e.target.value) })}>
+                {[0.1, 0.2, 0.25, 0.5, 1, 2].map((v) => <option key={v} value={v}>{v} s</option>)}</select></td></tr>
             <tr><td className="n">T_amb</td><td className="d">ambient temperature (live)</td><td className="i"><input type="number" step={0.5} value={sim.T_amb} onChange={(e) => setSim({ ...sim, T_amb: e.target.value })} /> °C</td></tr>
             <tr><td className="n">T_wi</td><td className="d">cooling water inlet temperature (live)</td><td className="i"><input type="number" step={0.5} value={sim.T_wi} onChange={(e) => setSim({ ...sim, T_wi: e.target.value })} /> °C</td></tr>
           </tbody></table>
-          <div style={{ marginTop: 8 }}><button className="primary" onClick={applySim}>Apply simulation settings</button></div>
+          <div style={{ marginTop: 8 }}><button className="primary" onClick={applySim}>Apply temperatures</button></div>
         </div>
         <div className="card">
           <h2>PID gains (applied live)</h2>
