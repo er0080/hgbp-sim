@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hgbp-sim"
+version = "0.1.0"
+description = "Dynamic simulation of a hot-gas-bypass refrigeration compressor test stand for control learning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+build = ["CoolProp>=6.6"]          # only needed to build property tables for new fluids
+gym = ["gymnasium>=0.29"]
+plot = ["matplotlib>=3.7"]
+dev = ["pytest>=7", "CoolProp>=6.6", "gymnasium>=0.29", "matplotlib>=3.7", "scipy>=1.10"]
+
+[tool.setuptools.packages.find]
+include = ["hgbp_sim*"]
+
+[tool.setuptools.package-data]
+hgbp_sim = ["data/*.npz"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

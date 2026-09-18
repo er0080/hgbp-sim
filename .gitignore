@@ -1,0 +1,30 @@
+# virtual environments
+.venv/
+venv/
+env/
+
+# python build / cache
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# generated outputs (regenerable with the example scripts)
+*.png
+figures/
+datasets/
+*.npz
+!hgbp_sim/data/*.npz
+*.pt
+*.pth
+*.log
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
