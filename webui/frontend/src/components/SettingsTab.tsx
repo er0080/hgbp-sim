@@ -18,7 +18,8 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const [gains, setGains] = useState<Record<string, { Kp: string; Ki: string; Kd: string }>>({});
-  const [sim, setSim] = useState({ T_amb: snap.meas.T_amb.toFixed(1), T_wi: snap.meas.T_wi.toFixed(1) });
+  const [sim, setSim] = useState({ T_amb: snap.meas.T_amb.toFixed(1), T_wi: snap.meas.T_wi.toFixed(1),
+    rate: (snap.charge.rate_kg_s * 1000).toFixed(0) });
   const reload = () => api<ParamsView>("/api/params").then((v) => { setView(v); setEdits({}); });
   useEffect(() => { reload(); }, []);
   useEffect(() => {
@@ -62,8 +63,9 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
     setMsg(`${snap.loops[k].label} gains applied`);
   };
   const applySim = async () => {
-    await api("/api/sim", { T_amb: Number(sim.T_amb), T_wi: Number(sim.T_wi) });
-    setMsg("ambient and water temperature applied");
+    await api("/api/sim", { T_amb: Number(sim.T_amb), T_wi: Number(sim.T_wi),
+      charge_rate_g_s: Math.min(50, Math.max(1, Number(sim.rate))) });
+    setMsg("conditions and charge rate applied");
   };
   if (!view) return <p className="note">loading parameters...</p>;
   const dirty = Object.keys(edits).length;
@@ -83,8 +85,9 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
                 {[0.1, 0.2, 0.25, 0.5, 1, 2].map((v) => <option key={v} value={v}>{v} s</option>)}</select></td></tr>
             <tr><td className="n">T_amb</td><td className="d">ambient temperature (live)</td><td className="i"><input type="number" step={0.5} value={sim.T_amb} onChange={(e) => setSim({ ...sim, T_amb: e.target.value })} /> °C</td></tr>
             <tr><td className="n">T_wi</td><td className="d">cooling water inlet temperature (live)</td><td className="i"><input type="number" step={0.5} value={sim.T_wi} onChange={(e) => setSim({ ...sim, T_wi: e.target.value })} /> °C</td></tr>
+            <tr><td className="n">charge rate</td><td className="d">rate at which refrigerant is added or recovered (1-50)</td><td className="i"><input type="number" min={1} max={50} step={1} value={sim.rate} onChange={(e) => setSim({ ...sim, rate: e.target.value })} /> g/s</td></tr>
           </tbody></table>
-          <div style={{ marginTop: 8 }}><button className="primary" onClick={applySim}>Apply temperatures</button></div>
+          <div style={{ marginTop: 8 }}><button className="primary" onClick={applySim}>Apply conditions</button></div>
         </div>
         <div className="card">
           <h2>PID gains (applied live)</h2>

@@ -41,10 +41,19 @@ States (per environment, see ``HGBPPlant.STATE_NAMES``)
     u1..u4              actual valve positions
     Tm_s, Tm_d, Tm_co   lagged temperature sensors (suction, discharge, condenser outlet)
     mm, Wm              lagged mass-flow and power sensors
+    M_s, M_d, M_i       refrigerant mass in each volume (integrated from the flows)
+    U_s, U_d, U_i       internal energy in each volume (integrated from the balances)
 
 Each lumped volume uses (P, h) as states with the standard mass/energy
-balance closure through drho/dP|h and drho/dh|P.  Everything is vectorized
-over a batch dimension so many environments integrate at once.
+balance closure through drho/dP|h and drho/dh|P.  Because that closure is a
+linearization, the mass and energy derived from (P, h) drift where the density
+derivatives jump (a volume filling completely with liquid).  Mass and internal
+energy are therefore integrated as conserved states of their own and, after
+every sub-step, (P, h) of each volume is projected (2-D Newton) onto
+rho(P, h) V = M and M (h - P / rho) = U.  Volumes that are (nearly)
+liquid-full are integrated with a finer sub-step because their pressure
+dynamics are stiff.  Everything is vectorized over a batch dimension so many
+environments integrate at once.
 """
 from __future__ import annotations
 
@@ -58,11 +67,16 @@ from .properties import RefrigerantTables, get_tables
 
 class HGBPPlant:
     STATE_NAMES = ("P_s", "h_s", "T_sw", "P_d", "h_d", "T_dw", "P_i", "h_i", "T_cw",
-                   "T_sh", "N", "u1", "u2", "u3", "u4", "Tm_s", "Tm_d", "mm", "Wm", "Tm_co")
+                   "T_sh", "N", "u1", "u2", "u3", "u4", "Tm_s", "Tm_d", "mm", "Wm", "Tm_co",
+                   "M_s", "M_d", "M_i", "U_s", "U_d", "U_i")
     (P_S, H_S, T_SW, P_D, H_D, T_DW, P_I, H_I, T_CW, T_SH, N_, U1, U2, U3, U4,
-     TM_S, TM_D, MM, WM, TM_CO) = range(20)
-    NX = 20
+     TM_S, TM_D, MM, WM, TM_CO, M_S, M_D, M_I, U_S, U_D, U_I) = range(26)
+    NX = 26
     NU = 4
+    # (P index, h index, M index, U index, volume name) per control volume
+    CV = ((0, 1, 20, 23, "V_s"), (3, 4, 21, 24, "V_d"), (6, 7, 22, 25, "V_i"))
+    STIFF_FILL = 0.97           # liquid fill above which a volume counts as liquid-full (stiff)
+    STIFF_SUBDIV = 4            # sub-step refinement for stiff volumes
     VALVE_NAMES = ("discharge_pressure", "suction_pressure", "suction_temperature", "water")
 
     def __init__(self, params: PlantParams | None = None, n: int = 1,
@@ -144,10 +158,12 @@ class HGBPPlant:
         S = pr.state(P_s, h_s)          # suction tank (mean)
         D = pr.state(P_d, h_d)          # discharge volume
         I = pr.state(P_i, h_i)          # intermediate / condenser volume
+        # masses derived from (P, h); the mass states (x[:, 20:23]) are only used by the
+        # conservation projection in _post and agree with these after every sub-step
+        M_s, M_d, M_i = S.rho * p.V_s, D.rho * p.V_d, I.rho * p.V_i
 
         # ---- suction accumulator tank: phase separation and outlet stream
-        M_s = S.rho * p.V_s
-        fill_s = (1.0 - clip(S.x, 0.0, 1.0)) * M_s / (S.rho_l * p.V_s)
+        fill_s = np.minimum((1.0 - clip(S.x, 0.0, 1.0)) * M_s / (S.rho_l * p.V_s), 1.0)
         b = smoothstep((S.x - (1.0 - p.acc_blend_dx)) / p.acc_blend_dx)   # 1: superheated tank
         carry = p.acc_carry_max * smoothstep((fill_s - p.acc_carry_fill0) / (1.0 - p.acc_carry_fill0))
         h_out = S.h_v * (1.0 - b) + h_s * b - carry * (S.h_v - S.h_l)
@@ -157,9 +173,8 @@ class HGBPPlant:
         cp = compressor(p, pr, P_s, h_out, O.s, O.rho, P_d, N, T_sh)
         mdot_c, h2 = cp["mdot"], cp["h2"]
 
-        # ---- condenser inventory, outlet condition
-        M_i = I.rho * p.V_i
-        fill_i = (1.0 - clip(I.x, 0.0, 1.0)) * M_i / (I.rho_l * p.V_i)
+        # ---- condenser inventory, outlet condition (fill capped at 1: liquid-full)
+        fill_i = np.minimum((1.0 - clip(I.x, 0.0, 1.0)) * M_i / (I.rho_l * p.V_i), 1.0)
         dry = 1.0 - smoothstep(fill_i / p.cond_dry_fill)          # 1: no liquid seal
         SC = p.SC_max * smoothstep((fill_i - p.SC_fill0) / (1.0 - p.SC_fill0))
         h_co_liq = np.minimum(I.h_l - p.cp_liq * SC, np.where(I.x < 0.0, h_i, I.h_l))
@@ -237,12 +252,13 @@ class HGBPPlant:
         dmm = (mdot_c - mm) / p.tau_m
         dWm = (cp["W_el"] - Wm) / p.tau_W
 
+        # conserved states: dM/dt = net mass flow, dU/dt = sum(m h) + Q = E + h dM/dt
         dx = np.stack([dP_s, dh_s, dT_sw, dP_d, dh_d, dT_dw, dP_i, dh_i, dT_cw,
-                       dT_sh, dN, du1, du2, du3, du4, dTm_s, dTm_d, dmm, dWm, dTm_co], axis=1)
+                       dT_sh, dN, du1, du2, du3, du4, dTm_s, dTm_d, dmm, dWm, dTm_co,
+                       dm_s, dm_d, dm_i, E_s + h_s * dm_s, E_d + h_d * dm_d, E_i + h_i * dm_i], axis=1)
         if not want_aux:
             return dx
 
-        M_d = D.rho * p.V_d
         aux = dict(
             t=self.t, P_s=P_s, P_d=P_d, P_i=P_i, T_s=O.T, T_tank=S.T, T_d=D.T, T_i=I.T,
             T_co=T_co, T_sat_s=S.T_sat, T_sat_d=D.T_sat, T_sat_i=I.T_sat,
@@ -262,9 +278,64 @@ class HGBPPlant:
         pr = self.props
         x[:, 10] = np.maximum(x[:, 10], 0.0)
         x[:, 11:15] = clip(x[:, 11:15], 0.0, 1.0)
-        for k in (0, 3, 6):
-            x[:, k] = clip(x[:, k], pr.p_min * 1.001, pr.p_max * 0.999)
+        for iP, ih, iM, iU, vname in self.CV:
+            V = getattr(self.p, vname)
+            M = x[:, iM]
+            P, h = self._flash_rho_u(M / V, x[:, iU] / M, x[:, iP])
+            x[:, iP] = P
+            x[:, ih] = h
         return x
+
+    def _flash_rho_u(self, rho_t, u_t, P0, max_iter: int = 8):
+        """(P, h) of a volume with density ``rho_t`` and internal energy ``u_t``.
+
+        The energy constraint fixes h = u + P / rho, and along that path the
+        density is a monotonic function of P in every phase region, so a
+        bracketed Newton iteration on P converges to the unique solution
+        (the previous pressure ``P0`` is the starting point).
+        """
+        pr = self.props
+        lo = np.full_like(P0, pr.p_min * 1.001)
+        hi = np.full_like(P0, pr.p_max * 0.999)
+        P = clip(P0, lo, hi)
+        for _ in range(max_iter):
+            h = u_t + P / rho_t
+            S = pr.state(P, h)
+            r = S.rho - rho_t
+            conv = np.abs(r) <= 1e-5 * rho_t
+            if conv.all():
+                break
+            hi = np.where(r > 0.0, np.minimum(hi, P), hi)
+            lo = np.where(r < 0.0, np.maximum(lo, P), lo)
+            slope = np.maximum(S.drho_dP + S.drho_dh / rho_t, 1e-12)
+            Pn = P - r / slope
+            outside = ~np.isfinite(Pn) | (Pn <= lo) | (Pn >= hi)
+            Pn = np.where(outside, 0.5 * (lo + hi), Pn)
+            P = np.where(conv, P, Pn)
+        return P, u_t + P / rho_t
+
+    def _sync_mass(self, x, idx=None) -> None:
+        """Set the conserved mass and energy states from (P, h) (after direct
+        state assignments); ``idx`` selects the environments of the rows of ``x``."""
+        for iP, ih, iM, iU, vname in self.CV:
+            V = getattr(self.p, vname)
+            V = V if idx is None else V[idx]
+            S = self.props.state(x[:, iP], x[:, ih])
+            x[:, iM] = S.rho * V
+            x[:, iU] = x[:, iM] * (x[:, ih] - x[:, iP] / S.rho)
+
+    def _stiff(self, x) -> bool:
+        """True if any volume of any environment is (nearly) liquid-full:
+        subcooled liquid, or a two-phase mixture whose liquid volume fraction
+        exceeds ``STIFF_FILL`` (lever rule on the saturation properties)."""
+        pr = self.props
+        for iP, ih, _, _, _ in self.CV:
+            sat = pr.sat(x[:, iP])
+            xq = (x[:, ih] - sat["h_l"]) / (sat["h_v"] - sat["h_l"])
+            fill = (1.0 - xq) / (1.0 + xq * (sat["rho_l"] / sat["rho_v"] - 1.0))
+            if ((xq < 0.0) | (fill > self.STIFF_FILL)).any():
+                return True
+        return False
 
     def _step_once(self, x, args):
         dt, f = self.dt, self.rhs
@@ -305,7 +376,15 @@ class HGBPPlant:
         args = (self.u_cmd, self.N_cmd, self.T_amb, self.T_wi)
         x = self.x
         for _ in range(n_sub):
-            x = self._step_once(x, args)
+            if self._stiff(x):
+                dt0, self.dt = self.dt, self.dt / self.STIFF_SUBDIV
+                try:
+                    for _ in range(self.STIFF_SUBDIV):
+                        x = self._step_once(x, args)
+                finally:
+                    self.dt = dt0
+            else:
+                x = self._step_once(x, args)
         self.x = x
         self.t += n_sub * self.dt
         _, self.aux = self.rhs(self.x, *args, want_aux=True)
@@ -396,14 +475,18 @@ class HGBPPlant:
         x[:, 11:15] = u_pos
         x[:, 15], x[:, 16], x[:, 19] = T_amb, T_amb, T_amb
         x[:, 17], x[:, 18] = 0.0, 0.0
+        self._sync_mass(x, idx)
         self.x[idx] = x
         self.u_cmd[idx] = u_pos
         self.N_cmd[idx] = 0.0
         self.aux = None
 
-    def set_state(self, idx, x) -> None:
+    def set_state(self, idx, x, sync_mass: bool = True) -> None:
         idx = np.atleast_1d(np.asarray(idx))
-        self.x[idx] = np.asarray(x, float).reshape(len(idx), self.NX)
+        x = np.asarray(x, float).reshape(len(idx), self.NX).copy()
+        if sync_mass:
+            self._sync_mass(x, idx)
+        self.x[idx] = x
         self.aux = None
 
     # ------------------------------------------------------------- sensing

@@ -149,3 +149,30 @@ def test_trips_on_closed_water_valve():
             tripped = True
             break
     assert tripped
+
+
+def test_mass_conserved_when_condenser_floods():
+    """Overcharging until the condenser is liquid-full must raise the pressure,
+    not lose refrigerant (the (P, h) closure alone loses mass across the
+    liquid boundary; the mass states and pressure projection prevent that)."""
+    from hgbp_sim.live import LiveStand
+    st = LiveStand(dt_ctrl=0.25)
+    st.noise = False
+    assert st.warm_start("MT_standard")
+    m0 = st.snapshot()["charge"]["kg"]
+    P_i0 = st.snapshot()["meas"]["P_i"]
+    st.add_charge(3.0)
+    injected = 0.0
+    flooded, P_i_max = False, 0.0
+    for _ in range(4800):
+        pending = st.charge_pending
+        s = st.step()
+        injected += pending - st.charge_pending
+        assert abs(s["charge"]["kg"] - (m0 + injected)) < 2e-3
+        flooded |= s["true"]["x_i"] < 0.0
+        P_i_max = max(P_i_max, s["meas"]["P_i"])
+        if s["compressor"]["tripped"]:
+            break
+    assert flooded
+    # a liquid-full condenser drives the pressure up (and eventually trips) instead of losing charge
+    assert s["compressor"]["tripped"] or P_i_max > P_i0 + 1.0

@@ -10,7 +10,7 @@ controllers that automate compressor performance testing.
   differently (condenser liquid inventory, subcooling, loss of condensing area, liquid in
   the suction accumulator and carry-over to the compressor)
 * fully **vectorized**: thousands of stands integrate in lock-step with numpy
-  (~6 000 control steps / s at 1024 parallel environments on a laptop)
+  (~4 500 control steps / s at 1024 parallel environments on a laptop)
 * `gymnasium`-compatible single environment plus a batched environment for
   high-throughput training, with refrigerant-agnostic observations (saturation
   temperatures, normalized flow and power, compressor and refrigerant context), an
@@ -162,6 +162,12 @@ uvicorn webui.backend.app:app --reload --port 8000           # API + WebSocket
 cd webui/frontend && npm install && npm run dev              # UI on http://localhost:5173 (proxies to 8000)
 ```
 
+The image builds natively on x86-64 (Intel/AMD) and arm64 hosts: both base images are
+multi-architecture and every Python dependency (numpy, CoolProp, FastAPI) ships wheels for
+both. To build an x86-64 image on an Apple Silicon machine for an Intel target, add
+`--platform linux/amd64` to `docker build` (or `platform: linux/amd64` to the compose
+service).
+
 The engine behind the UI is `hgbp_sim.live.LiveStand` (one plant, four PID loops with
 bumpless auto/manual transfer, the same start/stop interlock as the training
 environment, trip latching, charge changes while running, a rolling history), which can
@@ -240,9 +246,16 @@ relative noise). Trips: high discharge pressure, high discharge temperature, low
 suction pressure. Flags: liquid at the compressor inlet, liquid stored in the
 accumulator, condenser dry (undercharge), condenser flooded (overcharge).
 
-### Integrator
+### Integrator and mass conservation
 Fixed-step RK4 (default `dt = 0.05 s`; matches a 5 ms reference to 1e-4 bar). `heun` and
-`euler` are available for speed. Mass is conserved to ~2e-4 over long runs.
+`euler` are available for speed. The (P, h) closure is a linearization, so the mass
+derived from (P, h) can drift where the density derivatives jump, most visibly when a
+volume fills completely with liquid. The refrigerant mass of each volume is therefore
+integrated as a state of its own and, after every sub-step, the pressure is projected so
+that `rho(P, h) V` equals the integrated mass: total charge is conserved exactly. Volumes
+that are (nearly) liquid-full have stiff pressure dynamics and are integrated with a
+four-times finer sub-step; overcharging a stand until the condenser is liquid-full
+therefore drives the pressure up until the discharge-pressure trip, as on a real stand.
 
 ## Environment (`env.py`)
 

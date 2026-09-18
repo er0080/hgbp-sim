@@ -99,6 +99,7 @@ class SimCmd(BaseModel):
     speed_factor: float | None = None
     noise: bool | None = None
     dt_ctrl: float | None = None
+    charge_rate_g_s: float | None = None
     T_amb: float | None = None
     T_wi: float | None = None
 
@@ -144,7 +145,8 @@ def post_compressor(cmd: CompressorCmd):
 @app.post("/api/sim")
 def post_sim(cmd: SimCmd):
     with runner.lock:
-        stand.set_sim(paused=cmd.paused, speed_factor=cmd.speed_factor, noise=cmd.noise, dt_ctrl=cmd.dt_ctrl)
+        stand.set_sim(paused=cmd.paused, speed_factor=cmd.speed_factor, noise=cmd.noise, dt_ctrl=cmd.dt_ctrl,
+                      charge_rate=None if cmd.charge_rate_g_s is None else cmd.charge_rate_g_s / 1000.0)
         if cmd.T_amb is not None or cmd.T_wi is not None:
             stand.set_conditions(T_amb=cmd.T_amb, T_wi=cmd.T_wi)
     return _snapshot()

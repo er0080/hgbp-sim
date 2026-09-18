@@ -19,7 +19,6 @@ from collections import deque
 
 import numpy as np
 
-from .components import cv_balance
 from .control import DEFAULT_GAINS, BaselineController
 from .interlock import ST_OFF, STATE_NAMES, Interlock, permissives
 from .params import PlantParams, param_metadata
@@ -216,7 +215,11 @@ class LiveStand:
         self.log(f"charge change queued: {delta_kg:+.3f} kg")
 
     def set_sim(self, paused: bool | None = None, speed_factor: float | None = None,
-                noise: bool | None = None, dt_ctrl: float | None = None) -> None:
+                noise: bool | None = None, dt_ctrl: float | None = None,
+                charge_rate: float | None = None) -> None:
+        """``charge_rate`` in kg/s (1 .. 50 g/s) for adding / recovering refrigerant."""
+        if charge_rate is not None:
+            self.charge_rate = float(np.clip(charge_rate, 0.001, 0.05))
         if paused is not None:
             self.paused = bool(paused)
         if speed_factor is not None:
@@ -273,19 +276,18 @@ class LiveStand:
     # -------------------------------------------------------------- physics
     def _inject_charge(self, dm: float) -> None:
         """Add (dm > 0) liquid from a cylinder at ambient temperature to the
-        accumulator, or recover (dm < 0) fluid at the tank's mean enthalpy."""
-        pl, pr, p = self.plant, self.props, self.plant.p
+        accumulator, or recover (dm < 0) fluid at the tank's mean enthalpy.
+        The mass state is updated exactly; the plant's pressure projection
+        makes (P, h) consistent at the next sub-step."""
+        pl, pr = self.plant, self.props
         x = pl.x[0]
-        P_s, h_s = x[HGBPPlant.P_S], x[HGBPPlant.H_S]
-        S = pr.state(np.array([P_s]), np.array([h_s]))
+        h_s = x[HGBPPlant.H_S]
         if dm > 0:
             h_in = float(pr.sat(pr.P_sat(np.array([self.T_amb])))["h_l"][0])
-            E = dm * (h_in - h_s)
         else:
-            E = 0.0
-        dP, dh = cv_balance(p.V_s[0], S.rho[0], S.drho_dP[0], S.drho_dh[0], dm, E)
-        x[HGBPPlant.P_S] += dP
-        x[HGBPPlant.H_S] += dh
+            h_in = h_s
+        x[HGBPPlant.M_S] += dm
+        x[HGBPPlant.U_S] += dm * h_in       # (P, h) follow through the conservation projection
         pl.aux = None
 
     def step(self) -> dict:
