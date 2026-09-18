@@ -89,19 +89,18 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
         <div className="card">
           <h2>PID gains (applied live)</h2>
           <p className="note">Gains are per {`{bar or K}`} of error and per unit of valve stroke (0..1). Negative gain = reverse acting. Ki = Kp / Ti.</p>
-          <table><tbody>
-            {LOOPS.map((k) => gains[k] && (
-              <tr key={k}>
-                <td className="n">{snap.loops[k].label}<br /><span className="d">{snap.loops[k].valve_label} · /{snap.loops[k].unit}</span></td>
-                <td className="i">
-                  Kp <input type="number" step="any" value={gains[k].Kp} onChange={(e) => setGains({ ...gains, [k]: { ...gains[k], Kp: e.target.value } })} /><br />
-                  Ki <input type="number" step="any" value={gains[k].Ki} onChange={(e) => setGains({ ...gains, [k]: { ...gains[k], Ki: e.target.value } })} /><br />
-                  Kd <input type="number" step="any" value={gains[k].Kd} onChange={(e) => setGains({ ...gains, [k]: { ...gains[k], Kd: e.target.value } })} />
-                </td>
-                <td className="i"><button className="small" onClick={() => applyGains(k)}>Apply</button></td>
-              </tr>
-            ))}
-          </tbody></table>
+          {LOOPS.map((k) => gains[k] && (
+            <div className="gainrow" key={k}>
+              <div className="gainname"><b>{snap.loops[k].label}</b><span>{snap.loops[k].valve_label} · per {snap.loops[k].unit}</span></div>
+              <div className="gaininputs">
+                {(["Kp", "Ki", "Kd"] as const).map((g) => (
+                  <label key={g}>{g}<input type="number" step="any" value={gains[k][g]}
+                    onChange={(e) => setGains({ ...gains, [k]: { ...gains[k], [g]: e.target.value } })} /></label>
+                ))}
+                <button className="small" onClick={() => applyGains(k)}>Apply</button>
+              </div>
+            </div>
+          ))}
         </div>
         {groups.map(([g, ms]) => (
           <div className="card" key={g}>

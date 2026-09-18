@@ -70,7 +70,8 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <Valve x={WX} y={300} open={m.u4} label="4 cooling water" vertical side="left" />
         <text x={WX + 12} y={TANK.y + TANK.h + 4} className="lbl">water in</text>
         <text x={WX + 12} y={TANK.y + TANK.h + 18} className="lbl">{fmt(m.T_wi, 1)} °C</text>
-        <text x={WX - 12} y={TOP + 8} textAnchor="end" className="lbl">water out {fmt(m.T_wo, 1)} °C · {fmt(t.mdot_w, 1)} kg/min</text>
+        <text x={WX} y={TOP - 4} textAnchor="middle" className="lbl">water out</text>
+        <text x={WX} y={TOP + 11} textAnchor="middle" className="lbl">{fmt(m.T_wo, 1)} °C · {fmt(t.mdot_w, 1)} kg/min</text>
         {/* condenser outlet -> valve 3 -> tank */}
         <polyline points={`${CIN},${COND.y + COND.h} ${CIN},${LIQY} ${TANK.x + TANK.w},${LIQY}`} className="pipe liq" />
         <Valve x={CIN} y={290} open={m.u3} label="3 suction temp." vertical side="left" />

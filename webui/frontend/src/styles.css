@@ -97,3 +97,14 @@ input.pending { border-color: var(--warn); }
 .form-row label { color: var(--muted); }
 .note { color: var(--muted); font-size: 12px; }
 .err { color: #ffb3b3; font-size: 12px; }
+
+.gainrow { border-bottom: 1px solid #1f2933; padding: 8px 0; }
+.gainname { display: flex; flex-direction: column; margin-bottom: 6px; }
+.gainname b { font-size: 13px; }
+.gainname span { color: var(--muted); font-size: 11px; }
+.gaininputs { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.gaininputs label { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.gaininputs input[type=number] { width: 5.5em; }
+.settings .card { min-width: 0; overflow: hidden; }
+.settings table { table-layout: auto; }
+.settings td.i input[type=number] { max-width: 7.5em; }
