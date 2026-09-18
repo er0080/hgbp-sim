@@ -20,15 +20,19 @@ export default function KpiTiles({ snap }: { snap: Snapshot }) {
         <div className="kpi"><div className="l">accumulator liquid</div><div className="v">{fmt(t.fill_s * 100, 1)}<small>%</small></div></div>
         <div className="kpi"><div className="l">inlet quality</div><div className="v" style={{ color: t.x_out < 1 ? "var(--bad)" : undefined }}>{fmt(t.x_out, 3)}</div></div>
         <div className="kpi"><div className="l">heat to water</div><div className="v">{fmt(t.Q_w / 1000, 2)}<small>kW</small></div></div>
-        <div className="kpi"><div className="l">charge</div><div className="v">{fmt(ch.kg, 3)}<small>kg</small></div><div className="l">{fmt(ch.kg / ch.nominal_kg * 100, 0)} % of nominal</div></div>
+      </div>
+      <div className="chargebar">
         <div className="kpi">
-          <div className="l">charge / recover</div>
-          <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 4 }}>
-            <button className="small" onClick={() => charge(-1)}>-</button>
-            <input type="number" step={0.01} min={0} value={dq} onChange={(e) => setDq(e.target.value)} style={{ width: "5em" }} />
-            <button className="small" onClick={() => charge(+1)}>+</button>
-          </div>
-          <div className="l">kg at {fmt(ch.rate_kg_s * 1000, 0)} g/s{ch.pending_kg !== 0 ? ` · pending ${ch.pending_kg.toFixed(3)}` : ""}</div>
+          <div className="l">refrigerant charge</div>
+          <div className="v">{fmt(ch.kg, 3)}<small>kg</small><small>· {fmt(ch.kg / ch.nominal_kg * 100, 0)} % of nominal {fmt(ch.nominal_kg, 3)} kg</small></div>
+        </div>
+        <div className="chargectl">
+          <span className="l">amount</span>
+          <input type="number" step={0.01} min={0} value={dq} onChange={(e) => setDq(e.target.value)} />
+          <span className="l">kg</span>
+          <button onClick={() => charge(-1)}>Recover</button>
+          <button onClick={() => charge(+1)}>Add</button>
+          <span className="l">at {fmt(ch.rate_kg_s * 1000, 0)} g/s{ch.pending_kg !== 0 ? ` · pending ${ch.pending_kg > 0 ? "+" : ""}${ch.pending_kg.toFixed(3)} kg` : ""}</span>
         </div>
       </div>
     </div>

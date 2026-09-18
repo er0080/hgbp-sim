@@ -31,17 +31,24 @@ from .steady_state import solve_steady_state
 C2K = 273.15
 FLUIDS = ("R134a", "R1234yf", "R1234ze(E)", "R404A", "R407C", "R410A", "R32", "R22", "R290", "R600a")
 
-# loop name -> (label, process value key, unit, valve index, gain scale to internal SI)
+# loop name -> label, process value key (SI in the plant), display unit, valve index,
+# gain scale (display unit -> SI), unit conversion of the process value / setpoint
 LOOPS = {
-    "dpv": dict(label="Discharge pressure", pv="P_d", unit="bar", valve=0, scale=1e5, valve_label="1 discharge pressure valve"),
-    "spv": dict(label="Suction pressure", pv="P_s", unit="bar", valve=1, scale=1e5, valve_label="2 suction pressure (HGBP) valve"),
-    "stv": dict(label="Suction superheat", pv="SH", unit="K", valve=2, scale=1.0, valve_label="3 suction temperature (liquid) valve"),
-    "water": dict(label="Intermediate (liquid) pressure", pv="P_i", unit="bar", valve=3, scale=1e5, valve_label="4 cooling water valve"),
+    "dpv": dict(label="Discharge pressure", pv="P_d", unit="bar", valve=0, scale=1e5,
+                valve_label="1 discharge pressure valve"),
+    "spv": dict(label="Suction pressure", pv="P_s", unit="bar", valve=1, scale=1e5,
+                valve_label="2 suction pressure (HGBP) valve"),
+    "stv": dict(label="Suction temperature", pv="T_s", unit="°C", valve=2, scale=1.0,
+                valve_label="3 suction temperature (liquid) valve"),
+    "water": dict(label="Intermediate (liquid) pressure", pv="P_i", unit="bar", valve=3, scale=1e5,
+                  valve_label="4 cooling water valve"),
 }
+_TO_SI = {"bar": lambda v: v * 1e5, "°C": lambda v: v + C2K, "K": lambda v: v}
+_FROM_SI = {"bar": lambda v: v / 1e5, "°C": lambda v: v - C2K, "K": lambda v: v}
 HISTORY_CHANNELS = (
     "t", "P_s", "P_d", "P_i", "Tsat_s", "Tsat_d", "Tsat_i", "T_s", "T_d", "T_co", "T_wi", "T_wo",
     "SH", "SC", "mdot", "W", "N", "u1", "u2", "u3", "u4",
-    "sp_P_d", "sp_P_s", "sp_SH", "sp_P_i", "sp_N",
+    "sp_P_d", "sp_P_s", "sp_T_s", "sp_P_i", "sp_N",
     "x_out", "fill_s", "fill_i", "charge", "T_sh", "T_cw", "mdot_w", "state", "Q_w",
 )
 
@@ -82,9 +89,13 @@ class LiveStand:
         self.run_request = False
         self.speed_sp = float(self.params.N_nom)
         pt = named_point("MT_standard", self.props, self.params.N_nom)
-        self.sp = dict(P_d=pt["P_d"], P_s=pt["P_s"], SH=pt["SH"], P_i=pt["P_i"])
+        self.sp = dict(P_d=pt["P_d"], P_s=pt["P_s"], T_s=self._T_s_for(pt), P_i=pt["P_i"])
         self.history = {k: deque(maxlen=self.history_len) for k in HISTORY_CHANNELS}
         self.t = 0.0
+
+    def _T_s_for(self, pt: dict) -> float:
+        """Suction temperature setpoint [K] giving the point's superheat."""
+        return float(self.props.T_sat(np.array([pt["P_s"]]))[0]) + float(pt["SH"])
 
     def _apply_gains(self) -> None:
         for k, pid in self._pids().items():
@@ -152,7 +163,7 @@ class LiveStand:
             return False
         self.plant.set_state(0, res["x"])
         self.plant.set_inputs(u_cmd=res["u"], N_cmd=pt["N"])
-        self.sp = dict(P_d=pt["P_d"], P_s=pt["P_s"], SH=pt["SH"], P_i=pt["P_i"])
+        self.sp = dict(P_d=pt["P_d"], P_s=pt["P_s"], T_s=self._T_s_for(pt), P_i=pt["P_i"])
         self.speed_sp = pt["N"]
         for k, pid in self._pids().items():
             pid.reset(res["u"][0, LOOPS[k]["valve"]])
@@ -171,7 +182,7 @@ class LiveStand:
         info = LOOPS[name]
         pid = self._pids()[name]
         if sp is not None:
-            self.sp[info["pv"]] = float(sp) * (1e5 if info["unit"] == "bar" else 1.0)
+            self.sp[info["pv"]] = float(_TO_SI[info["unit"]](float(sp)))
         if mode is not None and mode != self.mode[name]:
             self.mode[name] = mode
             if mode == "auto":
@@ -329,7 +340,7 @@ class LiveStand:
             T_wi=self.T_wi - C2K, T_wo=aux["T_wo"][0] - C2K, SH=meas["SH"][0], SC=meas["SC"][0],
             mdot=meas["mdot"][0] * 1e3, W=meas["W"][0], N=aux["N"][0],
             u1=aux["u1"][0], u2=aux["u2"][0], u3=aux["u3"][0], u4=aux["u4"][0],
-            sp_P_d=self.sp["P_d"] / 1e5, sp_P_s=self.sp["P_s"] / 1e5, sp_SH=self.sp["SH"], sp_P_i=self.sp["P_i"] / 1e5,
+            sp_P_d=self.sp["P_d"] / 1e5, sp_P_s=self.sp["P_s"] / 1e5, sp_T_s=self.sp["T_s"] - C2K, sp_P_i=self.sp["P_i"] / 1e5,
             sp_N=self.speed_sp, x_out=aux["x_out"][0], fill_s=aux["fill_s"][0], fill_i=aux["fill_i"][0],
             charge=aux["M_tot"][0], T_sh=aux["T_sh"][0] - C2K, T_cw=aux["T_cw"][0] - C2K,
             mdot_w=aux["mdot_w"][0] * 60.0, state=int(self.interlock.state[0]), Q_w=aux["Q_w"][0],
@@ -364,10 +375,10 @@ class LiveStand:
         running = f(aux["N"]) > 0.5 * f(p.N_min)
         loops = {}
         for k, info in LOOPS.items():
-            unit_scale = 1e5 if info["unit"] == "bar" else 1.0
+            conv = _FROM_SI[info["unit"]]
             g = self.gains[k]
             loops[k] = dict(label=info["label"], valve_label=info["valve_label"], unit=info["unit"],
-                            pv=f(meas[info["pv"]]) / unit_scale, sp=self.sp[info["pv"]] / unit_scale,
+                            pv=float(conv(f(meas[info["pv"]]))), sp=float(conv(self.sp[info["pv"]])),
                             out=f(aux["u%d" % (info["valve"] + 1)]), mode=self.mode[k],
                             manual_out=self.manual_out[k],
                             Kp=g["Kp"] * info["scale"], Ki=g["Ki"] * info["scale"], Kd=g["Kd"] * info["scale"])

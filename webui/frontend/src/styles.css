@@ -108,3 +108,9 @@ input.pending { border-color: var(--warn); }
 .settings .card { min-width: 0; overflow: hidden; }
 .settings table { table-layout: auto; }
 .settings td.i input[type=number] { max-width: 7.5em; }
+
+.chargebar { display: flex; gap: 10px; margin-top: 10px; align-items: stretch; flex-wrap: wrap; }
+.chargebar .kpi { flex: 1 1 260px; }
+.chargectl { flex: 2 1 320px; background: var(--panel2); border-radius: 8px; padding: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chargectl .l { color: var(--muted); font-size: 11px; }
+.chargectl input[type=number] { width: 5.5em; }

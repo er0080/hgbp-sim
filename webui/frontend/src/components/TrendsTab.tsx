@@ -10,13 +10,13 @@ const CHARTS: { title: string; unit: string; series: SeriesDef[] }[] = [
     { key: "P_i", label: "intermediate", color: C.orange }, { key: "sp_P_i", label: "intermediate SP", color: C.orange, dash: [6, 4], width: 1 },
     { key: "P_s", label: "suction", color: C.blue }, { key: "sp_P_s", label: "suction SP", color: C.blue, dash: [6, 4], width: 1 } ] },
   { title: "Superheat and subcooling", unit: "K", series: [
-    { key: "SH", label: "superheat", color: C.green }, { key: "sp_SH", label: "superheat SP", color: C.green, dash: [6, 4], width: 1 },
-    { key: "SC", label: "subcooling", color: C.cyan } ] },
+    { key: "SH", label: "superheat", color: C.green }, { key: "SC", label: "subcooling", color: C.cyan } ] },
   { title: "Valve positions", unit: "-", series: [
     { key: "u1", label: "1 discharge pressure", color: C.red }, { key: "u2", label: "2 suction pressure", color: C.blue },
     { key: "u3", label: "3 suction temperature", color: C.green }, { key: "u4", label: "4 cooling water", color: C.cyan } ] },
   { title: "Temperatures", unit: "°C", series: [
     { key: "T_d", label: "discharge", color: C.red }, { key: "T_s", label: "suction", color: C.blue },
+    { key: "sp_T_s", label: "suction SP", color: C.blue, dash: [6, 4], width: 1 },
     { key: "T_co", label: "condenser outlet", color: C.cyan }, { key: "T_sh", label: "shell", color: C.orange },
     { key: "T_cw", label: "condenser wall", color: C.purple }, { key: "T_wo", label: "water out", color: C.grey } ] },
   { title: "Flow, power, speed", unit: "g/s · W/100 · rpm/100", series: [

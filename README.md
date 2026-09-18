@@ -165,7 +165,9 @@ cd webui/frontend && npm install && npm run dev              # UI on http://loca
 The engine behind the UI is `hgbp_sim.live.LiveStand` (one plant, four PID loops with
 bumpless auto/manual transfer, the same start/stop interlock as the training
 environment, trip latching, charge changes while running, a rolling history), which can
-also be scripted directly. The backend (`webui/backend/app.py`) exposes a small REST API
+also be scripted directly. As on the real stand, the third loop controls the suction
+*temperature* (setpoint in degC; a warm start derives it from the test point's
+superheat), whereas the training environment's baseline expert works on superheat. The backend (`webui/backend/app.py`) exposes a small REST API
 (`/api/state`, `/api/loop/{name}`, `/api/compressor`, `/api/sim`, `/api/init`,
 `/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`) and streams one
 snapshot per control step on `/ws`.
