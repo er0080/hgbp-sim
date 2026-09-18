@@ -103,6 +103,38 @@ Examples (`examples/`):
 | `train_bc.py` | behaviour-cloning MLP (PyTorch) and closed-loop evaluation vs expert |
 | `benchmark.py` | throughput vs batch size |
 
+## Example runs
+
+Baseline PID through four test points (MT standard -> high lift at 1750 rpm -> HT
+standard at 1200 rpm -> LT standard), nominal charge, warm start. Grey traces are the
+noisy sensor readings, dashed lines the setpoints
+(`python examples/closed_loop_pid.py`):
+
+![closed loop, nominal charge](figures/closed_loop_charge_1.0.png)
+
+Same schedule from a cold, equalized stand with the compressor started at 10 s. The
+accumulator holds liquid at first (measured superheat 0 until the bypass gas boils it
+off), and the shell and discharge temperature take tens of minutes to settle
+(`--cold`):
+
+![closed loop, cold start](figures/closed_loop_cold_start.png)
+
+Undercharged stand (30 % of nominal): the condenser holds almost no liquid, valve 3
+saturates fully open at the high-load point and superheat runs away (`--charge 0.3`):
+
+![closed loop, undercharged](figures/closed_loop_charge_0.3.png)
+
+Overcharged stand (180 % of nominal): the condenser runs about 80 % full of liquid with
+13 K of subcooling; the water valve compensates for the lost condensing area
+(`--charge 1.8`):
+
+![closed loop, overcharged](figures/closed_loop_charge_1.8.png)
+
+Open-loop +10 % steps on each valve from the MT standard point: every valve moves every
+controlled variable (`python examples/open_loop_step.py`):
+
+![open loop step responses](figures/open_loop_step.png)
+
 ## Model
 
 ### Refrigerant properties (`properties.py`)
@@ -248,6 +280,10 @@ quick.
   temperature limit; states are clamped to the table range
 * mixtures with glide (R407C, R448A) work through CoolProp pseudo-pure/HEOS tables but the
   two-phase temperature is a linear interpolation between bubble and dew
+
+## License
+
+MIT, see `LICENSE`.
 
 ## Layout
 

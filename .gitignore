@@ -14,9 +14,10 @@ dist/
 .mypy_cache/
 .ipynb_checkpoints/
 
-# generated outputs (regenerable with the example scripts)
+# generated outputs (regenerable with the example scripts); the example
+# figures in figures/ are tracked
 *.png
-figures/
+!figures/*.png
 datasets/
 *.npz
 !hgbp_sim/data/*.npz
