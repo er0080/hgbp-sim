@@ -34,8 +34,10 @@ export default function InitDialog({ mode, snap, onClose }: { mode: "cold" | "wa
         <div className="form-row"><label>ambient temperature [°C]</label><input type="number" value={T_amb} onChange={(e) => setTamb(e.target.value)} /></div>
         <div className="form-row"><label>cooling water inlet [°C]</label><input type="number" value={T_wi} onChange={(e) => setTwi(e.target.value)} /></div>
         {mode === "cold" && (
-          <div className="form-row"><label>share of the liquid charge placed in the accumulator (rest in the condenser)</label><input type="number" min={0} max={1} step={0.1} value={liq} onChange={(e) => setLiq(e.target.value)} /></div>
-          <p className="note">This is a mass split of the liquid, not a quality or a level. With the nominal charge, half of the liquid is about 0.6 kg, which fills roughly 4 % of the 12 L accumulator; the panel's "liquid %" readouts are liquid volume divided by vessel volume.</p>
+          <>
+            <div className="form-row"><label>share of the liquid charge placed in the accumulator (rest in the condenser)</label><input type="number" min={0} max={1} step={0.1} value={liq} onChange={(e) => setLiq(e.target.value)} /></div>
+            <p className="note">This is a mass split of the liquid, not a quality or a level. With the nominal charge, half of the liquid is about 0.6 kg, which fills roughly 4 % of the 12 L accumulator; the panel's "liquid %" readouts are liquid volume divided by vessel volume.</p>
+          </>
         )}
         {mode === "warm" && (
           <>
