@@ -1,0 +1,13 @@
+services:
+  hgbp-stand:
+    build:
+      context: ..
+      dockerfile: webui/Dockerfile
+    image: hgbp-stand-ui
+    ports:
+      - "8000:8000"
+    volumes:
+      - hgbp-cache:/root/.cache/hgbp_sim   # property tables built for other refrigerants
+    restart: unless-stopped
+volumes:
+  hgbp-cache:

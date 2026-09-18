@@ -46,7 +46,7 @@ Properties that shape the network design:
 * **Hidden state.** The condenser liquid inventory, the liquid stored in the suction
   accumulator, the compressor shell temperature and the condenser wall temperature are
   not measured but determine the plant gains and the time constants (tens of seconds to
-  ~20 min). The charge is also hidden.
+  ~20 min). The charge is also hidden.[^sensors]
 * **Wide operating range.** Valve gains vary by more than an order of magnitude over
   their stroke; gas valves choke; the liquid valve flashes.
 * **Integral action needed.** Sensor bias, model mismatch and slow drifts require
@@ -171,6 +171,10 @@ About 120 k parameters. Inference cost is negligible at 1 Hz.
 * **Output smoothing.** Add a penalty on the change of the valve output between steps
   during training (already part of the reward) and optionally a small low-pass on the
   action at deployment.
+* **Feed-forward from the equilibrium map.**[^feedforward] Apply the steady-state valve
+  positions for the new test point (from `solve_steady_state`, tabulated per compressor
+  and refrigerant) as the first move at a setpoint change and let the network correct
+  around them.
 
 ### 4.3 Input handling
 
@@ -182,7 +186,7 @@ About 120 k parameters. Inference cost is negligible at 1 Hz.
 
 ## 5. Training plan
 
-1. **Data and baseline.** Collect 5..10 M steps with `examples/collect_dataset.py`
+1. **Data and baseline.**[^sysid] Collect 5..10 M steps with `examples/collect_dataset.py`
    (expert + Gaussian exploration noise, sigma 0.3) across all start modes, charges and
    several refrigerants. Record the expert action, `charge_factor`, `steady`.
 2. **Behaviour cloning.** Train the policy (valve and run heads) on the expert actions
@@ -197,7 +201,7 @@ About 120 k parameters. Inference cost is negligible at 1 Hz.
 4. **Curriculum.** Nominal charge, warm starts, single points first; then multiple
    points, cold starts, wider charge range, start/stop action, then multiple
    refrigerants and the full compressor size range.
-5. **Evaluation** on held-out seeds and refrigerants, 1000 episodes each: trips per 1000
+5. **Evaluation**[^acceptance] on held-out seeds and refrigerants, 1000 episodes each: trips per 1000
    episodes (target 0), fraction of points completed by dwell, mean time to tolerance
    after a setpoint change, superheat undershoot events (inlet quality < 1), valve travel
    per point, charge estimate error (target +-10 % once steady), and the same metrics for
@@ -211,7 +215,7 @@ floodback margin is not acceptable.
 
 ### 6.1 Action shield (PLC / supervisory layer)
 
-Applied to every network output before it reaches the actuators:
+Applied to every network output before it reaches the actuators:[^staged]
 
 * clamp increments to the actuator rate limits and positions to [0, 1];
 * valve 1 never below 10 % while the compressor runs (no dead-heading);
@@ -302,3 +306,35 @@ Add on the real stand: mass flow and power readings within +-1 % of their traili
 4. Which safety actions are already implemented in the PLC, and can the shield of
    Section 6.1 be added there?
 5. Can charge be measured (scale on the charging cylinder) to validate the advisory?
+
+## Notes
+
+[^sysid]: **Identify the real stand before training for deployment.** Run the step
+    protocol of `examples/open_loop_step.py` on the hardware (each valve stepped +-10 %
+    from two or three test points, plus a logged cold start) and fit the simulator's
+    volumes, valve coefficients, condenser conductance, shell thermal mass and sensor lags
+    to the recorded responses. Train with the fitted values at the center of the
+    randomization ranges and keep the ranges, so the policy tolerates the residual
+    mismatch that identification never removes.
+
+[^staged]: **Stage the authority.** Deploy in four steps: shadow mode (network actions
+    logged, PID in control), reduced authority (network increments applied at a quarter
+    of the rate limit with the PID able to override), full valve authority behind the
+    action shield, and only then the start/stop request and the charge advisory. Keep the
+    PID baseline as a one-button fallback at every stage.
+
+[^sensors]: **Two cheap sensors pay for themselves.** A condenser-outlet temperature
+    sensor turns subcooling, the most informative charge signal, into a measurement; an
+    accumulator level indication (capacitive probe or differential pressure) removes the
+    hidden state that carries the most floodback risk at startup. Both reduce what the
+    network has to infer from history.
+
+[^feedforward]: **Use a feed-forward table.** The equilibrium valve positions for a test
+    point are cheap to compute and easy to audit. Applying them first at each setpoint
+    change cuts the transition time on its own and leaves the learned part with a
+    smaller, correction-only job, which also simplifies certification.
+
+[^acceptance]: **Define acceptance before deployment.** No trips and no floodback events
+    over 100 consecutive test points, cycle time at least 20 % below the manual or PID
+    reference on the same schedule, and correct charge advisories on deliberate +-20 %
+    charge changes measured with a scale on the charging cylinder.

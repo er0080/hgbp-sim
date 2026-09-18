@@ -205,3 +205,44 @@ def nominal_charge(p, props, T_evap: float = 263.15, T_int: float = 313.15,
     rho_d = props.state(P_d, props.h_PT(P_d, np.full(n, T_int + 35.0))).rho
     sat = props.sat(P_i)
     return rho_s * V_s + rho_d * V_d + V_i * (fill * sat["rho_l"] + (1.0 - fill) * sat["rho_v"])
+
+
+# ---------------------------------------------------------------- metadata
+_GROUPS = [
+    ("fluid", "Refrigerant"), ("V_disp", "Compressor"), ("V_s", "Volumes"), ("charge", "Charge"),
+    ("acc_blend_dx", "Suction accumulator"), ("C_sw", "Pipe and tank walls"), ("UA_r_2ph", "Condenser"),
+    ("C_dpv", "Valves"), ("tau_T", "Sensors"), ("P_d_max", "Safety limits"), ("dP_i_margin", "Baseline control"),
+]
+_REQUIRE_INIT = {"fluid", "V_s", "V_d", "V_i", "charge", "cold_liquid_in_accumulator"}
+
+
+def param_metadata() -> list[dict]:
+    """Description, unit, group and default of every parameter, parsed from
+    the dataclass source (used by the web UI settings page)."""
+    import inspect
+    import re
+
+    src = inspect.getsource(PlantParams)
+    meta, group = [], "General"
+    starts = {k: g for k, g in _GROUPS}
+    for line in src.splitlines():
+        m = re.match(r"\s{4}(\w+):\s*([\w\[\]| ]+?)\s*=\s*([^#]+?)\s*(#\s*(.*))?$", line)
+        if not m or m.group(1) in ("n_act",):
+            continue
+        name, typ, default, _, comment = m.groups()
+        if name in starts:
+            group = starts[name]
+        comment = comment or ""
+        unit = ""
+        um = re.search(r"\[([^\]]+)\]", comment)
+        if um:
+            unit = um.group(1)
+            comment = (comment[:um.start()] + comment[um.end():]).strip(" ,;")
+        kind = "str" if "str" in typ else ("bool" if "bool" in typ else "float")
+        try:
+            dflt = eval(default, {"__builtins__": {}}, {})
+        except Exception:  # noqa: BLE001
+            dflt = default
+        meta.append(dict(name=name, group=group, unit=unit, description=comment.strip(), default=dflt,
+                         kind=kind, requires_init=name in _REQUIRE_INIT))
+    return meta

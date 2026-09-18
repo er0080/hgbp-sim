@@ -61,6 +61,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .control import BaselineController
+from .interlock import ST_OFF, ST_RUNNING, ST_STARTING, ST_STOPPING, STATE_NAMES, Interlock, permissives
 from .params import PlantParams
 from .plant import HGBPPlant
 from .scenarios import Envelope, sample_schedule
@@ -92,9 +93,8 @@ _OBS_SCALE = np.array(
     + [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 600.0, 600.0, 600.0])
 assert len(_OBS_SCALE) == len(OBS_NAMES)
 
-# interlock states
-ST_OFF, ST_STARTING, ST_RUNNING, ST_STOPPING = 0, 1, 2, 3
-STATE_NAMES = ("OFF", "STARTING", "RUNNING", "STOPPING")
+__all__ = ["OBS_NAMES", "OBS_GROUPS", "EnvConfig", "HGBPVecEnv", "HGBPEnv", "STATE_NAMES",
+           "ST_OFF", "ST_STARTING", "ST_RUNNING", "ST_STOPPING"]
 
 
 @dataclass
@@ -174,8 +174,7 @@ class HGBPVecEnv:
         self.t_ep = np.zeros(n_)
         self.t_point = np.zeros(n_)
         self.t_in_tol = np.zeros(n_)
-        self.t_state = np.zeros(n_)
-        self.state = np.zeros(n_, int)
+        self.interlock = Interlock(n_, cfg.min_off_time, cfg.min_run_time)
         self.run_required = np.ones(n_, bool)
         self.schedule_complete = np.zeros(n_, bool)
         self.k = np.zeros(n_, int)
@@ -200,11 +199,18 @@ class HGBPVecEnv:
     def _running(self):
         return self.plant.x[:, HGBPPlant.N_] > 0.5 * self.params.N_min
 
+    @property
+    def state(self):
+        return self.interlock.state
+
+    @property
+    def t_state(self):
+        return self.interlock.t_state
+
     def _permissives(self):
-        m, p, x = self.meas, self.plant.p, self.plant.x
-        return ((m["P_s"] > 1.5 * p.P_s_min) & (m["P_s"] < 0.9 * p.P_s_max)
-                & (m["P_d"] < 0.8 * p.P_d_max)
-                & (x[:, HGBPPlant.U1] >= 0.1) & (x[:, HGBPPlant.U2] >= 0.05))
+        m, x = self.meas, self.plant.x
+        return permissives(m["P_s"], m["P_d"], x[:, HGBPPlant.U1], x[:, HGBPPlant.U2], self.plant.p,
+                           self.interlock.tripped)
 
     def _errors_K(self, P_s, P_d, SH, P_i):
         return np.stack([self._tsat(self.sp[:, 0]) - self._tsat(P_s),
@@ -270,8 +276,7 @@ class HGBPVecEnv:
                 pl.u_cmd[good] = res["u"][ok]
                 pl.N_cmd[good] = tgt["N"][ok]
                 self.start_at[good] = -1.0
-                self.state[good] = ST_RUNNING
-                self.t_state[good] = cfg.min_run_time
+                self.interlock.reset(good, running=True)
                 self.expert.reset(res["u"][ok], good)
             cold = cold | np.isin(idx, warm_idx[~ok])
 
@@ -283,8 +288,7 @@ class HGBPVecEnv:
             pl.cold_start(cold_idx, T_amb=pl.T_amb[cold_idx], u_pos=u0, liquid_in_accumulator=liq)
             self.u_cmd[cold_idx] = u0
             self.start_at[cold_idx] = rng.uniform(*cfg.start_delay, mc)
-            self.state[cold_idx] = ST_OFF
-            self.t_state[cold_idx] = cfg.min_off_time
+            self.interlock.reset(cold_idx, running=False)
             self.expert.reset(u0, cold_idx)
         pl.aux = None
         self.meas = pl.measure(noise=cfg.noise)
@@ -329,23 +333,10 @@ class HGBPVecEnv:
 
         # ---- interlock state machine (evaluated on the last measurements)
         perm = self._permissives()
-        st = self.state.copy()
-        off_ok = (st == ST_OFF) & (self.t_state >= cfg.min_off_time)
-        blocked = (st == ST_OFF) & run_req & ~(perm & off_ok)
-        start = (st == ST_OFF) & run_req & perm & off_ok
-        stop = np.isin(st, (ST_STARTING, ST_RUNNING)) & ~run_req & (self.t_state >= cfg.min_run_time)
-        N = pl.x[:, HGBPPlant.N_]
-        up = (st == ST_STARTING) & (N >= 0.9 * self.sp[:, 4])
-        down = (st == ST_STOPPING) & (N < 0.5 * self.params.N_min)
-        new = st.copy()
-        new[start] = ST_STARTING
-        new[up] = ST_RUNNING
-        new[stop] = ST_STOPPING
-        new[down] = ST_OFF
-        switched = new != st
-        self.state = new
-        self.t_state = np.where(switched, 0.0, self.t_state + cfg.dt_ctrl)
-        N_cmd = np.where(np.isin(self.state, (ST_STARTING, ST_RUNNING)), self.sp[:, 4], 0.0)
+        off_ok = (self.state == ST_OFF) & (self.t_state >= cfg.min_off_time)
+        il = self.interlock.step(run_req, perm, pl.x[:, HGBPPlant.N_], self.sp[:, 4],
+                                 self.params.N_min, cfg.dt_ctrl)
+        N_cmd, blocked = il["N_cmd"], il["blocked"]
 
         aux = pl.step(cfg.dt_ctrl, u_cmd=self.u_cmd, N_cmd=N_cmd)
         self.meas = pl.measure(noise=cfg.noise)
@@ -373,6 +364,8 @@ class HGBPVecEnv:
         trips = pl.trips()
         tripped = trips["high_P_d"] | trips["low_P_s"] | trips["high_P_s"] | trips["high_T_d"]
         r_trip = -cfg.trip_penalty * tripped
+        if not cfg.terminate_on_trip:
+            self.interlock.tripped |= tripped
 
         # ---- measured errors for the integral features
         em = self._errors_K(self.meas["P_s"], self.meas["P_d"], self.meas["SH"], self.meas["P_i"]) \

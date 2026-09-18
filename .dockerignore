@@ -1,0 +1,9 @@
+.venv
+.git
+**/node_modules
+**/__pycache__
+**/dist
+figures
+*.png
+datasets
+.pytest_cache

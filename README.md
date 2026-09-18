@@ -140,6 +140,36 @@ controlled variable (`python examples/open_loop_step.py`):
 
 ![open loop step responses](figures/open_loop_step.png)
 
+## Live stand web UI (`webui/`)
+
+A browser-based operator interface to run the simulated stand like the real one:
+an **Operator** tab with a live schematic, four PID faceplates (auto/manual, setpoint,
+manual output, live gains), the compressor start/stop panel with interlock permissives
+and trip reset, process-value tiles and charging/recovery buttons; a **Trends** tab with
+live time-series charts (pressures with setpoints, superheat/subcooling, valves,
+temperatures, flow/power/speed, inventory) and CSV export; and a **Settings** tab for
+simulation speed, noise, ambient and water temperature, PID gains and every plant
+parameter (grouped, with units, descriptions and defaults; refrigerant, volumes and
+charge are applied at the next cold or warm start).
+
+```bash
+# in Docker (builds the React app and the Python backend)
+docker compose -f webui/docker-compose.yml up --build      # then open http://localhost:8000
+
+# or locally for development
+pip install -e ".[dev]" fastapi "uvicorn[standard]"
+uvicorn webui.backend.app:app --reload --port 8000           # API + WebSocket
+cd webui/frontend && npm install && npm run dev              # UI on http://localhost:5173 (proxies to 8000)
+```
+
+The engine behind the UI is `hgbp_sim.live.LiveStand` (one plant, four PID loops with
+bumpless auto/manual transfer, the same start/stop interlock as the training
+environment, trip latching, charge changes while running, a rolling history), which can
+also be scripted directly. The backend (`webui/backend/app.py`) exposes a small REST API
+(`/api/state`, `/api/loop/{name}`, `/api/compressor`, `/api/sim`, `/api/init`,
+`/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`) and streams one
+snapshot per control step on `/ws`.
+
 ## Model
 
 ### Refrigerant properties (`properties.py`)
@@ -315,8 +345,11 @@ hgbp_sim/
   steady_state.py  batched Levenberg-Marquardt equilibrium solver (charge- or fill-constrained)
   control.py       PID and 4-loop BaselineController
   scenarios.py     operating envelope, named points, schedules
-  env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium), interlock state machine
+  env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium)
+  interlock.py     compressor start/stop interlock state machine (shared by env and live stand)
+  live.py          LiveStand: interactive single stand with PID loops, charging, history
   data/            prebuilt property tables
+webui/             React + FastAPI operator interface, Dockerfile, docker-compose.yml
 docs/              NN_CONTROLLER_SPEC.md: controller architecture, training and deployment spec
 examples/          closed-loop, open-loop, dataset, behaviour cloning, benchmark
 tests/             property accuracy, conservation, charge effects, steady state, controllers, env API
