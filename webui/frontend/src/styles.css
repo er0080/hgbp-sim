@@ -76,9 +76,9 @@ input.pending { border-color: var(--warn); }
 .schem .vessel { fill: #1c262e; stroke: #90a4ae; stroke-width: 2; }
 .schem .liquid { fill: #1e88e5; opacity: 0.75; }
 .schem .valve { fill: #263238; stroke: #cfd8dc; stroke-width: 1.5; }
-.trend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.trend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 @media (max-width: 1100px) { .trend-grid { grid-template-columns: 1fr; } }
-.chart { min-height: 300px; }
+.chart { height: 350px; overflow: hidden; }
 .chart .uplot { margin-bottom: 4px; }
 .chart .u-legend { margin-top: 6px; }
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }

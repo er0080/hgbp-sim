@@ -34,19 +34,21 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
   const running = snap.compressor.running;
   const fillS = Math.min(1, Math.max(0, t.fill_s)), fillI = Math.min(1, Math.max(0, t.fill_i));
   // geometry
-  const CX = 140, CY = 310, CR = 38;            // compressor
+  const CX = 140, CY = 300, CR = 38;            // compressor
   const TOP = 60;                                // discharge / intermediate pipe level
-  const BY = 470;                                // bypass branch x
   const COND = { x: 700, y: 120, w: 160, h: 90 }; // condenser
   const CIN = COND.x + COND.w / 2;               // condenser inlet / outlet x
-  const TANK = { x: 400, y: 280, w: 230, h: 120 };
-  const LIQY = 340;                              // liquid line level
-  const SUCY = 400;                              // suction line level
+  const TANK = { x: 400, y: 330, w: 230, h: 120 };
+  const TCX = TANK.x + TANK.w / 2;               // tank centre x: bypass enters here
+  const TCY = TANK.y + TANK.h / 2;               // tank centre y: liquid in / suction out here
+  const BY = TCX;                                // bypass branch x
+  const LIQY = TCY;                              // liquid line level
+  const SUCY = TCY;                              // suction line level
   const WX = 930;                                // water pipe x
   return (
     <div className="card">
       <h2>Stand schematic</h2>
-      <svg viewBox="0 0 1000 465" className="schem" style={{ width: "100%", height: "auto" }}>
+      <svg viewBox="0 0 1000 495" className="schem" style={{ width: "100%", height: "auto" }}>
         {/* discharge: compressor -> valve 1 -> intermediate pipe -> condenser */}
         <polyline points={`${CX},${CY - CR} ${CX},${TOP} ${CIN},${TOP} ${CIN},${COND.y}`} className="pipe hot" />
         <Valve x={CX} y={130} open={m.u1} label="1 discharge press." vertical />
@@ -63,19 +65,19 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <text x={CIN} y={COND.y + 38} textAnchor="middle">fill {fmt(fillI * 100, 0)} %</text>
         <text x={CIN} y={COND.y + 52} textAnchor="middle">SC {fmt(m.SC, 1)} K</text>
         <text x={CIN} y={COND.y + 66} textAnchor="middle">wall {fmt(t.T_cw, 0)} °C</text>
-        <polyline points={`${WX},${SUCY} ${WX},${COND.y + 70} ${COND.x + COND.w},${COND.y + 70}`} className="pipe water" />
+        <polyline points={`${WX},${TANK.y + TANK.h} ${WX},${COND.y + 70} ${COND.x + COND.w},${COND.y + 70}`} className="pipe water" />
         <polyline points={`${COND.x + COND.w},${COND.y + 20} ${WX},${COND.y + 20} ${WX},${TOP + 20}`} className="pipe water" />
         <Valve x={WX} y={300} open={m.u4} label="4 cooling water" vertical side="left" />
-        <text x={WX + 12} y={SUCY + 4} className="lbl">water in</text>
-        <text x={WX + 12} y={SUCY + 18} className="lbl">{fmt(m.T_wi, 1)} °C</text>
+        <text x={WX + 12} y={TANK.y + TANK.h + 4} className="lbl">water in</text>
+        <text x={WX + 12} y={TANK.y + TANK.h + 18} className="lbl">{fmt(m.T_wi, 1)} °C</text>
         <text x={WX - 12} y={TOP + 8} textAnchor="end" className="lbl">water out {fmt(m.T_wo, 1)} °C · {fmt(t.mdot_w, 1)} kg/min</text>
         {/* condenser outlet -> valve 3 -> tank */}
         <polyline points={`${CIN},${COND.y + COND.h} ${CIN},${LIQY} ${TANK.x + TANK.w},${LIQY}`} className="pipe liq" />
-        <Valve x={CIN} y={275} open={m.u3} label="3 suction temp." vertical side="left" />
+        <Valve x={CIN} y={290} open={m.u3} label="3 suction temp." vertical side="left" />
         <text x={(TANK.x + TANK.w + CIN) / 2} y={LIQY - 10} textAnchor="middle" className="lbl">liquid {fmt(t.mdot_3, 1)} g/s · {fmt(m.T_co, 0)} °C</text>
         {/* bypass branch -> valve 2 -> tank */}
         <polyline points={`${BY},${TOP} ${BY},${TANK.y}`} className="pipe hot" />
-        <Valve x={BY} y={170} open={m.u2} label="2 suction press. (HGBP)" vertical />
+        <Valve x={BY} y={190} open={m.u2} label="2 suction press. (HGBP)" vertical />
         <text x={BY - 12} y={TANK.y - 12} textAnchor="end" className="lbl">bypass {fmt(t.mdot_2, 1)} g/s</text>
         {/* suction mixer / accumulator */}
         <rect x={TANK.x} y={TANK.y} width={TANK.w} height={TANK.h} rx={10} className="vessel" />
@@ -85,15 +87,15 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <text x={TANK.x + TANK.w / 2} y={TANK.y + 60} textAnchor="middle">T {fmt(m.T_s, 1)} °C · SH {fmt(m.SH, 1)} K</text>
         <text x={TANK.x + TANK.w / 2} y={TANK.y + 78} textAnchor="middle">liquid {fmt(fillS * 100, 1)} % · x {fmt(t.x_out, 3)}</text>
         {/* suction line: tank -> elbow -> vertical lead-in into the compressor */}
-        <polyline points={`${TANK.x},${SUCY - 10} ${CX},${SUCY - 10} ${CX},${CY + CR}`} className="pipe suc" />
-        <text x={(TANK.x + CX) / 2} y={SUCY + 8} textAnchor="middle" className="lbl">suction {fmt(m.mdot, 1)} g/s</text>
+        <polyline points={`${TANK.x},${SUCY} ${CX},${SUCY} ${CX},${CY + CR}`} className="pipe suc" />
+        <text x={(TANK.x + CX) / 2} y={SUCY + 18} textAnchor="middle" className="lbl">suction {fmt(m.mdot, 1)} g/s</text>
         {/* compressor */}
         <circle cx={CX} cy={CY} r={CR} className="comp-body" style={{ stroke: running ? "var(--ok)" : "#90a4ae" }} />
         <text x={CX} y={CY - 4} textAnchor="middle" className="lbl">compressor</text>
         <text x={CX} y={CY + 12} textAnchor="middle">{fmt(m.N, 0)} rpm</text>
         <text x={CX - CR - 8} y={CY - 2} textAnchor="end">{fmt(m.W / 1000, 2)} kW</text>
         <text x={CX - CR - 8} y={CY + 13} textAnchor="end" className="lbl">shell {fmt(t.T_sh, 0)} °C</text>
-        <text x={20} y={452} className="lbl">charge {fmt(snap.charge.kg, 3)} kg (nominal {fmt(snap.charge.nominal_kg, 3)} kg) · {snap.fluid} · ambient {fmt(m.T_amb, 1)} °C</text>
+        <text x={20} y={482} className="lbl">charge {fmt(snap.charge.kg, 3)} kg (nominal {fmt(snap.charge.nominal_kg, 3)} kg) · {snap.fluid} · ambient {fmt(m.T_amb, 1)} °C</text>
       </svg>
     </div>
   );
