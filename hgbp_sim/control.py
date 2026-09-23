@@ -69,7 +69,7 @@ class PID:
 DEFAULT_GAINS = dict(
     dpv=dict(Kp=-0.05e-5, Ki=-0.01e-5, Kd=0.0),      # discharge pressure -> valve 1 [per Pa], Ti = 5 s
     spv=dict(Kp=0.15e-5, Ki=0.03e-5, Kd=0.0),        # suction pressure -> valve 2 [per Pa], Ti = 5 s
-    stv=dict(Kp=-0.008, Ki=-0.0016, Kd=0.0),         # superheat -> valve 3 [per K], Ti = 5 s
+    stv=dict(Kp=-0.004, Ki=-0.0004, Kd=0.0),         # superheat -> valve 3 [per K], Ti = 10 s
     water=dict(Kp=-0.40e-5, Ki=-0.0133e-5, Kd=0.0),  # intermediate pressure -> valve 4 [per Pa], Ti = 30 s
 )
 

@@ -113,3 +113,27 @@ def test_live_warm_start_applies_pending_fluid():
     s = st.snapshot()
     assert s["fluid"] == "R404A" and s["compressor"]["state"] == "RUNNING"
     assert abs(s["meas"]["SH"] - 10.0) < 0.2
+
+
+def test_shipped_defaults_hold_their_setpoints():
+    """The stand as configured in webui/config/stand_defaults.json (plant and UT35A
+    tuning) warm-starts at its own loop setpoints and holds them in AUTO."""
+    import os
+    from hgbp_sim.defaults import load_defaults
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "webui", "config", "stand_defaults.json")
+    d = load_defaults(path, create=False)
+    st = LiveStand(defaults=d)
+    st.noise = False
+    L, pr = d["loops"], st.props
+    T = lambda bar: float(pr.T_sat(np.array([bar * 1e5]))[0]) - 273.15
+    T_evap = T(L["spv"]["SP"])
+    assert st.warm_start(dict(T_evap=T_evap, T_cond=T(L["dpv"]["SP"]), T_int=T(L["water"]["SP"]),
+                              SH=L["stv"]["SP"] - T_evap, N=st.params.N_nom))
+    for _ in range(int(300 / st.dt_ctrl)):
+        s = st.step()
+    assert s["compressor"]["state"] == "RUNNING" and not s["compressor"]["tripped"]
+    for k in ("dpv", "spv", "water"):
+        assert abs(s["loops"][k]["pv"] - L[k]["SP"]) < 0.05, k
+    assert abs(s["loops"]["stv"]["pv"] - L["stv"]["SP"]) < 0.2
+    assert s["meas"]["SC"] > 0.0 and s["meas"]["T_co"] >= s["meas"]["T_wi"] - 0.5

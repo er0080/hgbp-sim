@@ -70,8 +70,9 @@ def test_steady_state_solver_and_energy_balance():
 
 
 def test_charge_sets_condenser_inventory():
-    """More charge -> more liquid in the condenser and more subcooling; too little
-    charge -> no liquid seal and the superheat target becomes unreachable."""
+    """More charge -> more liquid in the condenser and more (never less) subcooling,
+    bounded by the entering water; too little charge -> no liquid seal and the
+    superheat target becomes unreachable."""
     pl = HGBPPlant(n=4, dt=0.05)
     pl.set_inputs(T_amb=298.15, T_wi=293.15)
     pt = _point(pl, "MT_standard")
@@ -81,7 +82,8 @@ def test_charge_sets_condenser_inventory():
     a = res["aux"]
     assert res["converged"][1:].all()
     assert a["fill_i"][1] < a["fill_i"][2] < a["fill_i"][3]
-    assert a["SC"][3] > a["SC"][1] + 3.0
+    assert a["SC"][1] <= a["SC"][2] + 1e-6 <= a["SC"][3] + 2e-6
+    assert np.all(a["T_co"][1:] >= 293.15 - 1e-6)
     assert not res["converged"][0] or a["fill_i"][0] < pl.p.cond_dry_fill[0] * 2
 
 
@@ -177,3 +179,26 @@ def test_mass_conserved_when_condenser_floods():
     assert flooded
     # a liquid-full condenser drives the pressure up (and eventually trips) instead of losing charge
     assert s["compressor"]["tripped"] or P_i_max > P_i0 + 1.0
+
+
+def test_subcooled_zone_is_bounded_by_the_water_inlet():
+    """Subcooling comes from the flooded plate area exchanging with the entering
+    water: the liquid never leaves colder than the water enters, colder water
+    subcools more, and without liquid flow there is no subcooling."""
+    pl = HGBPPlant(n=4, dt=0.05)
+    T_wi = np.array([293.15, 293.15, 293.15, 288.15])
+    pl.set_inputs(T_amb=298.15, T_wi=T_wi)
+    SH = (18.33 + C2K) - float(pl.props.T_sat(np.array([9.98e5]))[0])
+    charge = pl.nominal_charge() * np.array([0.6, 1.0, 0.8, 1.0])
+    res = solve_steady_state(pl, 9.98e5, 33.89e5, SH, 3550.0, P_i=18.0e5, charge=charge)
+    assert res["converged"].all()
+    a = res["aux"]
+    assert np.all(a["T_co"] >= T_wi - 1e-6) and np.all(a["SC"] > 0.0)
+    assert a["SC"][3] > a["SC"][1] + 2.0                       # 15 degC water vs 20 degC
+    h_l = pl.props.sat(a["P_i"])["h_l"]                       # saturated liquid leaving the volume
+    assert np.allclose(a["mdot_3"] * (h_l - a["h_co"]), a["Q_sc"], rtol=1e-6)
+    # closing the liquid valve stops the subcooling
+    x = res["x"].copy()
+    x[:, HGBPPlant.U3] = 0.0
+    _, b = pl.rhs(x, res["u"] * np.array([1.0, 1.0, 0.0, 1.0]), np.full(4, 3550.0), pl.T_amb, pl.T_wi, want_aux=True)
+    assert np.allclose(b["Q_sc"], 0.0, atol=1e-6)

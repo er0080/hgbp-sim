@@ -88,6 +88,15 @@ def water_valve_flow(C, dP, rho):
     return C * np.sqrt(rho * np.maximum(dP, 0.0))
 
 
+def counterflow_effectiveness(NTU, Cr):
+    """Effectiveness of a counterflow heat exchanger, Cr = C_min / C_max in 0..1."""
+    Cr = clip(Cr, 0.0, 1.0)
+    d = 1.0 - Cr
+    ex = np.exp(-NTU * d)
+    eps = (1.0 - ex) / np.maximum(1.0 - Cr * ex, 1e-12)
+    return np.where(d > 1e-6, eps, NTU / (1.0 + NTU))       # balanced limit Cr -> 1
+
+
 def line_flow(K, P1, P2, rho1, rho2, eps):
     """Pipe/fitting resistance: m = K sqrt(rho dP), signed and regularized."""
     dP = P1 - P2

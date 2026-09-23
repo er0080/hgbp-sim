@@ -28,28 +28,28 @@ FLUIDS = ("R134a", "R1234yf", "R1234ze(E)", "R404A", "R407C", "R410A", "R32", "R
 @dataclass
 class PlantParams:
     # ---------------------------------------------------------------- fluid
-    fluid: str = "R410A"
+    fluid: str = "R410A"        # refrigerant charged in the stand
 
     # ----------------------------------------------------------- compressor
     V_disp: float = 3.55e-4     # swept volume per revolution [m^3/rev]
-    N_nom: float = 3550.0       # nominal speed [rpm]
+    N_nom: float = 3550.0       # nominal speed, also the default speed setpoint [rpm]
     N_min: float = 1200.0       # minimum VFD speed when running [rpm]
     N_max: float = 5400.0       # maximum VFD speed [rpm]
-    eta_v0: float = 0.95        # volumetric efficiency intercept
-    c_cl: float = 0.04          # clearance re-expansion coefficient
-    kappa: float = 1.10         # polytropic exponent for re-expansion
-    eta_s0: float = 0.72        # peak isentropic efficiency
-    a_s: float = 0.006          # curvature of eta_s vs pressure ratio
-    Pr_opt: float = 4.0         # pressure ratio of peak eta_s
-    b_N: float = 0.08           # curvature of eta_s vs relative speed
+    eta_v0: float = 0.95        # volumetric efficiency at pressure ratio 1 (mass flow per swept volume)
+    c_cl: float = 0.04          # clearance volume fraction: volumetric efficiency falls as the pressure ratio rises
+    kappa: float = 1.10         # polytropic exponent of the clearance gas re-expansion
+    eta_s0: float = 0.72        # peak isentropic efficiency (sets shaft power and discharge temperature)
+    a_s: float = 0.006          # how fast isentropic efficiency falls away from Pr_opt
+    Pr_opt: float = 4.0         # pressure ratio at which isentropic efficiency peaks
+    b_N: float = 0.08           # how fast isentropic efficiency falls away from nominal speed
     eta_motor: float = 0.90     # motor + VFD efficiency
-    f_motor_gas: float = 0.7    # fraction of motor loss absorbed by suction gas
+    f_motor_gas: float = 0.7    # share of the motor losses that heats the suction gas (suction-gas-cooled motor)
     C_shell: float = 20e3       # compressor shell thermal capacity [J/K]
     UA_gs: float = 40.0         # discharge gas -> shell conductance [W/K]
     UA_sha: float = 8.0         # shell -> ambient conductance [W/K]
-    cp_gas: float = 1000.0      # vapor cp used in gas/shell effectiveness [J/kg/K]
-    tau_N: float = 0.5          # speed loop time constant [s]
-    ramp_N: float = 300.0       # VFD ramp limit [rpm/s]
+    cp_gas: float = 1000.0      # vapor cp used for the discharge gas -> shell heat exchange [J/kg/K]
+    tau_N: float = 0.5          # speed response time constant of motor and VFD [s]
+    ramp_N: float = 300.0       # VFD acceleration / deceleration limit [rpm/s]
 
     # ------------------------------------------------------------- volumes
     V_s: float = 12e-3          # suction mixer/accumulator tank + suction line [m^3]
@@ -57,83 +57,81 @@ class PlantParams:
     V_i: float = 3.0e-3         # intermediate section: header + condenser + liquid line [m^3]
 
     # -------------------------------------------------------------- charge
-    charge: float | None = None # total refrigerant mass [kg]; None -> nominal_charge()
-    cold_liquid_in_accumulator: float = 0.5   # fraction of liquid sitting in the tank at a cold start
+    charge: float | None = None  # total refrigerant mass; empty = nominal charge for these volumes [kg]
+    cold_liquid_in_accumulator: float = 0.5  # share of the liquid in the suction tank at a cold start (rest in the condenser)
 
     # --------------------------------------------- suction accumulator tank
-    acc_blend_dx: float = 0.02  # quality band over which the outlet switches sat. vapor -> superheated
-    acc_carry_fill0: float = 0.5  # liquid fill fraction above which liquid is entrained to the compressor
-    acc_carry_max: float = 0.3  # entrained liquid mass fraction at a full tank
+    acc_blend_dx: float = 0.02  # quality band over which the tank outlet turns saturated -> superheated (smoothing)
+    acc_carry_fill0: float = 0.5  # tank liquid fill above which liquid is carried over to the compressor
+    acc_carry_max: float = 0.3  # share of liquid in the compressor inlet stream when the tank is full
 
     # ------------------------------------------------ pipe / vessel thermal mass
     C_sw: float = 4e3           # tank + suction line wall heat capacity [J/K]
-    UA_sg: float = 40.0         # wall <-> gas [W/K]
-    UA_sa: float = 6.0          # wall <-> ambient [W/K] (insulated)
-    C_dw: float = 3e3           # discharge line wall [J/K]
-    UA_dg: float = 40.0
-    UA_da: float = 3.0
+    UA_sg: float = 40.0         # tank and suction line wall -> refrigerant conductance [W/K]
+    UA_sa: float = 6.0          # tank and suction line wall -> ambient conductance (insulated) [W/K]
+    C_dw: float = 3e3           # discharge line wall heat capacity [J/K]
+    UA_dg: float = 40.0         # discharge line wall -> discharge gas conductance [W/K]
+    UA_da: float = 3.0          # discharge line wall -> ambient conductance [W/K]
 
     # ----------------------------------------------------------- condenser
-    UA_r_2ph: float = 10500.0   # refrigerant -> wall, condensing (full area) [W/K]
-    UA_r_1ph: float = 875.0     # refrigerant -> wall, single-phase [W/K]
-    cond_dry_fill: float = 0.08 # liquid fill below which the outlet loses its liquid seal
-    SC_fill0: float = 0.25      # liquid fill above which outlet subcooling builds up
-    SC_max: float = 15.0        # outlet subcooling at a liquid-full condenser [K]
-    cp_liq: float = 1400.0      # liquid cp for subcooling enthalpy [J/kg/K]
-    UA_w0: float = 10500.0      # wall -> water at the reference water flow [W/K]
+    UA_r_2ph: float = 10500.0   # refrigerant -> plate conductance while condensing, whole plate area [W/K]
+    UA_r_1ph: float = 875.0     # refrigerant -> plate conductance for vapor (desuperheating), whole plate area [W/K]
+    UA_sc: float = 4000.0       # liquid-side conductance of the subcooled zone if the whole plate area were flooded [W/K]
+    cond_dry_fill: float = 0.08  # condenser liquid fill below which the outlet loses its liquid seal (two-phase to valve 3)
+    UA_w0: float = 10500.0      # plate -> water conductance at the reference water flow; scales with flow^0.8 [W/K]
     mdot_w_ref: float = 1.75    # water flow at which UA_w0 applies [kg/s]
     cp_w: float = 4180.0        # water specific heat [J/kg/K]
     rho_w: float = 1000.0       # cooling water density [kg/m^3]
-    C_cw: float = 28e3          # brazed-plate HX metal + water content [J/K]
-    UA_ca: float = 5.0          # condenser/liquid line -> ambient [W/K]
+    C_cw: float = 28e3          # condenser plate metal + water content heat capacity [J/K]
+    UA_ca: float = 5.0          # condenser and liquid line -> ambient conductance [W/K]
 
     # -------------------------------------------------------------- valves
     # Every valve is sized by its Kv, the way the hardware is specified: the
     # water flow [m^3/h] the fully open valve passes at a 1 bar pressure drop.
     # Internally mdot = (Kv / 36000) f(u) sqrt(rho dP)  (see components.kv_to_C).
     Kv_dpv: float = 6.3         # valve 1: discharge pressure valve [m^3/h]
-    dpv_char: str = "eqpct"
-    dpv_R: float = 30.0
-    tau_dpv: float = 0.3
-    rate_dpv: float = 0.2
+    dpv_char: str = "eqpct"     # valve 1 flow characteristic: linear, eqpct (equal percentage) or quick opening
+    dpv_R: float = 30.0         # valve 1 rangeability (largest / smallest controllable flow), used by eqpct
+    tau_dpv: float = 0.3        # valve 1 actuator time constant [s]
+    rate_dpv: float = 0.2       # valve 1 actuator stroke speed limit, full strokes per second [1/s]
     Kv_spv: float = 6.3         # valve 2: suction pressure (hot gas bypass) valve [m^3/h]
-    spv_char: str = "eqpct"
-    spv_R: float = 30.0
-    tau_spv: float = 0.3
-    rate_spv: float = 0.2
+    spv_char: str = "eqpct"     # valve 2 flow characteristic: linear, eqpct (equal percentage) or quick opening
+    spv_R: float = 30.0         # valve 2 rangeability (largest / smallest controllable flow), used by eqpct
+    tau_spv: float = 0.3        # valve 2 actuator time constant [s]
+    rate_spv: float = 0.2       # valve 2 actuator stroke speed limit, full strokes per second [1/s]
     Kv_stv: float = 1.0         # valve 3: suction temperature (liquid) valve [m^3/h]
-    stv_char: str = "linear"
-    stv_R: float = 30.0
-    tau_stv: float = 0.3
-    rate_stv: float = 0.2
+    stv_char: str = "linear"    # valve 3 flow characteristic: linear, eqpct (equal percentage) or quick opening
+    stv_R: float = 30.0         # valve 3 rangeability (largest / smallest controllable flow), used by eqpct
+    tau_stv: float = 0.3        # valve 3 actuator time constant [s]
+    rate_stv: float = 0.2       # valve 3 actuator stroke speed limit, full strokes per second [1/s]
     Kv_w: float = 12.0          # valve 4: cooling water valve [m^3/h]
-    w_char: str = "eqpct"
-    w_R: float = 30.0
-    tau_w: float = 2.0
-    rate_w: float = 0.1
+    w_char: str = "eqpct"       # valve 4 flow characteristic: linear, eqpct (equal percentage) or quick opening
+    w_R: float = 30.0           # valve 4 rangeability (largest / smallest controllable flow), used by eqpct
+    tau_w: float = 2.0          # valve 4 actuator time constant [s]
+    rate_w: float = 0.1         # valve 4 actuator stroke speed limit, full strokes per second [1/s]
     P_w_sup: float = 1.5e5      # cooling water supply pressure across valve 4 [Pa]
-    xT: float = 0.70            # gas valve terminal pressure-drop ratio
-    eps_valve: float = 2e3      # regularization pressure for valves [Pa]
-    f_choke_liq: float = 0.7    # max effective dP/P_in for flashing liquid
+    xT: float = 0.70            # gas valve pressure-drop ratio at which the flow chokes (ISA xT)
+    eps_valve: float = 2e3      # numerical smoothing of valve flow near zero pressure drop [Pa]
+    f_choke_liq: float = 0.7    # largest effective pressure-drop ratio for flashing liquid in valve 3 (liquid choking)
 
     # -------------------------------------------------------------- sensors
     tau_T: float = 4.0          # temperature sensor time constant [s]
     tau_m: float = 1.0          # Coriolis flow meter time constant [s]
     tau_W: float = 0.3          # power meter time constant [s]
-    sig_T: float = 0.1          # temperature noise std [K]
-    sig_P_s: float = 2e3        # suction pressure noise std [Pa]
-    sig_P_d: float = 6e3        # discharge / intermediate pressure noise std [Pa]
-    sig_m_rel: float = 0.003    # flow meter relative noise
-    sig_W_rel: float = 0.005    # power meter relative noise
+    sig_T: float = 0.1          # temperature measurement noise, standard deviation [K]
+    sig_P_s: float = 2e3        # suction pressure measurement noise, standard deviation [Pa]
+    sig_P_d: float = 6e3        # discharge / intermediate pressure measurement noise, standard deviation [Pa]
+    sig_m_rel: float = 0.003    # mass flow measurement noise, standard deviation relative to the reading
+    sig_W_rel: float = 0.005    # power measurement noise, standard deviation relative to the reading
 
     # ------------------------------------------------------------- limits
-    P_d_max: float = 41.4e5     # high discharge pressure trip [Pa] (600 psig R410A switch)
+    P_d_max: float = 41.4e5     # high discharge pressure trip, 600 psig R410A switch [Pa]
     P_s_min: float = 0.3e5      # low suction pressure trip [Pa]
     P_s_max: float = 30e5       # high suction pressure trip [Pa]
     T_d_max: float = 135.0 + 273.15  # high discharge temperature trip [K]
 
     # ------------------------------------------------- baseline control aid
-    dP_i_margin: float = 15.89e5  # default intermediate pressure setpoint = P_d - margin
+    dP_i_margin: float = 15.89e5  # liquid pressure setpoint below discharge pressure when a test point gives none [Pa]
 
     def replace(self, **kw) -> "PlantParams":
         return dataclasses.replace(self, **kw)
@@ -152,7 +150,7 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
     "V_s": 0.20, "V_d": 0.25, "V_i": 0.20,
     "C_sw": 0.3, "UA_sg": 0.3, "UA_sa": 0.3, "C_dw": 0.3, "UA_dg": 0.3, "UA_da": 0.3,
     "UA_r_2ph": 0.25, "UA_r_1ph": 0.25, "UA_w0": 0.25, "C_cw": 0.3, "UA_ca": 0.3,
-    "SC_max": 0.3, "cond_dry_fill": 0.3, "acc_carry_fill0": 0.2,
+    "UA_sc": 0.25, "cond_dry_fill": 0.3, "acc_carry_fill0": 0.2,
     "Kv_dpv": 0.15, "Kv_spv": 0.15, "Kv_stv": 0.15, "Kv_w": 0.15,
     "tau_dpv": 0.3, "tau_spv": 0.3, "tau_stv": 0.3, "rate_dpv": 0.3, "rate_spv": 0.3,
     "rate_stv": 0.3, "tau_w": 0.3, "rate_w": 0.3,
@@ -259,6 +257,7 @@ def param_metadata() -> list[dict]:
         if um:
             unit = um.group(1)
             comment = (comment[:um.start()] + comment[um.end():]).strip(" ,;")
+        comment = " ".join(comment.split())
         kind = "str" if "str" in typ else ("bool" if "bool" in typ else "float")
         try:
             dflt = eval(default, {"__builtins__": {}}, {})
