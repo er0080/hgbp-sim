@@ -407,7 +407,9 @@ hgbp_sim/
   data/            prebuilt property tables
 webui/             React + FastAPI operator interface, Dockerfile, docker-compose.yml,
                    config/stand_defaults.json (bind-mounted defaults)
-docs/              NN_CONTROLLER_SPEC.md: controller architecture, training and deployment spec
+docs/              NN_CONTROLLER_SPEC.md: controller architecture, training and deployment spec;
+                   REFRIGERANT_CHARGE.md: how the nominal charge is calculated;
+                   SUCTION_MIXER_ANALYSIS.md: accumulator model review and known limitations
 examples/          closed-loop, open-loop, dataset, behaviour cloning, benchmark
 tests/             property accuracy, conservation, charge effects, steady state, controllers, env API
 ```
