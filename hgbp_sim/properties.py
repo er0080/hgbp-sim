@@ -54,7 +54,7 @@ class PhState:
 
     __slots__ = (
         "P", "h", "T", "rho", "x", "drho_dP", "drho_dh", "s", "cp",
-        "T_sat", "h_l", "h_v", "rho_l", "rho_v", "phase",
+        "T_sat", "h_l", "h_v", "rho_l", "rho_v", "cp_l", "phase",
     )
 
     def __repr__(self) -> str:  # pragma: no cover - convenience only
@@ -369,6 +369,7 @@ class RefrigerantTables:
                 s2 = np.where(is_v, V[_RI["s"]], s2)
         st.T, st.rho, st.drho_dP, st.drho_dh, st.cp, st.s = T, rho, drdP, drdh, cpv, s2
         st.T_sat, st.h_l, st.h_v, st.rho_l, st.rho_v = T_l, h_l, h_v, rho_l, rho_v
+        st.cp_l = sat[_SI["cp_l"]]
         st.phase = np.where(is_v, PHASE_VAPOR, np.where(is_l, PHASE_LIQUID, PHASE_TWOPHASE))
         return st
 

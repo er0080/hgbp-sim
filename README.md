@@ -230,10 +230,14 @@ Three lumped volumes with pressure and mean enthalpy as states:
   fill exceeds `acc_carry_fill0`.
 * **discharge volume** (`V_d`, 1.5 L): compressor port to valve 1.
 * **intermediate section** (`V_i`, 3 L): header, brazed-plate condenser and liquid line. Its
-  liquid inventory follows from the charge; the outlet delivers saturated liquid, gains
-  subcooling as liquid backs up (`SC_fill0`, `SC_max`), loses its liquid seal and passes
-  two-phase fluid when the fill drops below `cond_dry_fill`, and the condensing
-  conductance scales with the area not flooded by liquid.
+  liquid inventory follows from the charge. Liquid backing up floods part of the plates:
+  the condensing conductance scales with the area left, and the flooded share is a
+  subcooled zone where the leaving liquid meets the entering water in counterflow
+  (effectiveness-NTU with the liquid-side `UA_sc` in series with the water side). The
+  subcooling therefore depends on the flooded area, the liquid flow and the water flow and
+  temperature, and the liquid cannot leave colder than the water enters; the water then
+  goes on to the condensing area. The outlet loses its liquid seal and passes two-phase
+  fluid when the fill drops below `cond_dry_fill`.
 
 ```
 mass    : V (drho/dP|h dP/dt + drho/dh|P dh/dt) = sum(m_in) - sum(m_out)
@@ -354,7 +358,7 @@ suction pressure (+0.6 bar), discharge pressure (+1.8 bar) and superheat (+11 K)
 | compressor | `V_disp` (355 cm3/rev), `N_nom` (3550 rpm), `eta_v0`, `c_cl`, `eta_s0`, `a_s`, `Pr_opt`, `eta_motor`, `f_motor_gas`, `C_shell`, `UA_gs`, `UA_sha`, `ramp_N` |
 | volumes / charge | `V_s` (12 L), `V_d` (1.5 L), `V_i` (3 L), `charge`, `cold_liquid_in_accumulator` |
 | accumulator | `acc_blend_dx`, `acc_carry_fill0`, `acc_carry_max` |
-| condenser | `UA_r_2ph`, `UA_r_1ph`, `cond_dry_fill`, `SC_fill0`, `SC_max`, `UA_w0`, `mdot_w_ref`, `C_cw`, `UA_ca` |
+| condenser | `UA_r_2ph`, `UA_r_1ph`, `UA_sc`, `cond_dry_fill`, `UA_w0`, `mdot_w_ref`, `C_cw`, `UA_ca` |
 | walls | `C_sw`, `UA_sg`, `UA_sa`, `C_dw`, `UA_dg`, `UA_da` |
 | valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w` in m3/h (+ characteristic, `tau_*`, `rate_*`), water supply `P_w_sup` |
 | sensors | `tau_T`, `tau_m`, `tau_W`, `sig_*` |

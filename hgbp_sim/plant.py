@@ -60,8 +60,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .components import (actuator_rate, clip, compressor, cv_balance, gas_valve_flow,
-                         kv_to_C, liquid_valve_flow, smoothstep, valve_characteristic,
+from .components import (actuator_rate, clip, compressor, counterflow_effectiveness, cv_balance,
+                         gas_valve_flow, kv_to_C, liquid_valve_flow, smoothstep, valve_characteristic,
                          water_valve_flow)
 from .params import PlantParams, nominal_charge, sample_params
 from .properties import RefrigerantTables, get_tables
@@ -175,15 +175,13 @@ class HGBPPlant:
         cp = compressor(p, pr, P_s, h_out, O.s, O.rho, P_d, N, T_sh)
         mdot_c, h2 = cp["mdot"], cp["h2"]
 
-        # ---- condenser inventory, outlet condition (fill capped at 1: liquid-full)
+        # ---- condenser inventory and the stream leaving the volume (fill capped at 1: liquid-full);
+        # it is subcooled on its way out in the flooded part of the plates (see the condenser below)
         fill_i = np.minimum((1.0 - clip(I.x, 0.0, 1.0)) * M_i / (I.rho_l * p.V_i), 1.0)
         dry = 1.0 - smoothstep(fill_i / p.cond_dry_fill)          # 1: no liquid seal
-        SC = p.SC_max * smoothstep((fill_i - p.SC_fill0) / (1.0 - p.SC_fill0))
-        h_co_liq = np.minimum(I.h_l - p.cp_liq * SC, np.where(I.x < 0.0, h_i, I.h_l))
-        h_co = h_co_liq * (1.0 - dry) + h_i * dry
+        h_cv_out = np.where(I.x < 0.0, h_i, I.h_l) * (1.0 - dry) + h_i * dry
         rho_co = I.rho_l * (1.0 - dry) + I.rho * dry
         h_iv = I.h_v * (1.0 - dry) + h_i * dry                    # vapor phase of the CV
-        T_co = np.where(I.x < 0.0, np.minimum(I.T, I.T_sat - SC), I.T_sat - SC) * (1.0 - dry) + I.T * dry
 
         # ---- valve 1: discharge -> intermediate header
         T_g, rho_g = pr.vapor_props(P_i, h_d)                    # header gas after throttling
@@ -202,7 +200,6 @@ class HGBPPlant:
         # ---- valve 3: condenser outlet -> suction tank
         f3 = valve_characteristic(u3, p.stv_char, p.stv_R)
         mdot_3 = liquid_valve_flow(kv_to_C(p.Kv_stv) * f3, P_i, P_s, rho_co, S.rho, p.f_choke_liq, p.eps_valve)
-        h_3f = np.where(mdot_3 >= 0.0, h_co, h_s)
 
         # ---- pipe / tank walls
         Q_sg = p.UA_sg * (T_sw - S.T)                    # wall -> tank contents
@@ -210,19 +207,38 @@ class HGBPPlant:
         Q_dg = p.UA_dg * (T_dw - D.T)                    # wall -> discharge gas
         dT_dw = (p.UA_da * (T_amb - T_dw) - Q_dg) / p.C_dw
 
-        # ---- condenser heat transfer (liquid backing up removes condensing area)
-        w2 = (1.0 - smoothstep((I.x - 0.85) / 0.15)) * (1.0 - smoothstep(-I.x / 0.05))
-        a_c = w2 * (1.0 - fill_i)
-        UA_r = p.UA_r_2ph * a_c + p.UA_r_1ph * (1.0 - a_c)
-        Q_r = UA_r * (I.T - T_cw)                        # refrigerant -> wall
+        # ---- condenser.  Plate area shares: flooded by liquid (fill_i), condensing (a_c) and
+        # vapor-covered (the rest); liquid backing up removes condensing area.  Water enters
+        # at the liquid end: it first subcools the leaving liquid, then cools the wall.
         f_w = valve_characteristic(u4, p.w_char, p.w_R)
         mdot_w = water_valve_flow(kv_to_C(p.Kv_w) * f_w, p.P_w_sup, p.rho_w)
         Cw = mdot_w * p.cp_w
-        UA_w = p.UA_w0 * np.power(np.maximum(mdot_w / p.mdot_w_ref, 1e-6), 0.8)
-        eps_w = 1.0 - np.exp(-UA_w / np.maximum(Cw, 1e-9))
-        Q_w = eps_w * Cw * (T_cw - T_wi)                 # wall -> water
+        UA_w = p.UA_w0 * np.power(np.maximum(mdot_w / p.mdot_w_ref, 1e-6), 0.8)   # water side, whole area
+        # subcooled zone: the leaving liquid against the entering water in counterflow
+        # (effectiveness-NTU, no heat capacity of its own); cannot cool below the water inlet
+        a_sc = fill_i * (1.0 - dry)
+        T_l = np.where(I.x < 0.0, I.T, I.T_sat)                   # liquid entering the zone
+        C_l = np.maximum(mdot_3, 0.0) * I.cp_l
+        C_min, C_max = np.minimum(C_l, Cw), np.maximum(C_l, Cw)
+        UA_sc = a_sc * p.UA_sc * UA_w / (p.UA_sc + UA_w)           # liquid side in series with water side
+        eps_sc = counterflow_effectiveness(UA_sc / np.maximum(C_min, 1e-9), C_min / np.maximum(C_max, 1e-9))
+        Q_sc = eps_sc * C_min * np.maximum(T_l - T_wi, 0.0)       # liquid -> water
+        h_co = h_cv_out - Q_sc / np.maximum(mdot_3, 1e-9)
+        T_co = (T_l - Q_sc / np.maximum(C_l, 1e-9)) * (1.0 - dry) + I.T * dry
+        SC = I.T_sat - T_co
+        h_3i = np.where(mdot_3 >= 0.0, h_cv_out, h_s)              # leaving the intermediate volume
+        h_3f = np.where(mdot_3 >= 0.0, h_co, h_s)                  # entering the suction tank
+        # condensing / vapor area: refrigerant -> wall -> water (after the subcooled zone)
+        w2 = (1.0 - smoothstep((I.x - 0.85) / 0.15)) * (1.0 - smoothstep(-I.x / 0.05))
+        a_c = w2 * (1.0 - fill_i)
+        UA_r = p.UA_r_2ph * a_c + p.UA_r_1ph * (1.0 - fill_i - a_c)
+        Q_r = UA_r * (I.T - T_cw)                        # refrigerant -> wall
+        T_w1 = T_wi + Q_sc / np.maximum(Cw, 1e-9)        # water leaving the subcooled zone
+        eps_w = 1.0 - np.exp(-UA_w * (1.0 - a_sc) / np.maximum(Cw, 1e-9))
+        Q_ww = eps_w * Cw * (T_cw - T_w1)                # wall -> water
+        Q_w = Q_sc + Q_ww                                # water duty
         T_wo = T_wi + np.where(Cw > 1e-9, Q_w / np.maximum(Cw, 1e-9), 0.0)
-        dT_cw = (Q_r - Q_w + p.UA_ca * (T_amb - T_cw)) / p.C_cw
+        dT_cw = (Q_r - Q_ww + p.UA_ca * (T_amb - T_cw)) / p.C_cw
 
         # ---- compressor shell
         dT_sh = (cp["Q_gs"] + (1.0 - p.f_motor_gas) * cp["Q_motor"]
@@ -238,7 +254,7 @@ class HGBPPlant:
         dP_d, dh_d = cv_balance(p.V_d, D.rho, D.drho_dP, D.drho_dh, dm_d, E_d)
 
         dm_i = mdot_1 - mdot_2 - mdot_3
-        E_i = mdot_1 * (h_1f - h_i) - mdot_2 * (h_2f - h_i) - mdot_3 * (h_3f - h_i) - Q_r
+        E_i = mdot_1 * (h_1f - h_i) - mdot_2 * (h_2f - h_i) - mdot_3 * (h_3i - h_i) - Q_r
         dP_i, dh_i = cv_balance(p.V_i, I.rho, I.drho_dP, I.drho_dh, dm_i, E_i)
 
         # ---- speed, actuators, sensors
@@ -268,7 +284,7 @@ class HGBPPlant:
             rho_s=O.rho, h_s=h_s, h_out=h_out, h_d=h_d, h_i=h_i, h_co=h_co, h2=h2, T2_ad=cp["T2_ad"],
             mdot_c=mdot_c, mdot_1=mdot_1, mdot_2=mdot_2, mdot_3=mdot_3, mdot_w=mdot_w,
             W_el=cp["W_el"], W_shaft=cp["W_shaft"], Pr=cp["Pr"], eta_v=cp["eta_v"], eta_s=cp["eta_s"],
-            Q_r=Q_r, Q_w=Q_w, Q_sg=Q_sg, Q_dg=Q_dg, T_wo=T_wo, T_sw=T_sw, T_dw=T_dw, T_cw=T_cw,
+            Q_r=Q_r, Q_w=Q_w, Q_sc=Q_sc, Q_sg=Q_sg, Q_dg=Q_dg, T_wo=T_wo, T_sw=T_sw, T_dw=T_dw, T_cw=T_cw,
             T_sh=T_sh, N=N, u1=u1, u2=u2, u3=u3, u4=u4, M_s=M_s, M_d=M_d, M_i=M_i,
             M_tot=M_s + M_d + M_i, charge=p.charge, Tm_s=Tm_s, Tm_d=Tm_d, Tm_co=Tm_co, mm=mm, Wm=Wm,
             dx=dx,

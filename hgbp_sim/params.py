@@ -75,11 +75,9 @@ class PlantParams:
 
     # ----------------------------------------------------------- condenser
     UA_r_2ph: float = 10500.0   # refrigerant -> wall, condensing (full area) [W/K]
-    UA_r_1ph: float = 875.0     # refrigerant -> wall, single-phase [W/K]
+    UA_r_1ph: float = 875.0     # refrigerant -> wall, single-phase vapor [W/K]
+    UA_sc: float = 4000.0       # liquid -> wall in the subcooled zone, whole area flooded [W/K]
     cond_dry_fill: float = 0.08 # liquid fill below which the outlet loses its liquid seal
-    SC_fill0: float = 0.25      # liquid fill above which outlet subcooling builds up
-    SC_max: float = 15.0        # outlet subcooling at a liquid-full condenser [K]
-    cp_liq: float = 1400.0      # liquid cp for subcooling enthalpy [J/kg/K]
     UA_w0: float = 10500.0      # wall -> water at the reference water flow [W/K]
     mdot_w_ref: float = 1.75    # water flow at which UA_w0 applies [kg/s]
     cp_w: float = 4180.0        # water specific heat [J/kg/K]
@@ -152,7 +150,7 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
     "V_s": 0.20, "V_d": 0.25, "V_i": 0.20,
     "C_sw": 0.3, "UA_sg": 0.3, "UA_sa": 0.3, "C_dw": 0.3, "UA_dg": 0.3, "UA_da": 0.3,
     "UA_r_2ph": 0.25, "UA_r_1ph": 0.25, "UA_w0": 0.25, "C_cw": 0.3, "UA_ca": 0.3,
-    "SC_max": 0.3, "cond_dry_fill": 0.3, "acc_carry_fill0": 0.2,
+    "UA_sc": 0.25, "cond_dry_fill": 0.3, "acc_carry_fill0": 0.2,
     "Kv_dpv": 0.15, "Kv_spv": 0.15, "Kv_stv": 0.15, "Kv_w": 0.15,
     "tau_dpv": 0.3, "tau_spv": 0.3, "tau_stv": 0.3, "rate_dpv": 0.3, "rate_spv": 0.3,
     "rate_stv": 0.3, "tau_w": 0.3, "rate_w": 0.3,
