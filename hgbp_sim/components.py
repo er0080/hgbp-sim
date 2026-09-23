@@ -40,6 +40,19 @@ def valve_characteristic(u, kind: str, R):
 
 
 # ------------------------------------------------------------------- valves
+# Valves are sized by their Kv: the water flow [m^3/h] the fully open valve
+# passes at a 1 bar drop.  With Q = Kv sqrt(dP[bar] / SG) that is
+#     mdot [kg/s] = (Kv / 36000) sqrt(rho [kg/m^3] dP [Pa])
+# so the flow functions below take C = Kv / 36000 in kg/s per sqrt(Pa kg/m^3).
+KV_TO_C = 1.0 / 36000.0
+
+
+def kv_to_C(Kv):
+    """Flow coefficient C [kg/s per sqrt(Pa kg/m^3)] of a valve rated ``Kv``
+    [m^3/h].  Scale by the installed flow fraction f(u) before use."""
+    return Kv * KV_TO_C
+
+
 def gas_valve_flow(C, P1, P2, rho1, rho2, kappa, xT, eps):
     """Compressible flow through a valve/orifice (ISA-style with choking).
 
@@ -67,6 +80,12 @@ def liquid_valve_flow(C, P1, P2, rho1, rho2, f_choke, eps):
     rho_up = np.where(fwd, rho1, rho2)
     dPe = np.sign(dP) * np.minimum(np.abs(dP), f_choke * P_up)
     return C * np.sqrt(rho_up) * regroot(dPe, eps)
+
+
+def water_valve_flow(C, dP, rho):
+    """Cooling water through the condenser water valve: incompressible, never
+    flashing, and fed from a supply of fixed pressure ``dP`` above the drain."""
+    return C * np.sqrt(rho * np.maximum(dP, 0.0))
 
 
 def line_flow(K, P1, P2, rho1, rho2, eps):

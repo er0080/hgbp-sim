@@ -2,9 +2,9 @@
 
 All quantities are SI (Pa, J/kg, K, kg/s, m^3, W, W/K, J/K, s).
 
-Defaults describe a ~5 kW-capacity variable-speed semi-hermetic reciprocating
-compressor on R134a with a brazed-plate water-cooled condenser.  Every numeric
-field can be randomized per environment with :func:`randomize_params`.
+Defaults describe a variable-speed 355 cm3/rev semi-hermetic compressor on
+R410A with a brazed-plate water-cooled condenser.  Every numeric field can be
+randomized per environment with :func:`randomize_params`.
 
 Valve numbering follows the stand:
     1  discharge pressure valve      (discharge line, upstream of the split)
@@ -21,17 +21,20 @@ from types import SimpleNamespace
 
 import numpy as np
 
+# Refrigerants offered by the UI (any CoolProp fluid works in the library)
+FLUIDS = ("R134a", "R1234yf", "R1234ze(E)", "R404A", "R407C", "R410A", "R32", "R22", "R290", "R600a")
+
 
 @dataclass
 class PlantParams:
     # ---------------------------------------------------------------- fluid
-    fluid: str = "R134a"
+    fluid: str = "R410A"
 
     # ----------------------------------------------------------- compressor
-    V_disp: float = 250e-6      # swept volume per revolution [m^3/rev]
-    N_nom: float = 1450.0       # nominal speed [rpm]
-    N_min: float = 600.0        # minimum VFD speed when running [rpm]
-    N_max: float = 2100.0       # maximum VFD speed [rpm]
+    V_disp: float = 3.55e-4     # swept volume per revolution [m^3/rev]
+    N_nom: float = 3550.0       # nominal speed [rpm]
+    N_min: float = 1200.0       # minimum VFD speed when running [rpm]
+    N_max: float = 5400.0       # maximum VFD speed [rpm]
     eta_v0: float = 0.95        # volumetric efficiency intercept
     c_cl: float = 0.04          # clearance re-expansion coefficient
     kappa: float = 1.10         # polytropic exponent for re-expansion
@@ -71,39 +74,44 @@ class PlantParams:
     UA_da: float = 3.0
 
     # ----------------------------------------------------------- condenser
-    UA_r_2ph: float = 3000.0    # refrigerant -> wall, condensing (full area) [W/K]
-    UA_r_1ph: float = 250.0     # refrigerant -> wall, single-phase [W/K]
+    UA_r_2ph: float = 10500.0   # refrigerant -> wall, condensing (full area) [W/K]
+    UA_r_1ph: float = 875.0     # refrigerant -> wall, single-phase [W/K]
     cond_dry_fill: float = 0.08 # liquid fill below which the outlet loses its liquid seal
     SC_fill0: float = 0.25      # liquid fill above which outlet subcooling builds up
     SC_max: float = 15.0        # outlet subcooling at a liquid-full condenser [K]
     cp_liq: float = 1400.0      # liquid cp for subcooling enthalpy [J/kg/K]
-    UA_w0: float = 3000.0       # wall -> water at full water flow [W/K]
-    mdot_w_max: float = 0.5     # maximum cooling water flow [kg/s]
+    UA_w0: float = 10500.0      # wall -> water at the reference water flow [W/K]
+    mdot_w_ref: float = 1.75    # water flow at which UA_w0 applies [kg/s]
     cp_w: float = 4180.0        # water specific heat [J/kg/K]
-    C_cw: float = 8e3           # brazed-plate HX metal + water content [J/K]
+    rho_w: float = 1000.0       # cooling water density [kg/m^3]
+    C_cw: float = 28e3          # brazed-plate HX metal + water content [J/K]
     UA_ca: float = 5.0          # condenser/liquid line -> ambient [W/K]
 
     # -------------------------------------------------------------- valves
-    # flow coefficient C in kg/s per sqrt(Pa * kg/m^3)
-    C_dpv: float = 6.0e-5       # valve 1: discharge pressure valve (fully open)
+    # Every valve is sized by its Kv, the way the hardware is specified: the
+    # water flow [m^3/h] the fully open valve passes at a 1 bar pressure drop.
+    # Internally mdot = (Kv / 36000) f(u) sqrt(rho dP)  (see components.kv_to_C).
+    Kv_dpv: float = 6.3         # valve 1: discharge pressure valve [m^3/h]
     dpv_char: str = "eqpct"
     dpv_R: float = 30.0
     tau_dpv: float = 0.3
     rate_dpv: float = 0.2
-    C_spv: float = 4.0e-5       # valve 2: suction pressure (hot gas bypass) valve
+    Kv_spv: float = 6.3         # valve 2: suction pressure (hot gas bypass) valve [m^3/h]
     spv_char: str = "eqpct"
     spv_R: float = 30.0
     tau_spv: float = 0.3
     rate_spv: float = 0.2
-    C_stv: float = 1.0e-6       # valve 3: suction temperature (liquid) valve
+    Kv_stv: float = 1.0         # valve 3: suction temperature (liquid) valve [m^3/h]
     stv_char: str = "linear"
     stv_R: float = 30.0
     tau_stv: float = 0.3
     rate_stv: float = 0.2
-    w_char: str = "eqpct"       # valve 4: cooling water valve
+    Kv_w: float = 12.0          # valve 4: cooling water valve [m^3/h]
+    w_char: str = "eqpct"
     w_R: float = 30.0
     tau_w: float = 2.0
     rate_w: float = 0.1
+    P_w_sup: float = 1.5e5      # cooling water supply pressure across valve 4 [Pa]
     xT: float = 0.70            # gas valve terminal pressure-drop ratio
     eps_valve: float = 2e3      # regularization pressure for valves [Pa]
     f_choke_liq: float = 0.7    # max effective dP/P_in for flashing liquid
@@ -119,13 +127,13 @@ class PlantParams:
     sig_W_rel: float = 0.005    # power meter relative noise
 
     # ------------------------------------------------------------- limits
-    P_d_max: float = 26e5       # high discharge pressure trip [Pa]
+    P_d_max: float = 41.4e5     # high discharge pressure trip [Pa] (600 psig R410A switch)
     P_s_min: float = 0.3e5      # low suction pressure trip [Pa]
-    P_s_max: float = 12e5       # high suction pressure trip [Pa]
+    P_s_max: float = 30e5       # high suction pressure trip [Pa]
     T_d_max: float = 135.0 + 273.15  # high discharge temperature trip [K]
 
     # ------------------------------------------------- baseline control aid
-    dP_i_margin: float = 2.5e5  # default intermediate pressure setpoint = P_d - margin
+    dP_i_margin: float = 15.89e5  # default intermediate pressure setpoint = P_d - margin
 
     def replace(self, **kw) -> "PlantParams":
         return dataclasses.replace(self, **kw)
@@ -145,7 +153,7 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
     "C_sw": 0.3, "UA_sg": 0.3, "UA_sa": 0.3, "C_dw": 0.3, "UA_dg": 0.3, "UA_da": 0.3,
     "UA_r_2ph": 0.25, "UA_r_1ph": 0.25, "UA_w0": 0.25, "C_cw": 0.3, "UA_ca": 0.3,
     "SC_max": 0.3, "cond_dry_fill": 0.3, "acc_carry_fill0": 0.2,
-    "C_dpv": 0.15, "C_spv": 0.15, "C_stv": 0.15,
+    "Kv_dpv": 0.15, "Kv_spv": 0.15, "Kv_stv": 0.15, "Kv_w": 0.15,
     "tau_dpv": 0.3, "tau_spv": 0.3, "tau_stv": 0.3, "rate_dpv": 0.3, "rate_spv": 0.3,
     "rate_stv": 0.3, "tau_w": 0.3, "rate_w": 0.3,
     "tau_T": 0.3, "tau_m": 0.3,
@@ -211,9 +219,22 @@ def nominal_charge(p, props, T_evap: float = 263.15, T_int: float = 313.15,
 _GROUPS = [
     ("fluid", "Refrigerant"), ("V_disp", "Compressor"), ("V_s", "Volumes"), ("charge", "Charge"),
     ("acc_blend_dx", "Suction accumulator"), ("C_sw", "Pipe and tank walls"), ("UA_r_2ph", "Condenser"),
-    ("C_dpv", "Valves"), ("tau_T", "Sensors"), ("P_d_max", "Safety limits"), ("dP_i_margin", "Baseline control"),
+    ("Kv_dpv", "Valves"), ("tau_T", "Sensors"), ("P_d_max", "Safety limits"), ("dP_i_margin", "Baseline control"),
 ]
 _REQUIRE_INIT = {"fluid", "V_s", "V_d", "V_i", "charge", "cold_liquid_in_accumulator"}
+# Editable range (min, max) enforced by the UI and by LiveStand.set_params.
+# Parameters that are not listed are unconstrained.
+_RANGES: dict[str, tuple[float, float]] = {
+    "Kv_dpv": (0.01, 200.0), "Kv_spv": (0.01, 200.0),
+    "Kv_stv": (0.01, 200.0), "Kv_w": (0.01, 200.0),
+    "P_w_sup": (0.2e5, 10e5),
+}
+
+
+def clamp_to_range(name: str, value: float) -> float:
+    """Clamp a numeric parameter to its editable range (identity if unlisted)."""
+    lo, hi = _RANGES.get(name, (-np.inf, np.inf))
+    return float(min(max(value, lo), hi))
 
 
 def param_metadata() -> list[dict]:
@@ -243,6 +264,7 @@ def param_metadata() -> list[dict]:
             dflt = eval(default, {"__builtins__": {}}, {})
         except Exception:  # noqa: BLE001
             dflt = default
+        lo, hi = _RANGES.get(name, (None, None))
         meta.append(dict(name=name, group=group, unit=unit, description=comment.strip(), default=dflt,
-                         kind=kind, requires_init=name in _REQUIRE_INIT))
+                         kind=kind, requires_init=name in _REQUIRE_INIT, min=lo, max=hi))
     return meta

@@ -117,7 +117,7 @@ policy's output a rate that the PLC can clamp.
   `state`, `permissive_ok`, `point_done`, `schedule_complete`, per-term reward
   components.
 
-### 3.5 Reward (per 1 s control step)
+### 3.5 Reward (per control step, 0.25 s)
 
 | term | value |
 |---|---|
@@ -195,7 +195,8 @@ About 120 k parameters. Inference cost is negligible at 1 Hz.
    the expert, retrain. Target: match the expert's tracking with no trips.
 3. **RL fine-tuning.** PPO with the recurrent policy, 512..1024 parallel environments,
    rollouts of 128..256 steps, GAE lambda 0.95, gamma 0.995 (time constants of minutes at
-   1 s steps), entropy bonus small, learning rate 3e-4 decaying, KL penalty against the
+   1 s steps; scale gamma toward 0.999 for the 0.25 s interval), entropy bonus small,
+   learning rate 3e-4 decaying, KL penalty against the
    cloned policy for the first iterations to avoid unlearning. Keep the supervised charge
    loss as an auxiliary term.
 4. **Curriculum.** Nominal charge, warm starts, single points first; then multiple
@@ -263,8 +264,9 @@ Add on the real stand: mass flow and power readings within +-1 % of their traili
 * **Same observation pipeline.** Assemble the observation on the stand from the same
   definitions (Section 3.1), including the property conversions and the normalizations.
   Log the assembled vector so simulator and stand data are directly comparable.
-* **Timing.** 1 s control interval; measurement filtering identical to the simulator's
-  sensor model (first-order, 4 s temperature, 1 s flow). Verify end-to-end latency
+* **Timing.** 0.25 s control interval (the discharge-pressure loop is unstable at 1 s on
+  this machine); measurement filtering identical to the simulator's sensor model
+  (first-order, 4 s temperature, 1 s flow). Verify end-to-end latency
   (DAQ -> network -> actuator command) below 200 ms.
 * **Staged rollout.** (1) Shadow mode: the network runs alongside the PID, its actions
   are logged, not applied; compare. (2) Advisory mode: the network's increments are

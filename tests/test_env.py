@@ -13,7 +13,7 @@ def test_vec_env_api():
     assert env.act_dim == 4
     assert sum(len(g) for g in OBS_GROUPS.values()) == len(OBS_NAMES)
     n_done = 0
-    for _ in range(80):
+    for _ in range(int(80.0 / cfg.dt_ctrl)):      # 80 s, past the 60 s truncation
         a = env.expert_action() + 0.1 * env.rng.standard_normal((6, env.act_dim))
         obs, r, term, trunc, info = env.step(a)
         assert obs.shape == (6, len(OBS_NAMES)) and np.isfinite(obs).all()
@@ -41,8 +41,8 @@ def test_warm_start_is_near_setpoint_and_context_in_obs():
     assert np.abs(e[:, 2]).max() < 0.5 and np.abs(e[:, 3]).max() < 1.0
     assert info["in_tol"].all() and (info["state"] == ST_RUNNING).all()
     i = OBS_NAMES.index
-    assert np.allclose(obs[:, i("V_disp_rel")], 1.0)          # default 250 cm3/rev
-    assert np.allclose(obs[:, i("rf_T_crit")], 374.2 / 400.0, atol=1e-3)
+    assert np.allclose(obs[:, i("V_disp_rel")], 1.42)         # 355 cm3/rev over the 250 cm3 reference
+    assert np.allclose(obs[:, i("rf_T_crit")], 344.5 / 400.0, atol=1e-3)   # R410A
     assert np.all(obs[:, i("mdot_norm")] > 0.3) and np.all(obs[:, i("mdot_norm")] < 1.0)
     assert np.all(obs[:, i("st_running")] == 1.0)
 
@@ -65,7 +65,7 @@ def test_start_stop_interlock_and_dwell_completion():
     assert env.act_dim == 5
     a = env.expert_action()
     a[:, 4] = -1.0                                   # no run request: stays OFF
-    for _ in range(15):
+    for _ in range(int(15.0 / cfg.dt_ctrl)):
         obs, r, term, trunc, info = env.step(a)
     assert (info["state"] == ST_OFF).all() and (info["r_idle"] < 0).all()
     # request a run with valve 1 closed -> blocked by the permissives
@@ -81,7 +81,7 @@ def test_start_stop_interlock_and_dwell_completion():
     states = []
     done = np.zeros(2, bool)
     completed = np.zeros(2, int)
-    for _ in range(1500):
+    for _ in range(int(1500.0 / cfg.dt_ctrl)):    # 1500 s: 900 s hold + dwell + shutdown
         obs, r, term, trunc, info = env.step(env.expert_action())
         states.append(info["state"][0])
         seen_starting |= bool((info["state"] == ST_STARTING).any())

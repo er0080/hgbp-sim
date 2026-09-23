@@ -4,14 +4,16 @@ thing, for operator training, controller tuning and UI work.
 The engine is framework-agnostic (no web code here).  It owns
 
 * one :class:`HGBPPlant` (n = 1) advanced in control steps of ``dt_ctrl``,
-* four PID loops with auto / manual mode, setpoints and live-editable gains
-  (bumpless transfer on mode changes),
+* four PID loops with auto / manual mode, setpoints and live-editable tuning
+  in the units of the stand's Yokogawa UT35A controllers (:mod:`hgbp_sim.ut35a`;
+  bumpless transfer on mode changes),
 * the compressor start/stop interlock (:mod:`hgbp_sim.interlock`) with
-  trip latching and operator reset,
+  trip latching, operator reset and switchable anti-short-cycle timers,
 * refrigerant charging / recovery while running,
 * a rolling history of every channel for trend displays,
 * parameter editing (live, or deferred to the next re-initialization for
-  structural parameters such as volumes and refrigerant).
+  structural parameters such as volumes and refrigerant),
+* defaults for all of the above from one document (:mod:`hgbp_sim.defaults`).
 """
 from __future__ import annotations
 
@@ -19,19 +21,20 @@ from collections import deque
 
 import numpy as np
 
-from .control import DEFAULT_GAINS, BaselineController
+from . import ut35a
+from .control import BaselineController
+from .defaults import merge_defaults
 from .interlock import ST_OFF, STATE_NAMES, Interlock, permissives
-from .params import PlantParams, param_metadata
+from .params import FLUIDS, PlantParams, clamp_to_range, param_metadata
 from .plant import HGBPPlant
 from .properties import get_tables
 from .scenarios import NAMED_POINTS, named_point
 from .steady_state import solve_steady_state
 
 C2K = 273.15
-FLUIDS = ("R134a", "R1234yf", "R1234ze(E)", "R404A", "R407C", "R410A", "R32", "R22", "R290", "R600a")
 
 # loop name -> label, process value key (SI in the plant), display unit, valve index,
-# gain scale (display unit -> SI), unit conversion of the process value / setpoint
+# gain scale (SI -> per display unit)
 LOOPS = {
     "dpv": dict(label="Discharge pressure", pv="P_d", unit="bar", valve=0, scale=1e5,
                 valve_label="1 discharge pressure valve"),
@@ -44,6 +47,8 @@ LOOPS = {
 }
 _TO_SI = {"bar": lambda v: v * 1e5, "°C": lambda v: v + C2K, "K": lambda v: v}
 _FROM_SI = {"bar": lambda v: v / 1e5, "°C": lambda v: v - C2K, "K": lambda v: v}
+# anti-short-cycle timers of the interlock [s] (both 0 when the timers are switched off)
+MIN_OFF_TIME, MIN_RUN_TIME = 60.0, 120.0
 HISTORY_CHANNELS = (
     "t", "P_s", "P_d", "P_i", "Tsat_s", "Tsat_d", "Tsat_i", "T_s", "T_d", "T_co", "T_wi", "T_wo",
     "SH", "SC", "mdot", "W", "N", "u1", "u2", "u3", "u4",
@@ -53,23 +58,30 @@ HISTORY_CHANNELS = (
 
 
 class LiveStand:
-    def __init__(self, params: PlantParams | None = None, dt_ctrl: float = 0.25, dt_sim: float = 0.05,
-                 seed: int | None = 0, history_len: int = 60000, T_amb: float = 25.0,
-                 T_wi: float = 20.0):
-        self.params = params if params is not None else PlantParams()
-        self.dt_ctrl = float(dt_ctrl)
+    """``defaults`` is a validated defaults document (see
+    :func:`hgbp_sim.defaults.load_defaults`); without one the built-in
+    defaults apply.  ``params``, ``dt_ctrl``, ``T_amb`` and ``T_wi`` override it."""
+
+    def __init__(self, params: PlantParams | None = None, dt_ctrl: float | None = None, dt_sim: float = 0.05,
+                 seed: int | None = 0, history_len: int = 60000, T_amb: float | None = None,
+                 T_wi: float | None = None, defaults: dict | None = None):
+        self.defaults = defaults if defaults is not None else merge_defaults({})
+        sim = self.defaults["simulation"]
+        self.params = params if params is not None else PlantParams(**self.defaults["plant"])
+        self.dt_ctrl = float(sim["dt_ctrl"] if dt_ctrl is None else dt_ctrl)
         self.dt_sim = float(dt_sim)
         self.rng = np.random.default_rng(seed)
         self.history_len = int(history_len)
-        self.noise = True
-        self.speed_factor = 1.0
+        self.noise = bool(sim["noise"])
+        self.short_cycle_timers = bool(sim["short_cycle_timers"])
+        self.speed_factor = float(sim["speed_factor"])
         self.paused = False
         self.step_count = 0
-        self.T_amb = T_amb + C2K
-        self.T_wi = T_wi + C2K
+        self.T_amb = float(sim["T_amb"] if T_amb is None else T_amb) + C2K
+        self.T_wi = float(sim["T_wi"] if T_wi is None else T_wi) + C2K
         self.pending_params: dict = {}
         self.charge_pending = 0.0           # kg still to add (+) / recover (-)
-        self.charge_rate = 0.005            # kg/s
+        self.charge_rate = float(sim["charge_rate_g_s"]) / 1000.0     # kg/s
         self.trip_reasons: list[str] = []
         self.events: deque = deque(maxlen=200)
         self._build()
@@ -82,13 +94,15 @@ class LiveStand:
         self.ctrl = BaselineController(1)
         self.mode = {k: "auto" for k in LOOPS}
         self.manual_out = {k: 0.0 for k in LOOPS}
-        self.gains = {k: dict(DEFAULT_GAINS[k]) for k in LOOPS}
-        self._apply_gains()
-        self.interlock = Interlock(1, 60.0, 120.0)
+        loops = self.defaults["loops"]
+        # UT35A settings per loop: P, I, D, DR, input range RL..RH, output limits OL..OH
+        self.tuning = {k: {n: v for n, v in loops[k].items() if n != "SP"} for k in LOOPS}
+        self._apply_tuning()
+        self.interlock = Interlock(1, MIN_OFF_TIME, MIN_RUN_TIME)
+        self._apply_timers()
         self.run_request = False
         self.speed_sp = float(self.params.N_nom)
-        pt = named_point("MT_standard", self.props, self.params.N_nom)
-        self.sp = dict(P_d=pt["P_d"], P_s=pt["P_s"], T_s=self._T_s_for(pt), P_i=pt["P_i"])
+        self.sp = {info["pv"]: float(_TO_SI[info["unit"]](loops[k]["SP"])) for k, info in LOOPS.items()}
         self.history = {k: deque(maxlen=self.history_len) for k in HISTORY_CHANNELS}
         self.t = 0.0
 
@@ -96,10 +110,17 @@ class LiveStand:
         """Suction temperature setpoint [K] giving the point's superheat."""
         return float(self.props.T_sat(np.array([pt["P_s"]]))[0]) + float(pt["SH"])
 
-    def _apply_gains(self) -> None:
+    def _apply_tuning(self) -> None:
         for k, pid in self._pids().items():
-            g = self.gains[k]
-            pid.Kp, pid.Ki, pid.Kd = (np.asarray(g[n], float) for n in ("Kp", "Ki", "Kd"))
+            t = self.tuning[k]
+            gains = ut35a.to_gains(t["P"], t["I"], t["D"], t["DR"], t["RH"] - t["RL"])
+            pid.Kp, pid.Ki, pid.Kd = (np.asarray(g / LOOPS[k]["scale"], float) for g in gains)
+            pid.u_min, pid.u_max = t["OL"] / 100.0, t["OH"] / 100.0
+
+    def _apply_timers(self) -> None:
+        on = self.short_cycle_timers
+        self.interlock.min_off_time = MIN_OFF_TIME if on else 0.0
+        self.interlock.min_run_time = MIN_RUN_TIME if on else 0.0
 
     def _pids(self) -> dict:
         return dict(dpv=self.ctrl.pid_1, spv=self.ctrl.pid_2, stv=self.ctrl.pid_3, water=self.ctrl.pid_4)
@@ -112,10 +133,10 @@ class LiveStand:
         if self.pending_params:
             self.params = self.params.replace(**self.pending_params)
             self.pending_params = {}
-        old = (self.mode, self.manual_out, self.gains, self.sp, self.speed_sp, self.history, self.t)
+        old = (self.mode, self.manual_out, self.tuning, self.sp, self.speed_sp, self.history, self.t)
         self._build()
-        self.mode, self.manual_out, self.gains, self.sp, self.speed_sp, self.history, self.t = old
-        self._apply_gains()
+        self.mode, self.manual_out, self.tuning, self.sp, self.speed_sp, self.history, self.t = old
+        self._apply_tuning()
 
     def cold_start(self, T_amb: float | None = None, T_wi: float | None = None,
                    liquid_in_accumulator: float | None = None) -> None:
@@ -177,11 +198,24 @@ class LiveStand:
 
     # ------------------------------------------------------------ operator
     def set_loop(self, name: str, mode: str | None = None, sp: float | None = None,
-                 out: float | None = None, Kp=None, Ki=None, Kd=None) -> None:
+                 out: float | None = None, P=None, I=None, D=None) -> None:
+        """Operator actions on one loop.  ``sp`` in the loop's display unit and
+        inside its input range; ``P`` [%], ``I`` and ``D`` [s or "OFF"] as on the
+        UT35A (raises ValueError, before changing anything, if one is invalid)."""
         info = LOOPS[name]
         pid = self._pids()[name]
+        tune = dict(self.tuning[name])
+        if P is not None:
+            tune["P"] = ut35a.normalize_band(P)
+        if I is not None:
+            tune["I"] = ut35a.normalize_time(I, "I")
+        if D is not None:
+            tune["D"] = ut35a.normalize_time(D, "D")
         if sp is not None:
-            self.sp[info["pv"]] = float(_TO_SI[info["unit"]](float(sp)))
+            sp = float(sp)
+            if not tune["RL"] <= sp <= tune["RH"]:
+                raise ValueError(f"SP {sp} {info['unit']} is outside the input range {tune['RL']}..{tune['RH']}")
+            self.sp[info["pv"]] = float(_TO_SI[info["unit"]](sp))
         if mode is not None and mode != self.mode[name]:
             self.mode[name] = mode
             if mode == "auto":
@@ -191,11 +225,11 @@ class LiveStand:
             self.log(f"{info['label']} loop -> {mode}")
         if out is not None:
             self.manual_out[name] = float(np.clip(out, 0.0, 1.0))
-        g = self.gains[name]
-        for key, val in (("Kp", Kp), ("Ki", Ki), ("Kd", Kd)):
-            if val is not None:
-                g[key] = float(val) / info["scale"]
-        self._apply_gains()
+        if tune != self.tuning[name]:
+            self.tuning[name] = tune
+            self._apply_tuning()
+            sec = lambda v: v if v == ut35a.OFF else f"{v} s"
+            self.log(f"{info['label']} tuning: P {tune['P']} %, I {sec(tune['I'])}, D {sec(tune['D'])}")
 
     def set_compressor(self, run: bool | None = None, speed: float | None = None, reset: bool = False) -> None:
         if speed is not None:
@@ -216,8 +250,13 @@ class LiveStand:
 
     def set_sim(self, paused: bool | None = None, speed_factor: float | None = None,
                 noise: bool | None = None, dt_ctrl: float | None = None,
-                charge_rate: float | None = None) -> None:
-        """``charge_rate`` in kg/s (1 .. 50 g/s) for adding / recovering refrigerant."""
+                charge_rate: float | None = None, short_cycle_timers: bool | None = None) -> None:
+        """``charge_rate`` in kg/s (1 .. 50 g/s) for adding / recovering refrigerant;
+        ``short_cycle_timers`` switches the minimum off / run times on or off."""
+        if short_cycle_timers is not None and bool(short_cycle_timers) != self.short_cycle_timers:
+            self.short_cycle_timers = bool(short_cycle_timers)
+            self._apply_timers()
+            self.log("anti-short-cycle timers " + ("on" if self.short_cycle_timers else "off"))
         if charge_rate is not None:
             self.charge_rate = float(np.clip(charge_rate, 0.001, 0.05))
         if paused is not None:
@@ -246,8 +285,10 @@ class LiveStand:
             if name not in meta:
                 continue
             m = meta[name]
-            if m["kind"] == "float":
-                val = float(val)
+            if name == "charge" and val is None:
+                pass                                      # nominal charge
+            elif m["kind"] == "float":
+                val = clamp_to_range(name, float(val))
             elif m["kind"] == "bool":
                 val = bool(val)
             if m["requires_init"]:
@@ -263,15 +304,18 @@ class LiveStand:
         return dict(applied=applied, deferred=deferred)
 
     def params_view(self) -> dict:
-        vals = {}
-        for m in param_metadata():
+        """Current values, metadata (defaults from the defaults document),
+        and the defaults document itself for the Settings tab."""
+        vals, meta = {}, param_metadata()
+        for m in meta:
             v = self.pending_params.get(m["name"], getattr(self.params, m["name"]))
             if m["name"] == "charge":
                 v = float(self.plant.p.charge[0])
             vals[m["name"]] = v
-        return dict(values=vals, meta=param_metadata(), pending=sorted(self.pending_params),
+            m["default"] = self.defaults["plant"][m["name"]]
+        return dict(values=vals, meta=meta, pending=sorted(self.pending_params),
                     fluids=list(FLUIDS), named_points=NAMED_POINTS,
-                    nominal_charge=float(self.plant.nominal_charge()[0]))
+                    nominal_charge=float(self.plant.nominal_charge()[0]), defaults=self.defaults)
 
     # -------------------------------------------------------------- physics
     def _inject_charge(self, dm: float) -> None:
@@ -294,13 +338,12 @@ class LiveStand:
         """One control interval.  Returns the snapshot."""
         pl, p, dt = self.plant, self.plant.p, self.dt_ctrl
         meas = pl.measure(noise=self.noise)
-        running = bool(pl.x[0, HGBPPlant.N_] > 0.5 * p.N_min[0])
         u = np.zeros(4)
         for k, info in LOOPS.items():
             pid = self._pids()[k]
             pv = meas[info["pv"]][0]
-            if self.mode[k] == "auto":
-                u[info["valve"]] = pid.update(self.sp[info["pv"]], pv, dt, active=np.array([running]))[0]
+            if self.mode[k] == "auto":          # controls whether or not the compressor runs, like a UT35A
+                u[info["valve"]] = pid.update(self.sp[info["pv"]], pv, dt)[0]
             else:
                 pid.reset(self.manual_out[k])
                 u[info["valve"]] = self.manual_out[k]
@@ -378,12 +421,10 @@ class LiveStand:
         loops = {}
         for k, info in LOOPS.items():
             conv = _FROM_SI[info["unit"]]
-            g = self.gains[k]
             loops[k] = dict(label=info["label"], valve_label=info["valve_label"], unit=info["unit"],
                             pv=float(conv(f(meas[info["pv"]]))), sp=float(conv(self.sp[info["pv"]])),
                             out=f(aux["u%d" % (info["valve"] + 1)]), mode=self.mode[k],
-                            manual_out=self.manual_out[k],
-                            Kp=g["Kp"] * info["scale"], Ki=g["Ki"] * info["scale"], Kd=g["Kd"] * info["scale"])
+                            manual_out=self.manual_out[k], **self.tuning[k])
         perm_detail = dict(
             P_s_above_min=f(meas["P_s"]) > 1.5 * f(p.P_s_min), P_s_below_max=f(meas["P_s"]) < 0.9 * f(p.P_s_max),
             P_d_below_max=f(meas["P_d"]) < 0.8 * f(p.P_d_max), valve1_open=f(aux["u1"]) >= 0.1,
@@ -398,7 +439,8 @@ class LiveStand:
                             speed_sp=self.speed_sp, speed=f(aux["N"]), running=running,
                             permissive_ok=all(perm_detail.values()), permissives=perm_detail,
                             t_state=f(self.interlock.t_state), min_off_time=self.interlock.min_off_time,
-                            min_run_time=self.interlock.min_run_time, N_min=f(p.N_min), N_max=f(p.N_max)),
+                            min_run_time=self.interlock.min_run_time, short_cycle_timers=self.short_cycle_timers,
+                            N_min=f(p.N_min), N_max=f(p.N_max)),
             loops=loops,
             meas=dict(P_s=f(meas["P_s"]) / 1e5, P_d=f(meas["P_d"]) / 1e5, P_i=f(meas["P_i"]) / 1e5,
                       T_s=f(meas["T_s"]) - C2K, T_d=f(meas["T_d"]) - C2K, T_co=f(meas["T_co"]) - C2K,

@@ -99,7 +99,8 @@ __all__ = ["OBS_NAMES", "OBS_GROUPS", "EnvConfig", "HGBPVecEnv", "HGBPEnv", "STA
 
 @dataclass
 class EnvConfig:
-    dt_ctrl: float = 1.0                 # control interval [s]
+    dt_ctrl: float = 0.25                # control interval [s] (0.25 s or faster: the
+                                         # discharge-pressure loop is unstable at 1 s)
     dt_sim: float = 0.05                 # integration step [s]
     integrator: str = "rk4"
     episode_time: float = 2400.0         # hard truncation [s]

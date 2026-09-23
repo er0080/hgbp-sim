@@ -6,6 +6,11 @@ operator actions and settings, streams a snapshot per control step over a
 WebSocket, and serves the built React frontend.
 
     uvicorn webui.backend.app:app --host 0.0.0.0 --port 8000
+
+Defaults (simulation settings, loop tuning in UT35A units, plant parameters)
+come from the JSON file named by ``HGBP_DEFAULTS``; it is created from the
+built-in defaults if it does not exist.  Without the variable the built-in
+defaults apply.
 """
 from __future__ import annotations
 
@@ -22,6 +27,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from hgbp_sim.defaults import load_defaults
 from hgbp_sim.live import HISTORY_CHANNELS, LOOPS, LiveStand
 
 STATIC_DIR = os.environ.get(
@@ -59,7 +65,8 @@ class Runner(threading.Thread):
                 next_t = time.monotonic()      # cannot keep up: run flat out
 
 
-stand = LiveStand()
+DEFAULTS_PATH = os.environ.get("HGBP_DEFAULTS") or None
+stand = LiveStand(defaults=load_defaults(DEFAULTS_PATH))
 runner = Runner(stand)
 
 
@@ -83,9 +90,9 @@ class LoopCmd(BaseModel):
     mode: str | None = None
     sp: float | None = None
     out: float | None = None
-    Kp: float | None = None
-    Ki: float | None = None
-    Kd: float | None = None
+    P: float | None = None                 # proportional band [%]
+    I: float | str | None = None           # integral time [s] or "OFF"
+    D: float | str | None = None           # derivative time [s] or "OFF"
 
 
 class CompressorCmd(BaseModel):
@@ -100,6 +107,7 @@ class SimCmd(BaseModel):
     noise: bool | None = None
     dt_ctrl: float | None = None
     charge_rate_g_s: float | None = None
+    short_cycle_timers: bool | None = None
     T_amb: float | None = None
     T_wi: float | None = None
 
@@ -131,7 +139,10 @@ def post_loop(name: str, cmd: LoopCmd):
     if name not in LOOPS:
         raise HTTPException(404, f"unknown loop {name}")
     with runner.lock:
-        stand.set_loop(name, **cmd.model_dump())
+        try:
+            stand.set_loop(name, **cmd.model_dump())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         return stand.snapshot()["loops"][name]
 
 
@@ -146,7 +157,8 @@ def post_compressor(cmd: CompressorCmd):
 def post_sim(cmd: SimCmd):
     with runner.lock:
         stand.set_sim(paused=cmd.paused, speed_factor=cmd.speed_factor, noise=cmd.noise, dt_ctrl=cmd.dt_ctrl,
-                      charge_rate=None if cmd.charge_rate_g_s is None else cmd.charge_rate_g_s / 1000.0)
+                      charge_rate=None if cmd.charge_rate_g_s is None else cmd.charge_rate_g_s / 1000.0,
+                      short_cycle_timers=cmd.short_cycle_timers)
         if cmd.T_amb is not None or cmd.T_wi is not None:
             stand.set_conditions(T_amb=cmd.T_amb, T_wi=cmd.T_wi)
     return _snapshot()
@@ -167,7 +179,7 @@ def post_init(cmd: InitCmd):
 @app.get("/api/params")
 def get_params():
     with runner.lock:
-        return stand.params_view()
+        return {**stand.params_view(), "defaults_path": DEFAULTS_PATH}
 
 
 @app.post("/api/params")
@@ -177,7 +189,7 @@ def post_params(cmd: ParamsCmd):
             res = stand.set_params(cmd.values)
         except (TypeError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
-        res["view"] = stand.params_view()
+        res["view"] = {**stand.params_view(), "defaults_path": DEFAULTS_PATH}
         return res
 
 

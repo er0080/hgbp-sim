@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import type { ParamMeta, ParamsView, Snapshot } from "../types";
+import type { ParamMeta, ParamsView, Snapshot, Time, Tuning } from "../types";
 
 const GROUP_ORDER = ["Refrigerant", "Charge", "Compressor", "Volumes", "Condenser", "Valves", "Suction accumulator",
   "Pipe and tank walls", "Sensors", "Safety limits", "Baseline control"];
 const LOOPS = ["dpv", "spv", "stv", "water"];
+
+type TuneEdit = { P: string; I: string; D: string };
+const timeStr = (t: Time) => (t === "OFF" ? "" : String(t));
+const timeVal = (s: string): Time => (s.trim() === "" || s.trim().toUpperCase() === "OFF" ? "OFF" : Number(s));
+const tuneEdit = (t: Tuning): TuneEdit => ({ P: t.P.toFixed(1), I: timeStr(t.I), D: timeStr(t.D) });
 
 function fmtVal(v: any) {
   if (typeof v !== "number") return String(v);
@@ -17,15 +22,15 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
   const [view, setView] = useState<ParamsView | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
-  const [gains, setGains] = useState<Record<string, { Kp: string; Ki: string; Kd: string }>>({});
+  const [tune, setTune] = useState<Record<string, TuneEdit>>({});
   const [sim, setSim] = useState({ T_amb: snap.meas.T_amb.toFixed(1), T_wi: snap.meas.T_wi.toFixed(1),
     rate: (snap.charge.rate_kg_s * 1000).toFixed(0) });
   const reload = () => api<ParamsView>("/api/params").then((v) => { setView(v); setEdits({}); });
   useEffect(() => { reload(); }, []);
   useEffect(() => {
-    const g: any = {};
-    for (const k of LOOPS) g[k] = { Kp: fmtVal(snap.loops[k].Kp), Ki: fmtVal(snap.loops[k].Ki), Kd: fmtVal(snap.loops[k].Kd) };
-    setGains(g);
+    const t: Record<string, TuneEdit> = {};
+    for (const k of LOOPS) t[k] = tuneEdit(snap.loops[k]);
+    setTune(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snap.fluid]);
 
@@ -41,7 +46,8 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
     const values: Record<string, any> = {};
     for (const [k, s] of Object.entries(edits)) {
       const m = view.meta.find((x) => x.name === k)!;
-      values[k] = m.kind === "float" ? Number(s) : m.kind === "bool" ? s === "true" : s;
+      values[k] = k === "charge" && s.trim() === "" ? null
+        : m.kind === "float" ? Number(s) : m.kind === "bool" ? s === "true" : s;
     }
     try {
       const r = await api("/api/params", { values });
@@ -54,13 +60,23 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
   };
   const resetGroup = (ms: ParamMeta[]) => {
     const e = { ...edits };
-    for (const m of ms) e[m.name] = String(m.default);
+    for (const m of ms) e[m.name] = m.default === null ? "" : String(m.default);
     setEdits(e);
   };
-  const applyGains = async (k: string) => {
-    const g = gains[k];
-    await api(`/api/loop/${k}`, { Kp: Number(g.Kp), Ki: Number(g.Ki), Kd: Number(g.Kd) });
-    setMsg(`${snap.loops[k].label} gains applied`);
+  const applyTune = async (k: string) => {
+    const t = tune[k];
+    try {
+      const r = await api(`/api/loop/${k}`, { P: Number(t.P), I: timeVal(t.I), D: timeVal(t.D) });
+      setTune({ ...tune, [k]: tuneEdit(r) });            // show the values as the controller rounded them
+      setMsg(`${snap.loops[k].label} tuning applied`);
+    } catch (e: any) { setMsg("error: " + e.message); }
+  };
+  const defaultTunes = () => {
+    if (!view) return;
+    const t: Record<string, TuneEdit> = {};
+    for (const k of LOOPS) t[k] = tuneEdit(view.defaults.loops[k]);
+    setTune(t);
+    setMsg("default tuning loaded into the fields; press Apply on each loop to use it");
   };
   const applySim = async () => {
     await api("/api/sim", { T_amb: Number(sim.T_amb), T_wi: Number(sim.T_wi),
@@ -80,6 +96,8 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
                 {[0.5, 1, 2, 5, 10, 20, 50].map((v) => <option key={v} value={v}>{v}x</option>)}</select></td></tr>
             <tr><td className="n">sensor noise</td><td className="d">measurement noise on/off</td><td className="i">
               <input type="checkbox" checked={snap.noise} onChange={(e) => api("/api/sim", { noise: e.target.checked })} /></td></tr>
+            <tr><td className="n">short-cycle timers</td><td className="d">compressor minimum off time 60 s and minimum run time 120 s (live)</td><td className="i">
+              <input type="checkbox" checked={snap.compressor.short_cycle_timers} onChange={(e) => api("/api/sim", { short_cycle_timers: e.target.checked })} /></td></tr>
             <tr><td className="n">control interval</td><td className="d">PID execution and display update period (applied immediately)</td><td className="i">
               <select value={snap.dt_ctrl} onChange={(e) => api("/api/sim", { dt_ctrl: Number(e.target.value) })}>
                 {[0.1, 0.2, 0.25, 0.5, 1, 2].map((v) => <option key={v} value={v}>{v} s</option>)}</select></td></tr>
@@ -90,17 +108,20 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
           <div style={{ marginTop: 8 }}><button className="primary" onClick={applySim}>Apply conditions</button></div>
         </div>
         <div className="card">
-          <h2>PID gains (applied live)</h2>
-          <p className="note">Gains are per {`{bar or K}`} of error and per unit of valve stroke (0..1). Negative gain = reverse acting. Ki = Kp / Ti.</p>
-          {LOOPS.map((k) => gains[k] && (
+          <h2>PID tuning, UT35A units (applied live) <button className="small" style={{ float: "right" }} onClick={defaultTunes}>defaults</button></h2>
+          <p className="note">As on the Yokogawa UT35A: P = proportional band in % of the PV input range (0.1-999.9), I = integral time and D = derivative time in seconds (1-6000, empty = OFF). Action (DIR/RVS), input range and output limits come from the defaults file.</p>
+          {LOOPS.map((k) => tune[k] && (
             <div className="gainrow" key={k}>
-              <div className="gainname"><b>{snap.loops[k].label}</b><span>{snap.loops[k].valve_label} · per {snap.loops[k].unit}</span></div>
+              <div className="gainname"><b>{snap.loops[k].label}</b>
+                <span>{snap.loops[k].valve_label} · {snap.loops[k].DR} · range {snap.loops[k].RL}..{snap.loops[k].RH} {snap.loops[k].unit} · output {snap.loops[k].OL}..{snap.loops[k].OH} %</span></div>
               <div className="gaininputs">
-                {(["Kp", "Ki", "Kd"] as const).map((g) => (
-                  <label key={g}>{g}<input type="number" step="any" value={gains[k][g]}
-                    onChange={(e) => setGains({ ...gains, [k]: { ...gains[k], [g]: e.target.value } })} /></label>
+                <label>P<input type="number" min={0.1} max={999.9} step={0.1} value={tune[k].P}
+                  onChange={(e) => setTune({ ...tune, [k]: { ...tune[k], P: e.target.value } })} />%</label>
+                {(["I", "D"] as const).map((g) => (
+                  <label key={g}>{g}<input type="number" min={1} max={6000} step={1} placeholder="OFF" value={tune[k][g]}
+                    onChange={(e) => setTune({ ...tune, [k]: { ...tune[k], [g]: e.target.value } })} />s</label>
                 ))}
-                <button className="small" onClick={() => applyGains(k)}>Apply</button>
+                <button className="small" onClick={() => applyTune(k)}>Apply</button>
               </div>
             </div>
           ))}
@@ -116,7 +137,8 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
                 return (
                   <tr key={m.name}>
                     <td className="n">{m.name}{m.requires_init && <span title="applied at next cold/warm start" style={{ color: "var(--warn)" }}> *</span>}</td>
-                    <td className="d">{m.description}</td>
+                    <td className="d">{m.description}
+                      {(m.min != null || m.max != null) && <span className="note"> ({m.min} .. {m.max})</span>}</td>
                     <td className="u">{m.unit}</td>
                     <td className="i">
                       {m.name === "fluid" ? (
@@ -129,6 +151,8 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
                         </select>
                       ) : (
                         <input type="number" step="any" value={cur} className={m.name in edits || pending ? "pending" : ""}
+                          min={m.min ?? undefined} max={m.max ?? undefined}
+                          title={m.min != null || m.max != null ? `allowed range ${m.min} .. ${m.max}` : undefined}
                           placeholder={m.name === "charge" ? "nominal" : String(m.default)}
                           onChange={(e) => setEdits({ ...edits, [m.name]: e.target.value })} />
                       )}
@@ -144,7 +168,7 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
         <button className="primary" disabled={!dirty} onClick={() => apply(false)}>Apply {dirty ? `(${dirty})` : ""}</button>
         <button className="warn" disabled={!dirty} onClick={() => apply(true)}>Apply and cold start</button>
         <button disabled={!dirty} onClick={() => setEdits({})}>Discard</button>
-        <span className="note">* structural parameters (refrigerant, volumes, charge) take effect at the next cold/warm start · {msg}</span>
+        <span className="note">* structural parameters (refrigerant, volumes, charge) take effect at the next cold/warm start · defaults: {view.defaults_path ?? "built-in (HGBP_DEFAULTS not set)"} · {msg}</span>
       </div>
     </div>
   );

@@ -17,7 +17,7 @@ POINT_FIELDS = ("P_s", "P_d", "SH", "P_i", "N")
 class Envelope:
     """Ranges from which test points are sampled (temperatures in degC)."""
     T_evap: tuple = (-30.0, 12.0)
-    T_cond: tuple = (30.0, 65.0)          # saturation temperature at discharge pressure
+    T_cond: tuple = (30.0, 57.0)          # saturation temperature at discharge pressure
     SH: tuple = (3.0, 25.0)
     N_frac: tuple = (0.5, 1.4)            # fraction of nominal speed
     Pr_max: float = 14.0                  # max pressure ratio
@@ -26,7 +26,8 @@ class Envelope:
     dT_int_below_cond: float = 4.0        # T_int at least this far below T_cond
     dT_int_above_evap: float = 12.0       # T_int at least this far above T_evap
     T_int_max: float = 58.0
-    T_d_margin: float = 8.0               # estimated discharge temperature must stay this far below the trip
+    T_d_margin: float = 25.0              # estimated discharge temperature must stay this far below the trip
+                                          # (the startup transient overshoots the steady estimate)
 
     def estimate_T_d(self, props, params, P_s, P_d, SH):
         """Rough discharge temperature from the compressor map (adiabatic,

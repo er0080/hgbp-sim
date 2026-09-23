@@ -30,7 +30,8 @@ def test_cold_start_holds_charge_and_is_near_equilibrium():
 def test_mass_conservation_open_loop():
     pl = HGBPPlant(n=1, dt=0.05)
     pl.cold_start(T_amb=298.15)
-    pl.set_inputs(u_cmd=[0.5, 0.6, 0.3, 0.3], N_cmd=1450.0, T_wi=293.15)
+    # valve positions that keep the stand inside its envelope in open loop
+    pl.set_inputs(u_cmd=[0.8, 0.6, 0.3, 0.5], N_cmd=1450.0, T_wi=293.15)
     M0 = pl.outputs()["M_tot"][0]
     for _ in range(120):
         a = pl.step(1.0)
@@ -105,10 +106,10 @@ def test_pid_reaches_test_point():
     ctrl = BaselineController(1)
     ctrl.reset(res["u"])
     sp = dict(P_s=p1["P_s"], P_d=p1["P_d"], SH=p1["SH"], P_i=p1["P_i"])
-    for _ in range(900):
+    for _ in range(3600):          # 900 s at the 0.25 s control interval
         meas = pl.measure(noise=False)
-        u = ctrl(meas, sp, 1.0)
-        a = pl.step(1.0, u_cmd=u, N_cmd=p1["N"])
+        u = ctrl(meas, sp, 0.25)
+        a = pl.step(0.25, u_cmd=u, N_cmd=p1["N"])
     assert abs(a["P_s"][0] - p1["P_s"]) < 0.02e5
     assert abs(a["P_d"][0] - p1["P_d"]) < 0.05e5
     assert abs(a["SH"][0] - p1["SH"]) < 0.5

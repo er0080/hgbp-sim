@@ -57,7 +57,7 @@ export default function CompressorPanel({ snap }: { snap: Snapshot }) {
               <li key={k} className={v ? "ok" : ""}>{PERM_LABELS[k] ?? k}</li>
             ))}
           </ul>
-          <div className="note" style={{ marginTop: 8 }}>min off {c.min_off_time} s · min run {c.min_run_time} s · run request: {c.run_request ? "ON" : "off"}</div>
+          <div className="note" style={{ marginTop: 8 }}>{c.short_cycle_timers ? `min off ${c.min_off_time} s · min run ${c.min_run_time} s` : "short-cycle timers off"} · run request: {c.run_request ? "ON" : "off"}</div>
         </div>
       </div>
     </div>

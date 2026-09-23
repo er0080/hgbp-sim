@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .components import compressor, gas_valve_flow, liquid_valve_flow
+from .components import compressor, gas_valve_flow, kv_to_C, liquid_valve_flow, water_valve_flow
 
 # unknowns: u1, u2, u3, u4, h_d, T_sw, T_dw, T_cw, T_sh
 _SCALE = np.array([1.0, 1.0, 1.0, 1.0, 2e4, 10.0, 10.0, 10.0, 10.0])
@@ -60,23 +60,24 @@ def initial_guess(plant, p, P_s, h_s, P_d, P_i, N, T_amb, T_wi):
     T_g, rho_g = pr.vapor_props(P_i, h_d)
     # valve 1 passes the full compressor flow
     g1 = gas_valve_flow(ones, P_d, P_i, D.rho, rho_g, p.kappa, p.xT, p.eps_valve)
-    u1 = _invert_characteristic(mdot_c / np.maximum(g1 * p.C_dpv, 1e-12), p.dpv_char, p.dpv_R)
+    u1 = _invert_characteristic(mdot_c / np.maximum(g1 * kv_to_C(p.Kv_dpv), 1e-12), p.dpv_char, p.dpv_R)
     # suction mixer energy balance -> split between bypass and liquid
     frac_l = np.clip((h_d - h_s) / np.maximum(h_d - h_l, 1.0), 0.02, 0.9)
     mdot_3 = frac_l * mdot_c
     mdot_2 = mdot_c - mdot_3
     g2 = gas_valve_flow(ones, P_i, P_s, rho_g, S.rho, p.kappa, p.xT, p.eps_valve)
-    u2 = _invert_characteristic(mdot_2 / np.maximum(g2 * p.C_spv, 1e-12), p.spv_char, p.spv_R)
+    u2 = _invert_characteristic(mdot_2 / np.maximum(g2 * kv_to_C(p.Kv_spv), 1e-12), p.spv_char, p.spv_R)
     l3 = liquid_valve_flow(ones, P_i, P_s, sati["rho_l"], S.rho, p.f_choke_liq, p.eps_valve)
-    u3 = _invert_characteristic(mdot_3 / np.maximum(l3 * p.C_stv, 1e-12), p.stv_char, p.stv_R)
+    u3 = _invert_characteristic(mdot_3 / np.maximum(l3 * kv_to_C(p.Kv_stv), 1e-12), p.stv_char, p.stv_R)
     # condenser duty and water flow (bisection on the effectiveness relation)
     Q = mdot_3 * (h_d - h_l)
     T_cw = sati["T_l"] - Q / (0.6 * p.UA_r_2ph)
+    mdot_w_full = water_valve_flow(kv_to_C(p.Kv_w), p.P_w_sup, p.rho_w)
     lo, hi = np.full_like(P_s, 1e-4), np.ones_like(P_s)
     for _ in range(40):
         mid = 0.5 * (lo + hi)
-        Cw = p.mdot_w_max * mid * p.cp_w
-        UA_w = p.UA_w0 * np.power(mid, 0.8)
+        Cw = mdot_w_full * mid * p.cp_w
+        UA_w = p.UA_w0 * np.power(mdot_w_full * mid / p.mdot_w_ref, 0.8)
         eps = 1.0 - np.exp(-UA_w / Cw)
         Qw = eps * Cw * (T_cw - T_wi)
         too_much = Qw > Q

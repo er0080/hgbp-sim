@@ -6,8 +6,11 @@ services:
     image: hgbp-stand-ui
     ports:
       - "8000:8000"
+    environment:
+      HGBP_DEFAULTS: /config/stand_defaults.json
     volumes:
       - hgbp-cache:/root/.cache/hgbp_sim   # property tables built for other refrigerants
+      - ./config:/config                   # stand defaults, editable on the host (webui/config/)
     restart: unless-stopped
 volumes:
   hgbp-cache:

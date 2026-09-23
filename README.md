@@ -52,13 +52,13 @@ The compressor speed follows the test schedule (an exogenous input). A test poin
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # numpy + CoolProp + gymnasium + matplotlib + pytest
-pytest                            # ~45 s
+pytest                            # ~7 min
 ```
 
-Only `numpy` is required at run time. A prebuilt R134a property table ships with the
-package (`hgbp_sim/data/`). Any other CoolProp fluid (`R404A`, `R410A`, `R32`, `R290`,
-`R1234yf`, ...) is tabulated on first use (needs CoolProp, takes a few seconds, cached in
-`~/.cache/hgbp_sim/`).
+Only `numpy` is required at run time. Prebuilt R410A (the default) and R134a property
+tables ship with the package (`hgbp_sim/data/`). Any other CoolProp fluid (`R404A`,
+`R32`, `R290`, `R1234yf`, ...) is tabulated on first use (needs CoolProp, takes a few
+seconds, cached in `~/.cache/hgbp_sim/`).
 
 ## Quick start
 
@@ -67,7 +67,7 @@ from hgbp_sim import HGBPEnv, EnvConfig
 
 env = HGBPEnv(EnvConfig(action_mode="incremental"))
 obs, info = env.reset(seed=0)
-for _ in range(600):                        # 600 s at 1 s control interval
+for _ in range(2400):                       # 600 s at the 0.25 s control interval
     action = env.expert_action()            # baseline PID; replace with your policy
     obs, reward, terminated, truncated, info = env.step(action)
     if terminated or truncated:
@@ -144,13 +144,46 @@ controlled variable (`python examples/open_loop_step.py`):
 
 A browser-based operator interface to run the simulated stand like the real one:
 an **Operator** tab with a live schematic, four PID faceplates (auto/manual, setpoint,
-manual output, live gains), the compressor start/stop panel with interlock permissives
+manual output, live tuning), the compressor start/stop panel with interlock permissives
 and trip reset, process-value tiles and charging/recovery buttons; a **Trends** tab with
 live time-series charts (pressures with setpoints, superheat/subcooling, valves,
 temperatures, flow/power/speed, inventory) and CSV export; and a **Settings** tab for
-simulation speed, noise, ambient and water temperature, PID gains and every plant
+simulation speed, noise, ambient and water temperature, PID tuning and every plant
 parameter (grouped, with units, descriptions and defaults; refrigerant, volumes and
 charge are applied at the next cold or warm start).
+
+**PID tuning in UT35A units.** Each loop is tuned the way the stand's Yokogawa UT35A
+controllers are (IM 05P01D31-01EN, 6.4 and 8.3): `P` proportional band in % of the PV
+input range `RL..RH` (0.1-999.9 %, 0.1 % steps), `I` integral and `D` derivative time in
+seconds (1-6000 s or OFF), `DR` direct (`DIR`, output rises with PV) or reverse (`RVS`)
+action, PV-derivative PID as in the controller's standard mode, output limits `OL..OH`.
+A setting read off a real controller carries over directly, provided `RL..RH` matches that
+controller's input range. `hgbp_sim.ut35a` converts to the simulator's internal gains
+(`|Kp| = 100 / (P * span)`, `Ki = Kp / Ti`, `Kd = Kp * Td`). Setpoints are held inside the
+input range, as on the controller. The default control interval is 0.2 s, the UT35A's
+control period.
+
+**Loops run whenever they are in AUTO**, compressor on or off, as the stand's controllers
+do. At standstill the pressures are far from their setpoints, so the loops drive their
+valves to a limit (valves 1, 2 and 4 closed, the liquid valve open) and the start
+permissives (valve 1 at least 10 %, valve 2 at least 5 % open) fail. To start: put the four
+loops in MAN at start positions (for example 50 / 60 / 0 / 30 %), request the run, and
+switch them to AUTO once the compressor turns (about 600 rpm). In AUTO before that, the
+discharge loop closes valve 1 against the starting compressor and the stand trips on high
+discharge pressure within seconds. The anti-short-cycle timers (60 s minimum off time,
+120 s minimum run time) can be switched off on the Settings tab.
+
+**Defaults file.** All defaults (simulation settings, the four loops with setpoint,
+tuning, action, input range and output limits, and every plant parameter) come from one
+JSON file, `webui/config/stand_defaults.json`, which docker compose bind-mounts at
+`/config` (`HGBP_DEFAULTS=/config/stand_defaults.json`). Edit it on the host and restart
+(`docker compose -f webui/docker-compose.yml restart`). Keys left out keep their built-in
+value; an unknown key or an out-of-range value stops the backend with a message naming it
+(`docker compose -f webui/docker-compose.yml logs`). If the file is missing it is created
+from the built-in defaults, which `python -m hgbp_sim.defaults <path>` also writes. The
+Settings tab's *defaults* buttons restore the file's values. Units are listed in the
+file's `_about` entry: loop setpoints and ranges are in bar absolute or degC, plant
+parameters in SI.
 
 ```bash
 # in Docker (builds the React app and the Python backend)
@@ -174,7 +207,7 @@ environment, trip latching, charge changes while running, a rolling history), wh
 also be scripted directly. As on the real stand, the third loop controls the suction
 *temperature* (setpoint in degC; a warm start derives it from the test point's
 superheat), whereas the training environment's baseline expert works on superheat. The backend (`webui/backend/app.py`) exposes a small REST API
-(`/api/state`, `/api/loop/{name}`, `/api/compressor`, `/api/sim`, `/api/init`,
+(`/api/state`, `/api/loop/{name}` (mode, sp, out, P, I, D), `/api/compressor`, `/api/sim`, `/api/init`,
 `/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`) and streams one
 snapshot per control step on `/ws`.
 
@@ -318,19 +351,21 @@ suction pressure (+0.6 bar), discharge pressure (+1.8 bar) and superheat (+11 K)
 
 | group | parameters |
 |---|---|
-| compressor | `V_disp` (250 cm3/rev), `N_nom` (1450 rpm), `eta_v0`, `c_cl`, `eta_s0`, `a_s`, `Pr_opt`, `eta_motor`, `f_motor_gas`, `C_shell`, `UA_gs`, `UA_sha`, `ramp_N` |
+| compressor | `V_disp` (355 cm3/rev), `N_nom` (3550 rpm), `eta_v0`, `c_cl`, `eta_s0`, `a_s`, `Pr_opt`, `eta_motor`, `f_motor_gas`, `C_shell`, `UA_gs`, `UA_sha`, `ramp_N` |
 | volumes / charge | `V_s` (12 L), `V_d` (1.5 L), `V_i` (3 L), `charge`, `cold_liquid_in_accumulator` |
 | accumulator | `acc_blend_dx`, `acc_carry_fill0`, `acc_carry_max` |
-| condenser | `UA_r_2ph`, `UA_r_1ph`, `cond_dry_fill`, `SC_fill0`, `SC_max`, `UA_w0`, `mdot_w_max`, `C_cw`, `UA_ca` |
+| condenser | `UA_r_2ph`, `UA_r_1ph`, `cond_dry_fill`, `SC_fill0`, `SC_max`, `UA_w0`, `mdot_w_ref`, `C_cw`, `UA_ca` |
 | walls | `C_sw`, `UA_sg`, `UA_sa`, `C_dw`, `UA_dg`, `UA_da` |
-| valves | `C_dpv`, `C_spv`, `C_stv` (+ characteristic, `tau_*`, `rate_*`), water `w_char`, `tau_w`, `rate_w` |
+| valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w` in m3/h (+ characteristic, `tau_*`, `rate_*`), water supply `P_w_sup` |
 | sensors | `tau_T`, `tau_m`, `tau_W`, `sig_*` |
 | limits | `P_d_max`, `P_s_min`, `P_s_max`, `T_d_max` |
 
-Defaults describe a ~5 kW-capacity variable-speed semi-hermetic reciprocating compressor
-on R134a. Fit `V_disp`, the efficiency coefficients, volumes and valve coefficients to
-your compressor and stand; the steady-state solver plus `open_loop_step.py` make this
-quick.
+Defaults describe a variable-speed 355 cm3/rev semi-hermetic compressor on R410A. All
+four valves are sized by their `Kv` (m3/h of water at a 1 bar drop), the way the hardware
+is specified; internally `mdot = (Kv / 36000) f(u) sqrt(rho dP)`. The cooling water valve
+uses the same relation against a fixed supply pressure `P_w_sup` (1.5 bar by default).
+Fit `V_disp`, the efficiency coefficients, volumes and valve Kv values to your compressor
+and stand; the steady-state solver plus `open_loop_step.py` make this quick.
 
 ## Assumptions and limitations
 
@@ -363,8 +398,11 @@ hgbp_sim/
   env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium)
   interlock.py     compressor start/stop interlock state machine (shared by env and live stand)
   live.py          LiveStand: interactive single stand with PID loops, charging, history
+  ut35a.py         Yokogawa UT35A tuning (P band %, I/D s, DIR/RVS) <-> internal PID gains
+  defaults.py      stand defaults document: built-in values, JSON file loading and validation
   data/            prebuilt property tables
-webui/             React + FastAPI operator interface, Dockerfile, docker-compose.yml
+webui/             React + FastAPI operator interface, Dockerfile, docker-compose.yml,
+                   config/stand_defaults.json (bind-mounted defaults)
 docs/              NN_CONTROLLER_SPEC.md: controller architecture, training and deployment spec
 examples/          closed-loop, open-loop, dataset, behaviour cloning, benchmark
 tests/             property accuracy, conservation, charge effects, steady state, controllers, env API

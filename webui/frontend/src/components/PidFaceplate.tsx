@@ -11,11 +11,12 @@ export default function PidFaceplate({ name, loop }: { name: string; loop: Loop 
   useEffect(() => { if (!editingOut) setOut((loop.manual_out * 100).toFixed(0)); }, [loop.manual_out, editingOut]);
 
   const send = (body: any) => api(`/api/loop/${name}`, body);
-  const applySp = () => { const v = Number(sp); if (Number.isFinite(v)) send({ sp: v }); setEditingSp(false); };
+  const clampSp = (v: number) => Math.min(loop.RH, Math.max(loop.RL, v));      // the UT35A keeps SP inside RL..RH
+  const applySp = () => { const v = Number(sp); if (Number.isFinite(v)) send({ sp: clampSp(v) }); setEditingSp(false); };
   const applyOut = () => { const v = Number(out); if (Number.isFinite(v)) send({ out: Math.min(100, Math.max(0, v)) / 100 }); setEditingOut(false); };
   const dec = loop.unit === "bar" ? 2 : 1;
   const step = loop.unit === "bar" ? 0.1 : 0.5;
-  const bump = (d: number) => send({ sp: Math.round((loop.sp + d) * 100) / 100 });
+  const bump = (d: number) => send({ sp: clampSp(Math.round((loop.sp + d) * 100) / 100) });
   const err = loop.sp - loop.pv;
 
   return (
@@ -31,7 +32,7 @@ export default function PidFaceplate({ name, loop }: { name: string; loop: Loop 
       </div>
       <div className="row">
         <label>SP</label>
-        <input type="number" step={step} value={sp} onFocus={() => setEditingSp(true)}
+        <input type="number" step={step} min={loop.RL} max={loop.RH} value={sp} onFocus={() => setEditingSp(true)}
           onChange={(e) => setSp(e.target.value)} onBlur={applySp}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
         <button className="small" onClick={() => bump(-step)}>-{step}</button>
@@ -60,7 +61,7 @@ export default function PidFaceplate({ name, loop }: { name: string; loop: Loop 
           </>
         )}
       </div>
-      <div className="gains">Kp {loop.Kp.toPrecision(3)} /{loop.unit} · Ki {loop.Ki.toPrecision(3)} /({loop.unit}·s) · Kd {loop.Kd.toPrecision(3)}</div>
+      <div className="gains">P {loop.P.toFixed(1)} % · I {loop.I === "OFF" ? "OFF" : `${loop.I} s`} · D {loop.D === "OFF" ? "OFF" : `${loop.D} s`} · {loop.DR} · range {loop.RL}..{loop.RH} {loop.unit}</div>
     </div>
   );
 }

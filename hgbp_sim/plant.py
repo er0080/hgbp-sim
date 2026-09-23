@@ -19,10 +19,11 @@ Hot gas leaving the compressor is throttled by valve 1 to the intermediate
 pressure.  Part of it bypasses through valve 2 to the suction tank; the rest
 condenses in a water-cooled brazed-plate condenser (no receiver) and is
 injected through valve 3 as liquid to desuperheat the bypass gas.  Valve 4
-meters the cooling water and thereby sets the intermediate (condensing)
-pressure.  The suction mixer is a tank that also acts as an accumulator:
-liquid separates, the compressor draws vapor from the top, excess liquid is
-entrained when the tank fills up.
+meters the cooling water (drawn from a supply at the fixed pressure
+``P_w_sup``) and thereby sets the intermediate (condensing) pressure.  The
+suction mixer is a tank that also acts as an accumulator: liquid separates,
+the compressor draws vapor from the top, excess liquid is entrained when the
+tank fills up.
 
 Manipulated variables (0..1 stem commands, in this order):
     u[0]  valve 1  discharge pressure valve
@@ -60,7 +61,8 @@ from __future__ import annotations
 import numpy as np
 
 from .components import (actuator_rate, clip, compressor, cv_balance, gas_valve_flow,
-                         liquid_valve_flow, smoothstep, valve_characteristic)
+                         kv_to_C, liquid_valve_flow, smoothstep, valve_characteristic,
+                         water_valve_flow)
 from .params import PlantParams, nominal_charge, sample_params
 from .properties import RefrigerantTables, get_tables
 
@@ -186,12 +188,12 @@ class HGBPPlant:
         # ---- valve 1: discharge -> intermediate header
         T_g, rho_g = pr.vapor_props(P_i, h_d)                    # header gas after throttling
         f1 = valve_characteristic(u1, p.dpv_char, p.dpv_R)
-        mdot_1 = gas_valve_flow(p.C_dpv * f1, P_d, P_i, D.rho, rho_g, p.kappa, p.xT, p.eps_valve)
+        mdot_1 = gas_valve_flow(kv_to_C(p.Kv_dpv) * f1, P_d, P_i, D.rho, rho_g, p.kappa, p.xT, p.eps_valve)
         h_1f = np.where(mdot_1 >= 0.0, h_d, h_iv)
 
         # ---- valve 2: hot gas bypass header -> suction tank
         f2 = valve_characteristic(u2, p.spv_char, p.spv_R)
-        mdot_2 = gas_valve_flow(p.C_spv * f2, P_i, P_s, rho_g, S.rho, p.kappa, p.xT, p.eps_valve)
+        mdot_2 = gas_valve_flow(kv_to_C(p.Kv_spv) * f2, P_i, P_s, rho_g, S.rho, p.kappa, p.xT, p.eps_valve)
         m_from_inlet = clip(np.minimum(mdot_2, np.maximum(mdot_1, 0.0)), 0.0, np.inf)
         h_2f_fwd = (m_from_inlet * h_d + (np.maximum(mdot_2, 0.0) - m_from_inlet) * h_iv) \
             / np.maximum(mdot_2, 1e-12)
@@ -199,7 +201,7 @@ class HGBPPlant:
 
         # ---- valve 3: condenser outlet -> suction tank
         f3 = valve_characteristic(u3, p.stv_char, p.stv_R)
-        mdot_3 = liquid_valve_flow(p.C_stv * f3, P_i, P_s, rho_co, S.rho, p.f_choke_liq, p.eps_valve)
+        mdot_3 = liquid_valve_flow(kv_to_C(p.Kv_stv) * f3, P_i, P_s, rho_co, S.rho, p.f_choke_liq, p.eps_valve)
         h_3f = np.where(mdot_3 >= 0.0, h_co, h_s)
 
         # ---- pipe / tank walls
@@ -214,9 +216,9 @@ class HGBPPlant:
         UA_r = p.UA_r_2ph * a_c + p.UA_r_1ph * (1.0 - a_c)
         Q_r = UA_r * (I.T - T_cw)                        # refrigerant -> wall
         f_w = valve_characteristic(u4, p.w_char, p.w_R)
-        mdot_w = p.mdot_w_max * f_w
+        mdot_w = water_valve_flow(kv_to_C(p.Kv_w) * f_w, p.P_w_sup, p.rho_w)
         Cw = mdot_w * p.cp_w
-        UA_w = p.UA_w0 * np.power(np.maximum(f_w, 1e-6), 0.8)
+        UA_w = p.UA_w0 * np.power(np.maximum(mdot_w / p.mdot_w_ref, 1e-6), 0.8)
         eps_w = 1.0 - np.exp(-UA_w / np.maximum(Cw, 1e-9))
         Q_w = eps_w * Cw * (T_cw - T_wi)                 # wall -> water
         T_wo = T_wi + np.where(Cw > 1e-9, Q_w / np.maximum(Cw, 1e-9), 0.0)
