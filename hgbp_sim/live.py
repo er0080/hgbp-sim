@@ -24,6 +24,7 @@ import numpy as np
 from . import ut35a
 from .control import BaselineController
 from .defaults import merge_defaults
+from .geometry import volume_table
 from .interlock import ST_OFF, STATE_NAMES, Interlock, permissives
 from .params import FLUIDS, PlantParams, clamp_to_range, param_metadata
 from .plant import HGBPPlant
@@ -53,7 +54,8 @@ HISTORY_CHANNELS = (
     "t", "P_s", "P_d", "P_i", "Tsat_s", "Tsat_d", "Tsat_i", "T_s", "T_d", "T_co", "T_wi", "T_wo",
     "SH", "SC", "mdot", "W", "N", "u1", "u2", "u3", "u4",
     "sp_P_d", "sp_P_s", "sp_T_s", "sp_P_i", "sp_N",
-    "x_out", "fill_s", "fill_i", "charge", "T_sh", "T_cw", "mdot_w", "state", "Q_w",
+    "x_out", "y_liq", "x_qo", "rec_level", "cond_flood", "M_q_liq", "T_qo", "T_go", "charge", "T_sh", "T_cw",
+    "mdot_w", "state", "Q_w", "Q_mx",
 )
 
 
@@ -76,6 +78,7 @@ class LiveStand:
         self.short_cycle_timers = bool(sim["short_cycle_timers"])
         self.speed_factor = float(sim["speed_factor"])
         self.paused = False
+        self.achieved_speed = 0.0          # set by a real-time runner (simulated s per wall s)
         self.step_count = 0
         self.T_amb = float(sim["T_amb"] if T_amb is None else T_amb) + C2K
         self.T_wi = float(sim["T_wi"] if T_wi is None else T_wi) + C2K
@@ -139,7 +142,7 @@ class LiveStand:
         self._apply_tuning()
 
     def cold_start(self, T_amb: float | None = None, T_wi: float | None = None,
-                   liquid_in_accumulator: float | None = None) -> None:
+                   liquid_in_suction: float | None = None) -> None:
         """Equalized stand at ambient, compressor off, valves at rest positions."""
         self.apply_pending()
         if T_amb is not None:
@@ -148,7 +151,7 @@ class LiveStand:
             self.T_wi = T_wi + C2K
         self.plant.set_inputs(T_amb=self.T_amb, T_wi=self.T_wi)
         u0 = self.ctrl.u_off.copy()
-        self.plant.cold_start(T_amb=self.T_amb, u_pos=u0[None, :], liquid_in_accumulator=liquid_in_accumulator)
+        self.plant.cold_start(T_amb=self.T_amb, u_pos=u0[None, :], liquid_in_suction=liquid_in_suction)
         for k, pid in self._pids().items():
             pid.reset(u0[LOOPS[k]["valve"]])
             self.manual_out[k] = float(u0[LOOPS[k]["valve"]])
@@ -313,25 +316,33 @@ class LiveStand:
                 v = float(self.plant.p.charge[0])
             vals[m["name"]] = v
             m["default"] = self.defaults["plant"][m["name"]]
+        p = self.plant.p
+        f = lambda v: float(np.atleast_1d(v)[0])
+        derived = dict(volumes=volume_table(p), V_s=f(p.V_s), V_d=f(p.V_d), V_i=f(p.V_i),
+                       C_mw=f(p.C_mw_cell) * self.plant.MX, C_cw=f(p.C_cw), C_sw=f(p.C_sw), C_dw=f(p.C_dw),
+                       C_rw=f(p.C_rw))
         return dict(values=vals, meta=meta, pending=sorted(self.pending_params),
-                    fluids=list(FLUIDS), named_points=NAMED_POINTS,
+                    fluids=list(FLUIDS), named_points=NAMED_POINTS, derived=derived,
                     nominal_charge=float(self.plant.nominal_charge()[0]), defaults=self.defaults)
 
     # -------------------------------------------------------------- physics
     def _inject_charge(self, dm: float) -> None:
-        """Add (dm > 0) liquid from a cylinder at ambient temperature to the
-        accumulator, or recover (dm < 0) fluid at the tank's mean enthalpy.
-        The mass state is updated exactly; the plant's pressure projection
-        makes (P, h) consistent at the next sub-step."""
+        """Add (dm > 0) liquid from a cylinder at ambient temperature at the
+        receiver's charging port, or recover (dm < 0) what the liquid line
+        carries there (liquid while the receiver keeps its seal).  The mass and
+        energy states are updated exactly; the plant's projection makes (P, h)
+        consistent at the next sub-step."""
         pl, pr = self.plant, self.props
         x = pl.x[0]
-        h_s = x[HGBPPlant.H_S]
         if dm > 0:
             h_in = float(pr.sat(pr.P_sat(np.array([self.T_amb])))["h_l"][0])
         else:
-            h_in = h_s
-        x[HGBPPlant.M_S] += dm
-        x[HGBPPlant.U_S] += dm * h_in       # (P, h) follow through the conservation projection
+            a = pl.outputs()
+            seal = float(a["ll_fill"][0]) >= 1.0
+            h_i = float(x[HGBPPlant.H_I])
+            h_in = float(pr.sat(np.array([x[HGBPPlant.P_I]]))["h_l"][0]) if seal else h_i
+        x[HGBPPlant.M_I] += dm
+        x[HGBPPlant.U_I] += dm * h_in       # (P, h) follow through the conservation projection
         pl.aux = None
 
     def step(self) -> dict:
@@ -362,7 +373,7 @@ class LiveStand:
             if self.charge_pending == 0.0:
                 self.log("charge change complete")
         aux = pl.step(dt, u_cmd=u[None, :], N_cmd=il["N_cmd"], T_amb=self.T_amb, T_wi=self.T_wi)
-        p.charge[0] = aux["M_tot"][0]
+        p.charge[0] = pl.conserved_mass()[0]
         trips = pl.trips()
         hard = [k for k in ("high_P_d", "low_P_s", "high_P_s", "high_T_d") if bool(trips[k][0])]
         if hard and not self.interlock.tripped[0]:
@@ -386,9 +397,12 @@ class LiveStand:
             mdot=meas["mdot"][0] * 1e3, W=meas["W"][0], N=aux["N"][0],
             u1=aux["u1"][0], u2=aux["u2"][0], u3=aux["u3"][0], u4=aux["u4"][0],
             sp_P_d=self.sp["P_d"] / 1e5, sp_P_s=self.sp["P_s"] / 1e5, sp_T_s=self.sp["T_s"] - C2K, sp_P_i=self.sp["P_i"] / 1e5,
-            sp_N=self.speed_sp, x_out=aux["x_out"][0], fill_s=aux["fill_s"][0], fill_i=aux["fill_i"][0],
-            charge=aux["M_tot"][0], T_sh=aux["T_sh"][0] - C2K, T_cw=aux["T_cw"][0] - C2K,
+            sp_N=self.speed_sp, x_out=aux["x_out"][0], y_liq=aux["y_liq"][0], x_qo=aux["x_qo"][0],
+            rec_level=aux["rec_level"][0], cond_flood=aux["cond_flood"][0], M_q_liq=aux["M_q_liq"][0],
+            T_qo=aux["T_qo"][0] - C2K, T_go=aux["T_go"][0] - C2K,
+            charge=self.plant.conserved_mass()[0], T_sh=aux["T_sh"][0] - C2K, T_cw=aux["T_cw"][0] - C2K,
             mdot_w=aux["mdot_w"][0] * 60.0, state=int(self.interlock.state[0]), Q_w=aux["Q_w"][0],
+            Q_mx=aux["Q_mx"][0] / 1000.0,
         )
         for k, v in row.items():
             self.history[k].append(float(v))
@@ -432,7 +446,8 @@ class LiveStand:
             off_time_elapsed=bool(self.interlock.state[0] != ST_OFF or self.interlock.t_state[0] >= self.interlock.min_off_time),
         )
         return dict(
-            t=self.t, step=self.step_count, paused=self.paused, speed_factor=self.speed_factor, noise=self.noise,
+            t=self.t, step=self.step_count, paused=self.paused, speed_factor=self.speed_factor,
+            achieved_speed=self.achieved_speed, noise=self.noise,
             dt_ctrl=self.dt_ctrl, fluid=self.params.fluid,
             compressor=dict(state=STATE_NAMES[int(self.interlock.state[0])], tripped=bool(self.interlock.tripped[0]),
                             trip_reasons=list(self.trip_reasons), run_request=self.run_request,
@@ -448,22 +463,28 @@ class LiveStand:
                       Tsat_s=f(meas["T_sat_s"]) - C2K, Tsat_d=f(aux["T_sat_d"]) - C2K, Tsat_i=f(meas["T_sat_i"]) - C2K,
                       SH=f(meas["SH"]), SC=f(meas["SC"]), mdot=f(meas["mdot"]) * 1e3, W=f(meas["W"]),
                       N=f(aux["N"]), u1=f(aux["u1"]), u2=f(aux["u2"]), u3=f(aux["u3"]), u4=f(aux["u4"])),
-            true=dict(x_out=f(aux["x_out"]), x_s=f(aux["x_s"]), x_i=f(aux["x_i"]), fill_s=f(aux["fill_s"]),
-                      fill_i=f(aux["fill_i"]), T_sh=f(aux["T_sh"]) - C2K, T_cw=f(aux["T_cw"]) - C2K,
+            true=dict(x_out=f(aux["x_out"]), y_liq=f(aux["y_liq"]), x_i=f(aux["x_i"]), fill_i=f(aux["fill_i"]),
+                      rec_level=f(aux["rec_level"]), ll_fill=f(aux["ll_fill"]), cond_flood=f(aux["cond_flood"]),
+                      x_qo=f(aux["x_qo"]), T_qo=f(aux["T_qo"]) - C2K, T_go=f(aux["T_go"]) - C2K,
+                      M_q_liq=f(aux["M_q_liq"]), Q_mx=f(aux["Q_mx"]),
+                      x_q=[float(v) for v in aux["x_q"][0]], T_q=[float(v) - C2K for v in aux["T_q"][0]],
+                      T_g=[float(v) - C2K for v in aux["T_g"][0]], T_mw=[float(v) - C2K for v in aux["T_mw"][0]],
+                      T_sh=f(aux["T_sh"]) - C2K, T_cw=f(aux["T_cw"]) - C2K, T_rw=f(aux["T_rw"]) - C2K,
                       mdot_1=f(aux["mdot_1"]) * 1e3, mdot_2=f(aux["mdot_2"]) * 1e3, mdot_3=f(aux["mdot_3"]) * 1e3,
                       mdot_w=f(aux["mdot_w"]) * 60.0, Q_w=f(aux["Q_w"]), Q_r=f(aux["Q_r"]), W_el=f(aux["W_el"]),
                       eta_v=f(aux["eta_v"]), eta_s=f(aux["eta_s"]), Pr=f(aux["Pr"]),
                       M_s=f(aux["M_s"]), M_d=f(aux["M_d"]), M_i=f(aux["M_i"])),
             alarms=dict(floodback=bool(trips["floodback"][0]) and running,
-                        accumulator_liquid=bool(trips["accumulator_liquid"][0]),
-                        condenser_dry=bool(trips["condenser_dry"][0]),
+                        mixer_wet=bool(trips["mixer_wet"][0]) and running,
+                        no_liquid_seal=bool(trips["no_liquid_seal"][0]),
+                        receiver_full=bool(trips["receiver_full"][0]),
                         condenser_flooded=bool(trips["condenser_flooded"][0]),
                         high_T_d_warning=f(aux["T_d"]) > f(p.T_d_max) - 15.0,
                         high_P_d_warning=f(aux["P_d"]) > 0.9 * f(p.P_d_max)),
             limits=dict(P_d_max=f(p.P_d_max) / 1e5, P_s_min=f(p.P_s_min) / 1e5, P_s_max=f(p.P_s_max) / 1e5,
                         T_d_max=f(p.T_d_max) - C2K),
-            charge=dict(kg=f(aux["M_tot"]), nominal_kg=f(pl.nominal_charge()), pending_kg=self.charge_pending,
-                        rate_kg_s=self.charge_rate),
+            charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=f(pl.nominal_charge()),
+                        pending_kg=self.charge_pending, rate_kg_s=self.charge_rate),
             pending_params=sorted(self.pending_params),
             events=list(self.events)[:30],
         )

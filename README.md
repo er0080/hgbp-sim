@@ -6,11 +6,16 @@ controllers that automate compressor performance testing.
 
 * physics-based lumped-parameter model (mass & energy balances on refrigerant volumes,
   thermal masses, real-fluid properties via tabulated CoolProp data)
+* the stand as built: brazed-plate condenser, liquid **receiver**, and a brazed-plate
+  **mixing exchanger** where hot bypass gas evaporates the liquid quench in counterflow
+  before the two streams join at a tee; volumes and heat capacities follow from the
+  specified components and piping (see `docs/STAND_MODEL.md`)
 * total refrigerant **charge is a parameter**: undercharged and overcharged stands behave
-  differently (condenser liquid inventory, subcooling, loss of condensing area, liquid in
-  the suction accumulator and carry-over to the compressor)
+  differently (receiver level, loss of the liquid seal, condenser flooding and loss of
+  condensing area, subcooling, quench liquid reaching the compressor)
 * fully **vectorized**: thousands of stands integrate in lock-step with numpy
-  (~4 500 control steps / s at 1024 parallel environments on a laptop)
+  (about 1 000 control steps / s at 1024 parallel environments on a laptop; the live
+  stand runs 10-20 times faster than real time)
 * `gymnasium`-compatible single environment plus a batched environment for
   high-throughput training, with refrigerant-agnostic observations (saturation
   temperatures, normalized flow and power, compressor and refrigerant context), an
@@ -25,24 +30,31 @@ controllers that automate compressor performance testing.
 ## The stand
 
 ```
-compressor discharge --> [discharge volume, P_dis] --> valve 1 (discharge pressure)
-                                                            |
-                                    intermediate header, P_int (condensing pressure)
-                                        |                              |
-                     path 2: valve 2 (suction pressure,      path 1: brazed-plate condenser
-                             hot gas bypass)                          <-- cooling water: valve 4
-                                        |                              |
-                                        |                    valve 3 (suction temperature, liquid)
-                                        v                              v
-                        [suction mixer / accumulator tank, P_suc] --> compressor suction
+compressor --> discharge line --> valve 1 --> hot gas header (intermediate pressure P_int)
+                                                 |                         |
+                                              valve 2              condenser (BPHE) <-- water, valve 4
+                                                 |                         |
+                                                 |                  receiver (dip tube)
+                                                 |                         |
+                                                 |                      valve 3
+                                                 v                         v
+                                   mixing exchanger (BPHE), counterflow
+                            gas: S1 (bottom) -> S2 (top)   quench: S3 (top) -> S4 (bottom)
+                                                 \__________ tee __________/
+                                                             |
+                                     suction line -> probe -> compressor suction
 ```
 
 | valve | installed on | controls |
 |---|---|---|
 | 1 | discharge line, upstream of the split | discharge pressure |
-| 2 | hot gas bypass line into the mixer | suction pressure |
-| 3 | condenser outlet into the mixer | suction temperature / superheat |
+| 2 | hot gas bypass line into the mixing exchanger (gas side) | suction pressure |
+| 3 | liquid line from the receiver into the mixing exchanger (quench side) | suction temperature / superheat |
 | 4 | cooling water inlet of the condenser | intermediate (condensing) pressure |
+
+Condenser and mixing exchanger are Alfa Laval ACH-70X-78M-F, the receiver a Standard
+Refrigeration UR66; there is no suction accumulator, so quench liquid that the mixing
+exchanger does not evaporate reaches the compressor.
 
 The compressor speed follows the test schedule (an exogenous input). A test point is
 (P_suc, P_dis, superheat, P_int, speed).
@@ -117,23 +129,25 @@ noisy sensor readings, dashed lines the setpoints
 
 ![closed loop, nominal charge](figures/closed_loop_charge_1.0.png)
 
-Same schedule from a cold, equalized stand with the compressor started at 10 s. The
-accumulator holds liquid at first (measured superheat 0 until the bypass gas boils it
-off), and the shell and discharge temperature take tens of minutes to settle
-(`--cold`):
+Same schedule from a cold, equalized stand with the compressor started at 10 s; the
+shell and discharge temperature take tens of minutes to settle (`--cold`):
 
 ![closed loop, cold start](figures/closed_loop_cold_start.png)
 
-Undercharged stand (30 % of nominal): the condenser holds almost no liquid, valve 3
-saturates fully open at the high-load point and superheat runs away (`--charge 0.3`):
+Undercharged stand (30 % of nominal): the receiver level falls below the dip tube and
+valve 3 passes vapor (negative "subcooling" is that vapor's superheat), so the quench
+cannot cool the bypass gas: superheat runs high and the suction pressure loop loses the
+point (`--charge 0.3`):
 
 ![closed loop, undercharged](figures/closed_loop_charge_0.3.png)
 
-Overcharged stand (180 % of nominal): the condenser runs about 80 % full of liquid with
-13 K of subcooling; the water valve compensates for the lost condensing area
-(`--charge 1.8`):
+Overcharged stand (210 % of nominal): the receiver is full and liquid floods the
+condenser. At the high-lift point the flooding changes the condensing area and the water
+loop starts to cycle; after about 17 minutes the condenser is liquid-logged, the water
+valve saturates and the intermediate and discharge pressures run up (the stand would trip
+at 41.4 bar; the example does not enforce trips) (`--charge 2.1`):
 
-![closed loop, overcharged](figures/closed_loop_charge_1.8.png)
+![closed loop, overcharged](figures/closed_loop_charge_2.1.png)
 
 Open-loop +10 % steps on each valve from the MT standard point: every valve moves every
 controlled variable (`python examples/open_loop_step.py`):
@@ -222,22 +236,20 @@ partial derivatives `drho/dP|h`, `drho/dh|P` needed by the volume balances, and 
 inversions `h(P, s)`, `h(P, T)` and `h(P, rho)`.
 
 ### Control volumes
-Three lumped volumes with pressure and mean enthalpy as states:
+Full description: `docs/STAND_MODEL.md`.
 
-* **suction mixer / accumulator tank** (`V_s`, 12 L): liquid separates; the compressor
-  draws saturated vapor while liquid is present (measured superheat 0), stored liquid is
-  boiled off by the bypass gas, and liquid is entrained to the compressor once the tank
-  fill exceeds `acc_carry_fill0`.
-* **discharge volume** (`V_d`, 1.5 L): compressor port to valve 1.
-* **intermediate section** (`V_i`, 3 L): header, brazed-plate condenser and liquid line. Its
-  liquid inventory follows from the charge. Liquid backing up floods part of the plates:
-  the condensing conductance scales with the area left, and the flooded share is a
-  subcooled zone where the leaving liquid meets the entering water in counterflow
-  (effectiveness-NTU with the liquid-side `UA_sc` in series with the water side). The
-  subcooling therefore depends on the flooded area, the liquid flow and the water flow and
-  temperature, and the liquid cannot leave colder than the water enters; the water then
-  goes on to the condensing area. The outlet loses its liquid seal and passes two-phase
-  fluid when the fill drops below `cond_dry_fill`.
+* **discharge volume** (3.6 L): compressor internal discharge volume and discharge line.
+* **intermediate section** (33 L): header, condenser (refrigerant side), drain, receiver
+  and liquid line, one volume in equilibrium. Liquid collects in the receiver first (the
+  liquid line fills once the level is above the dip tube), then backs up through the
+  drain into the condenser, where it removes condensing area and forms a subcooled zone
+  against the entering water. Below the dip tube vapor enters the liquid line and valve 3
+  loses its liquid seal.
+* **suction side** (18 L), one common pressure: five finite-volume cells on the quench
+  side of the mixing exchanger with a plate wall per cell, a quasi-steady bypass gas side
+  marched against the same walls (counterflow), the tee and suction line, and the
+  compressor's internal suction volume. Liquid leaving the quench side travels as
+  droplets that evaporate on the way to the suction probe.
 
 ```
 mass    : V (drho/dP|h dP/dt + drho/dh|P dh/dt) = sum(m_in) - sum(m_out)
@@ -246,20 +258,19 @@ energy  : M dh/dt = sum(m_in (h_in - h)) - sum(m_out (h_out - h)) + Q + V dP/dt
 
 ### Charge
 `PlantParams.charge` (kg) is the total refrigerant mass; `None` (default) means the
-nominal charge for the volumes (`nominal_charge()`: vapor at a medium-temperature
-condition plus a 40 % liquid-filled condenser, about 1.7 kg for the defaults). At a cold
-start the liquid is split between the accumulator and the condenser
-(`cold_liquid_in_accumulator`); a charge too small to reach saturation at ambient leaves
-the stand with superheated vapor at a lower pressure. In steady state the charge fixes the
-condenser liquid inventory (the solver takes `charge=` or `fill=`).
+nominal charge (`nominal_charge()`: vapor at a medium-temperature condition, a full
+liquid line and the receiver 40 % full, 14.2 kg for the defaults). At a cold start the
+liquid sits in the receiver; a share `cold_liquid_in_suction` can be placed on the
+suction side (compressor first), as after refrigerant migration during a long off
+cycle. A charge too small to reach saturation at ambient leaves the stand with
+superheated vapor at a lower pressure. In steady state the charge fixes the receiver
+level (the solver takes `charge=` or a receiver level `fill=`). How the nominal charge
+is defined: `docs/REFRIGERANT_CHARGE.md`.
 
-Observed behaviour with the defaults (PID baseline, 4-point schedule):
-
-| charge factor | condenser fill | outlet subcooling | effect |
-|---|---|---|---|
-| 0.3 | 2-8 % | 0 K | no liquid seal, valve 3 passes flashing two-phase fluid, superheat runs away (6.5 K mean error) |
-| 1.0 | 37-42 % | ~2 K | all four loops within tolerance |
-| 1.8 | 78-83 % | 13 K | condensing area lost, more water needed, still controllable; beyond ~2x the water valve saturates and the stand trips |
+The receiver makes the stand tolerant of the charge: between about 0.4 and 2.1 times
+the nominal charge only the receiver level changes, and condensing area, subcooling and
+water valve position stay the same. Beyond that the receiver is full and liquid floods
+the condenser (overcharge); below it the liquid seal is lost (undercharge).
 
 ### Compressor
 Quasi-steady map: volumetric efficiency with clearance re-expansion
@@ -277,22 +288,24 @@ actuators have first-order lag and slew-rate limits; equal-percentage or linear
 characteristics are selectable.
 
 ### Sensors and safety
-Pressure transducers (noise), temperature sensors at compressor inlet, discharge and
-condenser outlet (first-order lag + noise), Coriolis flow meter and power meter (lag +
-relative noise). Trips: high discharge pressure, high discharge temperature, low/high
-suction pressure. Flags: liquid at the compressor inlet, liquid stored in the
-accumulator, condenser dry (undercharge), condenser flooded (overcharge).
+Pressure transducers (noise), temperature sensors at the compressor suction port (the
+probe at the end of the suction line), discharge and the liquid line at valve 3
+(first-order lag + noise), Coriolis flow meter and power meter (lag + relative noise),
+receiver sight glass. Trips: high discharge pressure, high discharge temperature,
+low/high suction pressure. Flags: liquid at the compressor (floodback), quench liquid
+leaving the mixing exchanger, no liquid seal (undercharge), receiver full and condenser
+flooding (overcharge).
 
 ### Integrator and mass conservation
-Fixed-step RK4 (default `dt = 0.05 s`; matches a 5 ms reference to 1e-4 bar). `heun` and
-`euler` are available for speed. The (P, h) closure is a linearization, so the mass
-derived from (P, h) can drift where the density derivatives jump, most visibly when a
-volume fills completely with liquid. The refrigerant mass of each volume is therefore
-integrated as a state of its own and, after every sub-step, the pressure is projected so
-that `rho(P, h) V` equals the integrated mass: total charge is conserved exactly. Volumes
-that are (nearly) liquid-full have stiff pressure dynamics and are integrated with a
-four-times finer sub-step; overcharging a stand until the condenser is liquid-full
-therefore drives the pressure up until the discharge-pressure trip, as on a real stand.
+Fixed-step RK4 (default `dt = 0.05 s`) with automatic sub-stepping: the right-hand side
+estimates the fastest local rate (valve conductance over the capacitance of each
+pressure node, advection, heat transfer and dry-out switching in the quench cells) and
+each step is split until rate x sub-step stays inside RK4's stable range; liquid-full
+volumes take at least four sub-steps. Mass and internal energy of every volume (the
+suction side as one group) are integrated as conserved states, and after every sub-step
+(P, h) are projected back onto them: the total charge is conserved to machine
+precision, and overcharging until the condenser floods drives the pressure up until the
+discharge-pressure trip, as on a real stand.
 
 ## Environment (`env.py`)
 
@@ -321,7 +334,8 @@ stayed inside the tolerance band (0.3 K, 0.2 K, 0.5 K) for `dwell_required` seco
 when its maximum hold time elapses; after the last point the compressor must be stopped
 and the episode terminates successfully. Start modes: `warm` (equilibrium at the first
 point or at a random other point, via the steady-state solver), `cold` (equalized stand
-at ambient with liquid in the accumulator), or `random`. Per episode the physical
+at ambient, liquid in the receiver, optionally some migrated to the suction side), or
+`random`. Per episode the physical
 parameters, ambient and water temperatures, the charge (`charge_range`, plus a share
 `p_charge_extreme` of episodes in `charge_extreme_range`) and the cold-start liquid
 distribution are randomized.
@@ -345,37 +359,41 @@ on this interface are specified in `docs/NN_CONTROLLER_SPEC.md`.
 
 Four PI loops (`control.py`, gains tuned by batched sweeps over the 4-point schedule of
 `examples/closed_loop_pid.py`): discharge pressure -> valve 1, suction pressure -> valve
-2, superheat -> valve 3, intermediate pressure -> valve 4. With nominal charge and
-sensor noise it holds mean errors of about 0.02 bar / 0.08 bar / 0.4 K / 0.05 bar
-through the schedule; the open-loop step responses (`examples/open_loop_step.py`) show
-why a coordinated (learned) controller can do better, e.g. +10 % on valve 2 moves all of
-suction pressure (+0.6 bar), discharge pressure (+1.8 bar) and superheat (+11 K).
+2, superheat -> valve 3, intermediate pressure -> valve 4. The superheat loop is slow on
+purpose (integral time 60 s): the suction temperature responds to valve 3 over about a
+minute because the mixing exchanger's plates have to change temperature, and a faster
+loop limit-cycles into floodback. The open-loop step responses
+(`examples/open_loop_step.py`) show the coupling a coordinated (learned) controller can
+exploit: every valve moves suction pressure, discharge pressure and superheat together.
 
 ## Key parameters (`PlantParams`)
 
 | group | parameters |
 |---|---|
 | compressor | `V_disp` (355 cm3/rev), `N_nom` (3550 rpm), `eta_v0`, `c_cl`, `eta_s0`, `a_s`, `Pr_opt`, `eta_motor`, `f_motor_gas`, `C_shell`, `UA_gs`, `UA_sha`, `ramp_N` |
-| volumes / charge | `V_s` (12 L), `V_d` (1.5 L), `V_i` (3 L), `charge`, `cold_liquid_in_accumulator` |
-| accumulator | `acc_blend_dx`, `acc_carry_fill0`, `acc_carry_max` |
-| condenser | `UA_r_2ph`, `UA_r_1ph`, `UA_sc`, `cond_dry_fill`, `UA_w0`, `mdot_w_ref`, `C_cw`, `UA_ca` |
-| walls | `C_sw`, `UA_sg`, `UA_sa`, `C_dw`, `UA_dg`, `UA_da` |
+| compressor volumes | `V_comp_suc` (5 L, behind the suction probe), `V_comp_dis` |
+| piping | `D_*`, `t_*`, `L_*` (outside diameter, wall, length) for the discharge, header, bypass, quench, exchanger outlet, suction, drain and liquid lines |
+| charge | `charge`, `cold_liquid_in_suction` |
+| condenser | `cond_n_plates`, `cond_V_ch`, `cond_A`, `cond_mass`, `alpha_r_2ph`, `alpha_r_1ph`, `alpha_sc`, `cond_sc_film`, `alpha_w0`, `mdot_w_ref`, `UA_ca` |
+| receiver | `rec_V` (26.5 L), `rec_dip`, `rec_mass`, `rec_UA_r`, `rec_UA_a` |
+| mixing exchanger | `mx_n_plates`, `mx_V_ch`, `mx_A`, `mx_mass`, `mx_alpha_g0`, `mx_alpha_e`, `mx_alpha_v0`, `mx_mdot_g_ref`, `mx_mdot_q_ref`, `mx_UA_a`, `tee_tau_evap` |
+| pipe walls | `UA_sg`, `UA_sa`, `UA_dg`, `UA_da` (heat capacities follow from the tube data) |
 | valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w` in m3/h (+ characteristic, `tau_*`, `rate_*`), water supply `P_w_sup` |
 | sensors | `tau_T`, `tau_m`, `tau_W`, `sig_*` |
-| limits | `P_d_max`, `P_s_min`, `P_s_max`, `T_d_max` |
+| limits | `P_d_max`, `P_s_min`, `P_s_max`, `T_d_max`, `y_flood` |
 
 Defaults describe a variable-speed 355 cm3/rev semi-hermetic compressor on R410A. All
 four valves are sized by their `Kv` (m3/h of water at a 1 bar drop), the way the hardware
 is specified; internally `mdot = (Kv / 36000) f(u) sqrt(rho dP)`. The cooling water valve
 uses the same relation against a fixed supply pressure `P_w_sup` (1.5 bar by default).
-Fit `V_disp`, the efficiency coefficients, volumes and valve Kv values to your compressor
+Fit `V_disp`, the efficiency coefficients, piping and valve Kv values to your compressor
 and stand; the steady-state solver plus `open_loop_step.py` make this quick.
 
 ## Assumptions and limitations
 
-* lumped volumes (no spatial discretization of the condenser or lines); subcooling and
-  the loss of liquid seal are modelled as functions of the condenser liquid fill
-* no oil, no pressure drop in the suction line, no suction-gas heater
+* the condenser, receiver and lines are one equilibrium volume (no stratified, subcooled
+  receiver pool); the mixing exchanger is discretized into five cells per side
+* no oil, no pressure drops inside the suction side, no suction-gas heater
 * compressor map is generic; replace `components.compressor` for a measured map
 * water inlet temperature and ambient are constant within an episode (easy to make
   time-varying via `plant.set_inputs`)
@@ -394,9 +412,10 @@ MIT, see `LICENSE`.
 hgbp_sim/
   properties.py    tabulated refrigerant properties (build from CoolProp, cached)
   params.py        PlantParams dataclass, randomization, nominal charge
+  geometry.py      volumes and heat capacities from the component and piping specification
   components.py    valves, actuators, compressor map, control-volume balance
   plant.py         HGBPPlant: batched ODE model, integrator, cold start, sensors, trips
-  steady_state.py  batched Levenberg-Marquardt equilibrium solver (charge- or fill-constrained)
+  steady_state.py  batched equilibrium solver (charge- or receiver-level-constrained)
   control.py       PID and 4-loop BaselineController
   scenarios.py     operating envelope, named points, schedules
   env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium)
@@ -407,9 +426,10 @@ hgbp_sim/
   data/            prebuilt property tables
 webui/             React + FastAPI operator interface, Dockerfile, docker-compose.yml,
                    config/stand_defaults.json (bind-mounted defaults)
-docs/              NN_CONTROLLER_SPEC.md: controller architecture, training and deployment spec;
+docs/              STAND_MODEL.md: the stand model (receiver, mixing exchanger, piping, numerics);
+                   NN_CONTROLLER_SPEC.md: controller architecture, training and deployment spec;
                    REFRIGERANT_CHARGE.md: how the nominal charge is calculated;
-                   SUCTION_MIXER_ANALYSIS.md: accumulator model review and known limitations
+                   SUCTION_MIXER_ANALYSIS.md: review of the former suction tank model (superseded)
 examples/          closed-loop, open-loop, dataset, behaviour cloning, benchmark
 tests/             property accuracy, conservation, charge effects, steady state, controllers, env API
 ```

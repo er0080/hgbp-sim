@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { ParamMeta, ParamsView, Snapshot, Time, Tuning } from "../types";
 
-const GROUP_ORDER = ["Refrigerant", "Charge", "Compressor", "Volumes", "Condenser", "Valves", "Suction accumulator",
-  "Pipe and tank walls", "Sensors", "Safety limits", "Baseline control"];
+const GROUP_ORDER = ["Refrigerant", "Charge", "Compressor", "Piping", "Condenser", "Receiver", "Mixing exchanger",
+  "Valves", "Pipe walls", "Sensors", "Safety limits", "Baseline control"];
 const LOOPS = ["dpv", "spv", "stv", "water"];
 
 type TuneEdit = { P: string; I: string; D: string };
@@ -129,7 +129,18 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
         {groups.map(([g, ms]) => (
           <div className="card" key={g}>
             <h2>{g} <button className="small" style={{ float: "right" }} onClick={() => resetGroup(ms)}>defaults</button></h2>
-            {g === "Charge" && <p className="note">Current charge {view.values.charge.toFixed(3)} kg, nominal for these volumes {view.nominal_charge.toFixed(3)} kg. The value set here applies at the next cold/warm start; use the +/- buttons on the operator panel to charge or recover while running. Leave empty for nominal.</p>}
+            {g === "Charge" && <p className="note">Current charge {view.values.charge.toFixed(3)} kg, nominal for these volumes {view.nominal_charge.toFixed(3)} kg (receiver 40 % full). The value set here applies at the next cold/warm start; use the Add / Recover buttons on the operator panel to charge or recover at the receiver while running. Leave empty for nominal.</p>}
+            {g === "Piping" && view.derived && (
+              <details className="note" style={{ marginBottom: 8 }}>
+                <summary>Refrigerant volumes derived from piping and components: suction {(view.derived.V_s * 1e3).toFixed(1)} L,
+                  discharge {(view.derived.V_d * 1e3).toFixed(1)} L, intermediate {(view.derived.V_i * 1e3).toFixed(1)} L</summary>
+                <table><tbody>
+                  {view.derived.volumes.map((r) => (
+                    <tr key={r.item}><td className="n">{r.section}</td><td className="d">{r.item}</td><td className="u">{r.L.toFixed(2)} L</td></tr>
+                  ))}
+                </tbody></table>
+              </details>
+            )}
             <table><tbody>
               {ms.map((m) => {
                 const cur = m.name in edits ? edits[m.name] : (view.values[m.name] === null ? "" : fmtVal(view.values[m.name]));

@@ -2,14 +2,18 @@
 
 All quantities are SI (Pa, J/kg, K, kg/s, m^3, W, W/K, J/K, s).
 
-Defaults describe a variable-speed 355 cm3/rev semi-hermetic compressor on
-R410A with a brazed-plate water-cooled condenser.  Every numeric field can be
-randomized per environment with :func:`randomize_params`.
+Defaults describe the stand: a variable-speed 355 cm3/rev semi-hermetic
+compressor on R410A, a water-cooled brazed-plate condenser with a liquid
+receiver, and a brazed-plate mixing exchanger in place of a suction mixer
+tank.  Components and piping are given as specified (tube sizes and lengths,
+plate count, channel volume, heating surface, weights); the model's volumes
+and heat capacities are derived from them (:mod:`hgbp_sim.geometry`).  Every
+numeric field can be randomized per environment with :func:`randomize_params`.
 
 Valve numbering follows the stand:
     1  discharge pressure valve      (discharge line, upstream of the split)
-    2  suction pressure valve        (hot gas bypass line -> suction mixer)
-    3  suction temperature valve     (condenser outlet -> suction mixer)
+    2  suction pressure valve        (hot gas bypass line -> mixing exchanger, gas side)
+    3  suction temperature valve     (receiver / liquid line -> mixing exchanger, quench side)
     4  cooling water valve           (condenser water inlet; sets the
                                       intermediate/condensing pressure)
 """
@@ -50,40 +54,85 @@ class PlantParams:
     cp_gas: float = 1000.0      # vapor cp used for the discharge gas -> shell heat exchange [J/kg/K]
     tau_N: float = 0.5          # speed response time constant of motor and VFD [s]
     ramp_N: float = 300.0       # VFD acceleration / deceleration limit [rpm/s]
+    V_comp_suc: float = 5.0e-3  # compressor internal suction volume behind the suction port, excluding oil [m^3]
+    V_comp_dis: float = 1.5e-3  # compressor internal discharge volume up to the discharge port (estimate) [m^3]
+    comp_x_min: float = 0.7     # lowest quality the compressor draws in; more liquid collects in its shell (internal suction volume)
 
-    # ------------------------------------------------------------- volumes
-    V_s: float = 12e-3          # suction mixer/accumulator tank + suction line [m^3]
-    V_d: float = 1.5e-3         # compressor discharge port -> valve 1 [m^3]
-    V_i: float = 3.0e-3         # intermediate section: header + condenser + liquid line [m^3]
+    # -------------------------------------------------------------- piping
+    # Copper refrigerant lines: outside diameter, wall thickness and length.
+    # Defaults are ACR type L tube; see geometry.LINES for the routing.
+    D_dis: float = 0.028575     # discharge line (compressor -> valve 1) outside diameter, 1-1/8 in [m]
+    t_dis: float = 0.00127      # discharge line wall thickness [m]
+    L_dis: float = 4.0          # discharge line length [m]
+    D_hdr: float = 0.028575     # hot gas header (valve 1 -> condenser and valve 2) outside diameter, 1-1/8 in [m]
+    t_hdr: float = 0.00127      # hot gas header wall thickness [m]
+    L_hdr: float = 4.0          # hot gas header length [m]
+    D_bp: float = 0.028575      # bypass line (valve 2 -> mixing exchanger S1) outside diameter, 1-1/8 in [m]
+    t_bp: float = 0.00127       # bypass line wall thickness [m]
+    L_bp: float = 0.5           # bypass line length (estimate) [m]
+    D_q: float = 0.022225       # quench line (valve 3 -> mixing exchanger S3) outside diameter, 7/8 in [m]
+    t_q: float = 0.001143       # quench line wall thickness [m]
+    L_q: float = 0.5            # quench line length (estimate) [m]
+    D_mo: float = 0.034925      # mixing exchanger outlets (S2, S4 -> tee) outside diameter, 1-3/8 in [m]
+    t_mo: float = 0.001397      # mixing exchanger outlet piping wall thickness [m]
+    L_mo: float = 1.0           # mixing exchanger outlet piping, both legs together (estimate) [m]
+    D_suc: float = 0.041275     # suction line (tee -> compressor) outside diameter, 1-5/8 in [m]
+    t_suc: float = 0.001524     # suction line wall thickness [m]
+    L_suc: float = 4.0          # suction line length; the suction temperature probe is at its end [m]
+    D_drn: float = 0.022225     # condensate drain (condenser -> receiver) outside diameter, 7/8 in [m]
+    t_drn: float = 0.001143     # condensate drain wall thickness [m]
+    L_drn: float = 0.5          # condensate drain length (estimate) [m]
+    D_liq: float = 0.022225     # liquid line (receiver -> valve 3) outside diameter, 7/8 in [m]
+    t_liq: float = 0.001143     # liquid line wall thickness [m]
+    L_liq: float = 3.0          # liquid line length [m]
 
     # -------------------------------------------------------------- charge
-    charge: float | None = None  # total refrigerant mass; empty = nominal charge for these volumes [kg]
-    cold_liquid_in_accumulator: float = 0.5  # share of the liquid in the suction tank at a cold start (rest in the condenser)
+    charge: float | None = None  # total refrigerant mass; empty = nominal charge for this stand [kg]
+    cold_liquid_in_suction: float = 0.0  # share of the liquid on the suction side at a cold start (migrated into compressor and mixer; rest in the receiver)
 
-    # --------------------------------------------- suction accumulator tank
-    acc_blend_dx: float = 0.02  # quality band over which the tank outlet turns saturated -> superheated (smoothing)
-    acc_carry_fill0: float = 0.5  # tank liquid fill above which liquid is carried over to the compressor
-    acc_carry_max: float = 0.3  # share of liquid in the compressor inlet stream when the tank is full
-
-    # ------------------------------------------------ pipe / vessel thermal mass
-    C_sw: float = 4e3           # tank + suction line wall heat capacity [J/K]
-    UA_sg: float = 40.0         # tank and suction line wall -> refrigerant conductance [W/K]
-    UA_sa: float = 6.0          # tank and suction line wall -> ambient conductance (insulated) [W/K]
-    C_dw: float = 3e3           # discharge line wall heat capacity [J/K]
-    UA_dg: float = 40.0         # discharge line wall -> discharge gas conductance [W/K]
-    UA_da: float = 3.0          # discharge line wall -> ambient conductance [W/K]
-
-    # ----------------------------------------------------------- condenser
-    UA_r_2ph: float = 10500.0   # refrigerant -> plate conductance while condensing, whole plate area [W/K]
-    UA_r_1ph: float = 875.0     # refrigerant -> plate conductance for vapor (desuperheating), whole plate area [W/K]
-    UA_sc: float = 4000.0       # liquid-side conductance of the subcooled zone if the whole plate area were flooded [W/K]
-    cond_dry_fill: float = 0.08  # condenser liquid fill below which the outlet loses its liquid seal (two-phase to valve 3)
-    UA_w0: float = 10500.0      # plate -> water conductance at the reference water flow; scales with flow^0.8 [W/K]
-    mdot_w_ref: float = 1.75    # water flow at which UA_w0 applies [kg/s]
+    # ---------------------------------------------- condenser (brazed plate)
+    # Alfa Laval ACH-70X-78M-F: refrigerant on S3-S4, cooling water on S1-S2
+    cond_n_plates: float = 78.0  # condenser plate count (plates - 1 channels, split between the two sides)
+    cond_V_ch: float = 0.095e-3  # condenser volume per channel [m^3]
+    cond_A: float = 6.588       # condenser heating surface [m^2]
+    cond_mass: float = 16.19    # condenser net weight (stainless plates, copper braze) [kg]
+    alpha_r_2ph: float = 1594.0  # refrigerant -> plate heat transfer coefficient while condensing [W/m^2/K]
+    alpha_r_1ph: float = 133.0  # refrigerant -> plate heat transfer coefficient for vapor (desuperheating) [W/m^2/K]
+    alpha_sc: float = 607.0     # liquid -> plate heat transfer coefficient in the subcooled (flooded) zone [W/m^2/K]
+    cond_sc_film: float = 0.02  # share of the plate area that subcools the draining condensate while the condenser is not flooded
+    alpha_w0: float = 1594.0    # plate -> water heat transfer coefficient at the reference water flow; scales with flow^0.8 [W/m^2/K]
+    mdot_w_ref: float = 1.75    # water flow at which alpha_w0 applies [kg/s]
     cp_w: float = 4180.0        # water specific heat [J/kg/K]
     rho_w: float = 1000.0       # cooling water density [kg/m^3]
-    C_cw: float = 28e3          # condenser plate metal + water content heat capacity [J/K]
-    UA_ca: float = 5.0          # condenser and liquid line -> ambient conductance [W/K]
+    UA_ca: float = 5.0          # condenser -> ambient conductance [W/K]
+
+    # ------------------------------------------------------ liquid receiver
+    # Standard Refrigeration UR66 (MP): 61 lb R22 pumpdown capacity; vertical, dip tube outlet
+    rec_V: float = 26.5e-3      # receiver internal volume (from the pumpdown rating at 90 % full, 90 degF) [m^3]
+    rec_dip: float = 0.04       # dip tube inlet height as a share of the receiver volume; below it vapor enters the liquid line
+    rec_mass: float = 25.0      # receiver shell weight (estimate) [kg]
+    rec_UA_r: float = 150.0     # receiver shell -> refrigerant conductance [W/K]
+    rec_UA_a: float = 3.0       # receiver shell -> ambient conductance [W/K]
+
+    # ------------------------------------------ mixing exchanger (brazed plate)
+    # Alfa Laval ACH-70X-78M-F, S2/S3 up: quench liquid S3 (top) -> S4, bypass gas S1 (bottom) -> S2
+    mx_n_plates: float = 78.0   # mixing exchanger plate count
+    mx_V_ch: float = 0.095e-3   # mixing exchanger volume per channel [m^3]
+    mx_A: float = 6.588         # mixing exchanger heating surface [m^2]
+    mx_mass: float = 16.19      # mixing exchanger net weight [kg]
+    mx_alpha_g0: float = 500.0  # bypass gas -> plate heat transfer coefficient at mx_mdot_g_ref; scales with flow^0.8 [W/m^2/K]
+    mx_mdot_g_ref: float = 0.5  # bypass gas flow at which mx_alpha_g0 applies [kg/s]
+    mx_alpha_e: float = 1500.0  # plate -> evaporating quench heat transfer coefficient at mx_mdot_q_ref; scales with flow^0.5 [W/m^2/K]
+    mx_alpha_v0: float = 250.0  # plate -> quench vapor (after dry-out) heat transfer coefficient at mx_mdot_q_ref; scales with flow^0.8 [W/m^2/K]
+    mx_mdot_q_ref: float = 0.13  # quench flow at which mx_alpha_e and mx_alpha_v0 apply [kg/s]
+    mx_UA_a: float = 2.0        # mixing exchanger -> ambient conductance (insulated) [W/K]
+    tee_tau_evap: float = 0.3   # evaporation time constant of liquid droplets from the quench outlet in the gas downstream of the tee [s]
+
+    # ------------------------------------------------------------ pipe walls
+    UA_sg: float = 40.0         # suction line wall -> refrigerant conductance [W/K]
+    UA_sa: float = 6.0          # suction line wall -> ambient conductance (insulated) [W/K]
+    UA_dg: float = 40.0         # discharge line wall -> discharge gas conductance [W/K]
+    UA_da: float = 3.0          # discharge line wall -> ambient conductance [W/K]
 
     # -------------------------------------------------------------- valves
     # Every valve is sized by its Kv, the way the hardware is specified: the
@@ -129,6 +178,7 @@ class PlantParams:
     P_s_min: float = 0.3e5      # low suction pressure trip [Pa]
     P_s_max: float = 30e5       # high suction pressure trip [Pa]
     T_d_max: float = 135.0 + 273.15  # high discharge temperature trip [K]
+    y_flood: float = 0.005      # liquid mass share at the compressor suction port counted as floodback
 
     # ------------------------------------------------- baseline control aid
     dP_i_margin: float = 15.89e5  # liquid pressure setpoint below discharge pressure when a test point gives none [Pa]
@@ -147,10 +197,13 @@ class PlantParams:
 DEFAULT_RANDOMIZATION: dict[str, float] = {
     "V_disp": 0.10, "eta_v0": 0.03, "c_cl": 0.30, "eta_s0": 0.06, "a_s": 0.3,
     "eta_motor": 0.03, "C_shell": 0.3, "UA_gs": 0.3, "UA_sha": 0.3,
-    "V_s": 0.20, "V_d": 0.25, "V_i": 0.20,
-    "C_sw": 0.3, "UA_sg": 0.3, "UA_sa": 0.3, "C_dw": 0.3, "UA_dg": 0.3, "UA_da": 0.3,
-    "UA_r_2ph": 0.25, "UA_r_1ph": 0.25, "UA_w0": 0.25, "C_cw": 0.3, "UA_ca": 0.3,
-    "UA_sc": 0.25, "cond_dry_fill": 0.3, "acc_carry_fill0": 0.2,
+    "V_comp_suc": 0.2, "V_comp_dis": 0.3,
+    "L_dis": 0.25, "L_hdr": 0.25, "L_bp": 0.5, "L_q": 0.5, "L_mo": 0.5, "L_suc": 0.25,
+    "L_drn": 0.5, "L_liq": 0.25, "rec_V": 0.1, "rec_dip": 0.3, "rec_mass": 0.2, "rec_UA_r": 0.3,
+    "UA_sg": 0.3, "UA_sa": 0.3, "UA_dg": 0.3, "UA_da": 0.3,
+    "alpha_r_2ph": 0.25, "alpha_r_1ph": 0.25, "alpha_w0": 0.25, "UA_ca": 0.3,
+    "alpha_sc": 0.25, "cond_sc_film": 0.3,
+    "mx_alpha_g0": 0.25, "mx_alpha_e": 0.3, "mx_alpha_v0": 0.3, "tee_tau_evap": 0.5,
     "Kv_dpv": 0.15, "Kv_spv": 0.15, "Kv_stv": 0.15, "Kv_w": 0.15,
     "tau_dpv": 0.3, "tau_spv": 0.3, "tau_stv": 0.3, "rate_dpv": 0.3, "rate_spv": 0.3,
     "rate_stv": 0.3, "tau_w": 0.3, "rate_w": 0.3,
@@ -197,35 +250,59 @@ def sample_params(p: PlantParams, n: int, rng, spec=None, randomize: bool = True
 
 
 def nominal_charge(p, props, T_evap: float = 263.15, T_int: float = 313.15,
-                   SH: float = 10.0, fill: float = 0.4):
+                   SH: float = 10.0, level: float = 0.4):
     """Reference refrigerant charge [kg] for a parameter namespace ``p``
-    (arrays): vapor in suction and discharge volumes at a typical medium
-    temperature condition plus a condenser with liquid fill fraction ``fill``.
+    (arrays, with the derived volumes of :func:`hgbp_sim.geometry.derive`):
+    vapor in the suction and discharge volumes at a typical medium temperature
+    condition, a full liquid line and the receiver filled to ``level`` (share
+    of its volume); condenser, drain and header hold saturated vapor.
     """
-    V_s, V_d, V_i = (np.asarray(getattr(p, k), float) for k in ("V_s", "V_d", "V_i"))
-    n = np.broadcast(V_s, V_d, V_i).shape
+    V_s, V_d, V_i = (np.atleast_1d(np.asarray(getattr(p, k), float)) for k in ("V_s", "V_d", "V_i"))
+    n = V_s.shape
     P_s = np.broadcast_to(props.P_sat(np.array([T_evap])), n)
     rho_s = props.state(P_s, props.h_PT(P_s, np.full(n, T_evap + SH))).rho
     P_i = np.broadcast_to(props.P_sat(np.array([T_int])), n)
     P_d = P_i + 2.5e5
     rho_d = props.state(P_d, props.h_PT(P_d, np.full(n, T_int + 35.0))).rho
     sat = props.sat(P_i)
-    return rho_s * V_s + rho_d * V_d + V_i * (fill * sat["rho_l"] + (1.0 - fill) * sat["rho_v"])
+    V_l = np.minimum(liquid_volume_for_level(p, level), V_i)
+    return rho_s * V_s + rho_d * V_d + V_l * sat["rho_l"] + (V_i - V_l) * sat["rho_v"]
+
+
+def liquid_volume_for_level(p, level):
+    """Liquid volume of the intermediate section with the receiver filled to
+    ``level`` (share of its volume) and the condenser drained: the liquid line
+    is full once the level is above the dip tube inlet."""
+    level = np.asarray(level, float)
+    V_liq = p.V_lines["liq"]
+    ramp = np.clip((level - p.rec_dip) / 0.01, 0.0, 1.0)      # liquid line fills just above the dip tube
+    return level * p.rec_V + ramp * V_liq
 
 
 # ---------------------------------------------------------------- metadata
 _GROUPS = [
-    ("fluid", "Refrigerant"), ("V_disp", "Compressor"), ("V_s", "Volumes"), ("charge", "Charge"),
-    ("acc_blend_dx", "Suction accumulator"), ("C_sw", "Pipe and tank walls"), ("UA_r_2ph", "Condenser"),
-    ("Kv_dpv", "Valves"), ("tau_T", "Sensors"), ("P_d_max", "Safety limits"), ("dP_i_margin", "Baseline control"),
+    ("fluid", "Refrigerant"), ("V_disp", "Compressor"), ("D_dis", "Piping"), ("charge", "Charge"),
+    ("cond_n_plates", "Condenser"), ("rec_V", "Receiver"), ("mx_n_plates", "Mixing exchanger"),
+    ("UA_sg", "Pipe walls"), ("Kv_dpv", "Valves"), ("tau_T", "Sensors"), ("P_d_max", "Safety limits"),
+    ("dP_i_margin", "Baseline control"),
 ]
-_REQUIRE_INIT = {"fluid", "V_s", "V_d", "V_i", "charge", "cold_liquid_in_accumulator"}
+# structural parameters (volumes and heat capacities follow from them): applied at the
+# next cold / warm start
+_REQUIRE_INIT = {"fluid", "charge", "cold_liquid_in_suction", "V_comp_suc", "V_comp_dis",
+                 "cond_n_plates", "cond_V_ch", "cond_mass", "rec_V", "rec_dip", "rec_mass",
+                 "mx_n_plates", "mx_V_ch", "mx_A", "mx_mass", "cond_A", "rho_w", "cp_w"} \
+    | {f"{a}_{k}" for a in ("D", "t", "L") for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")}
 # Editable range (min, max) enforced by the UI and by LiveStand.set_params.
 # Parameters that are not listed are unconstrained.
 _RANGES: dict[str, tuple[float, float]] = {
     "Kv_dpv": (0.01, 200.0), "Kv_spv": (0.01, 200.0),
     "Kv_stv": (0.01, 200.0), "Kv_w": (0.01, 200.0),
     "P_w_sup": (0.2e5, 10e5),
+    "cond_n_plates": (4.0, 124.0), "mx_n_plates": (4.0, 124.0), "rec_dip": (0.0, 0.5),
+    "cond_sc_film": (0.0, 0.5), "y_flood": (1e-4, 0.5), "tee_tau_evap": (0.01, 10.0), "comp_x_min": (0.0, 1.0),
+    "V_comp_suc": (0.0, 0.1), "V_comp_dis": (0.0, 0.1), "rec_V": (1e-3, 1.0),
+    **{f"{a}_{k}": (0.0, 0.2 if a != "L" else 50.0) for a in ("D", "t", "L")
+       for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")},
 }
 
 

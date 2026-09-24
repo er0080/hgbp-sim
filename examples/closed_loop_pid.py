@@ -16,8 +16,8 @@ C2K = 273.15
 
 
 def run(cold: bool = False, seed: int = 0, gains: dict | None = None, T_end: float = 2400.0,
-        dt_ctrl: float = 1.0, noise: bool = True, charge_factor: float = 1.0,
-        liquid_in_accumulator: float = 0.5):
+        dt_ctrl: float = 0.25, noise: bool = True, charge_factor: float = 1.0,
+        liquid_in_suction: float = 0.0):
     params = PlantParams()
     plant = HGBPPlant(params, n=1, dt=0.05, rng=np.random.default_rng(seed))
     plant.p.charge[:] = plant.nominal_charge() * charge_factor
@@ -33,14 +33,14 @@ def run(cold: bool = False, seed: int = 0, gains: dict | None = None, T_end: flo
     ctrl = BaselineController(1, gains)
     p0 = schedule[0][1]
     if cold:
-        plant.cold_start(T_amb=T_amb, u_pos=ctrl.u_off[None, :], liquid_in_accumulator=liquid_in_accumulator)
+        plant.cold_start(T_amb=T_amb, u_pos=ctrl.u_off[None, :], liquid_in_suction=liquid_in_suction)
         ctrl.reset()
         t_start = 10.0
     else:
         res = solve_steady_state(plant, p0["P_s"], p0["P_d"], p0["SH"], p0["N"], P_i=p0["P_i"])
         if not res["converged"].all():
             print("warning: no steady state at the first point with this charge; cold start instead")
-            plant.cold_start(T_amb=T_amb, u_pos=ctrl.u_off[None, :], liquid_in_accumulator=liquid_in_accumulator)
+            plant.cold_start(T_amb=T_amb, u_pos=ctrl.u_off[None, :], liquid_in_suction=liquid_in_suction)
             ctrl.reset()
             t_start = 10.0
         else:
@@ -62,7 +62,7 @@ def run(cold: bool = False, seed: int = 0, gains: dict | None = None, T_end: flo
                     aux["u1"][0], aux["u2"][0], aux["u3"][0], aux["u4"][0],                   # 9-12
                     aux["T_d"][0], aux["Tm_d"][0], aux["T_sh"][0], aux["T_cw"][0], aux["T_co"][0],  # 13-17
                     aux["mdot_c"][0], aux["W_el"][0], aux["N"][0],                            # 18-20
-                    aux["x_out"][0], aux["fill_s"][0], aux["fill_i"][0], aux["SC"][0],        # 21-24
+                    aux["x_out"][0], aux["rec_level"][0], aux["cond_flood"][0], aux["SC"][0],  # 21-24
                     aux["T_wo"][0], aux["mdot_w"][0],                                         # 25-26
                     meas["P_s"][0], meas["P_d"][0], meas["SH"][0], meas["P_i"][0]])           # 27-30
     return np.array(log)
@@ -91,7 +91,7 @@ def plot(log: np.ndarray, out: str, title: str = "") -> None:
     ax[2].plot(t, log[:, 29], color="0.7", lw=0.6)
     ax[2].plot(t, log[:, 3], label="superheat")
     ax[2].plot(t, log[:, 7], "k--")
-    ax[2].plot(t, log[:, 24], label="cond. outlet subcooling")
+    ax[2].plot(t, log[:, 24], label="liquid subcooling at valve 3")
     ax[2].set_ylabel("[K]")
     ax[2].legend()
     ax[3].plot(t, log[:, 13] - C2K, label="T_dis (gas)")
@@ -103,7 +103,7 @@ def plot(log: np.ndarray, out: str, title: str = "") -> None:
     ax[3].legend(fontsize=8)
     ax[4].plot(t, log[:, 9], label="1 discharge pressure")
     ax[4].plot(t, log[:, 10], label="2 suction pressure (HGBP)")
-    ax[4].plot(t, log[:, 11], label="3 suction temperature (liquid)")
+    ax[4].plot(t, log[:, 11], label="3 suction temperature (quench)")
     ax[4].plot(t, log[:, 12], label="4 cooling water")
     ax[4].set_ylabel("valve position [-]")
     ax[4].legend(fontsize=8)
@@ -111,9 +111,9 @@ def plot(log: np.ndarray, out: str, title: str = "") -> None:
     ax[5].plot(t, log[:, 19] / 100.0, label="power [100 W]")
     ax[5].plot(t, log[:, 20] / 100.0, label="speed [100 rpm]")
     ax[5].legend()
-    ax[6].plot(t, log[:, 21], label="compressor inlet quality")
-    ax[6].plot(t, log[:, 22], label="accumulator liquid fill")
-    ax[6].plot(t, log[:, 23], label="condenser liquid fill")
+    ax[6].plot(t, np.minimum(log[:, 21], 1.2), label="compressor inlet quality (capped at 1.2)")
+    ax[6].plot(t, log[:, 22], label="receiver level")
+    ax[6].plot(t, log[:, 23], label="condenser flooded share")
     ax[6].axhline(1.0, color="r", lw=0.5)
     ax[6].legend(fontsize=8)
     ax[6].set_xlabel("time [min]")
@@ -141,6 +141,7 @@ if __name__ == "__main__":
     e = np.abs(log[:, 1:5] - log[:, 5:9])
     print("mean |error| over run: P_s %.3f bar, P_d %.3f bar, SH %.2f K, P_i %.3f bar" % (
         e[:, 0].mean() / 1e5, e[:, 1].mean() / 1e5, e[:, 2].mean(), e[:, 3].mean() / 1e5))
-    print("time with liquid at compressor inlet: %.0f s; condenser fill range %.2f-%.2f; subcooling max %.1f K" % (
-        (log[:, 21] < 1.0).sum(), log[:, 23].min(), log[:, 23].max(), log[:, 24].max()))
+    dt = np.diff(log[:, 0], prepend=0.0)
+    print("time with liquid at compressor inlet: %.0f s; receiver level %.2f-%.2f; subcooling max %.1f K" % (
+        (dt * (log[:, 21] < 0.995)).sum(), log[:, 22].min(), log[:, 22].max(), log[:, 24].max()))
     plot(log, args.out, title=f"charge factor {args.charge:.2f}" + (" (cold start)" if args.cold else ""))

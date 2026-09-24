@@ -5,7 +5,7 @@ import type { ParamsView, Snapshot } from "../types";
 export default function InitDialog({ mode, snap, onClose }: { mode: "cold" | "warm"; snap: Snapshot; onClose: () => void }) {
   const [T_amb, setTamb] = useState(snap.meas.T_amb.toFixed(1));
   const [T_wi, setTwi] = useState(snap.meas.T_wi.toFixed(1));
-  const [liq, setLiq] = useState("0.5");
+  const [liq, setLiq] = useState("0");
   const [named, setNamed] = useState("MT_standard");
   const [custom, setCustom] = useState(false);
   const [pt, setPt] = useState({ T_evap: "-10", T_cond: "45", T_int: "38", SH: "10", N: String(Math.round(snap.compressor.speed_sp)) });
@@ -17,7 +17,7 @@ export default function InitDialog({ mode, snap, onClose }: { mode: "cold" | "wa
     setBusy(true); setErr("");
     try {
       if (mode === "cold") {
-        await api("/api/init", { mode: "cold", T_amb: Number(T_amb), T_wi: Number(T_wi), liquid_in_accumulator: Number(liq) });
+        await api("/api/init", { mode: "cold", T_amb: Number(T_amb), T_wi: Number(T_wi), liquid_in_suction: Number(liq) });
       } else {
         const point = custom ? { T_evap: Number(pt.T_evap), T_cond: Number(pt.T_cond), T_int: Number(pt.T_int), SH: Number(pt.SH), N: Number(pt.N) } : named;
         await api("/api/init", { mode: "warm", T_amb: Number(T_amb), T_wi: Number(T_wi), point });
@@ -35,8 +35,8 @@ export default function InitDialog({ mode, snap, onClose }: { mode: "cold" | "wa
         <div className="form-row"><label>cooling water inlet [°C]</label><input type="number" value={T_wi} onChange={(e) => setTwi(e.target.value)} /></div>
         {mode === "cold" && (
           <>
-            <div className="form-row"><label>share of the liquid charge placed in the accumulator (rest in the condenser)</label><input type="number" min={0} max={1} step={0.1} value={liq} onChange={(e) => setLiq(e.target.value)} /></div>
-            <p className="note">This is a mass split of the liquid, not a quality or a level. With the nominal charge, half of the liquid is about 0.6 kg, which fills roughly 4 % of the 12 L accumulator; the panel's "liquid %" readouts are liquid volume divided by vessel volume.</p>
+            <div className="form-row"><label>share of the liquid charge migrated to the suction side (rest in the receiver)</label><input type="number" min={0} max={1} step={0.05} value={liq} onChange={(e) => setLiq(e.target.value)} /></div>
+            <p className="note">A mass split of the liquid, not a level. Migrated liquid fills the compressor's internal suction volume first, then the suction line and the mixing exchanger, as after a long off cycle; with the nominal charge, 0.05 is about 0.5 kg. The receiver level is liquid volume over receiver volume, as on the sight glass.</p>
           </>
         )}
         {mode === "warm" && (

@@ -16,9 +16,11 @@ export default function KpiTiles({ snap }: { snap: Snapshot }) {
         <div className="kpi"><div className="l">subcooling</div><div className="v">{fmt(m.SC, 1)}<small>K</small></div></div>
         <div className="kpi"><div className="l">pressure ratio</div><div className="v">{fmt(t.Pr, 2)}</div></div>
         <div className="kpi"><div className="l">volumetric eff.</div><div className="v">{fmt(t.eta_v * 100, 0)}<small>%</small></div></div>
-        <div className="kpi"><div className="l">condenser liquid</div><div className="v">{fmt(t.fill_i * 100, 0)}<small>%</small></div></div>
-        <div className="kpi"><div className="l">accumulator liquid</div><div className="v">{fmt(t.fill_s * 100, 1)}<small>%</small></div></div>
-        <div className="kpi"><div className="l">inlet quality</div><div className="v" style={{ color: t.x_out < 1 ? "var(--bad)" : undefined }}>{fmt(t.x_out, 3)}</div></div>
+        <div className="kpi"><div className="l">receiver level</div><div className="v">{fmt(t.rec_level * 100, 0)}<small>%</small></div></div>
+        <div className="kpi"><div className="l">condenser flooded</div><div className="v">{fmt(t.cond_flood * 100, 0)}<small>%</small></div></div>
+        <div className="kpi"><div className="l">quench outlet</div><div className="v" style={{ color: t.x_qo < 1 ? "var(--bad)" : undefined }}>
+          {t.x_qo < 1 ? <>x {fmt(t.x_qo, 2)}</> : <>{fmt(t.T_qo, 1)}<small>°C</small></>}</div></div>
+        <div className="kpi"><div className="l">liquid at compressor</div><div className="v" style={{ color: t.y_liq > 0.0005 ? "var(--bad)" : undefined }}>{fmt(t.y_liq * 100, 1)}<small>%</small></div></div>
         <div className="kpi"><div className="l">heat to water</div><div className="v">{fmt(t.Q_w / 1000, 2)}<small>kW</small></div></div>
       </div>
       <div className="chargebar">

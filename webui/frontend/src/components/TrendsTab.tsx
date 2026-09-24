@@ -17,14 +17,18 @@ const CHARTS: { title: string; unit: string; series: SeriesDef[] }[] = [
   { title: "Temperatures", unit: "°C", series: [
     { key: "T_d", label: "discharge", color: C.red }, { key: "T_s", label: "suction", color: C.blue },
     { key: "sp_T_s", label: "suction SP", color: C.blue, dash: [6, 4], width: 1 },
-    { key: "T_co", label: "condenser outlet", color: C.cyan }, { key: "T_sh", label: "shell", color: C.orange },
+    { key: "T_co", label: "liquid to valve 3", color: C.cyan }, { key: "T_sh", label: "shell", color: C.orange },
     { key: "T_cw", label: "condenser wall", color: C.purple }, { key: "T_wo", label: "water out", color: C.grey } ] },
+  { title: "Mixing exchanger", unit: "°C · kW", series: [
+    { key: "T_go", label: "gas outlet S2 [°C]", color: C.red }, { key: "T_qo", label: "quench outlet S4 [°C]", color: C.cyan },
+    { key: "T_s", label: "suction probe [°C]", color: C.blue }, { key: "Q_mx", label: "duty [kW]", color: C.orange } ] },
   { title: "Flow, power, speed", unit: "g/s · W/100 · rpm/100", series: [
     { key: "mdot", label: "mass flow [g/s]", color: C.blue }, { key: "W", label: "power [W]", color: C.orange },
     { key: "N", label: "speed [rpm]", color: C.green }, { key: "mdot_w", label: "water [kg/min]", color: C.cyan } ] },
   { title: "Inventory and charge", unit: "-", series: [
-    { key: "fill_i", label: "condenser liquid fill", color: C.cyan }, { key: "fill_s", label: "accumulator liquid fill", color: C.blue },
-    { key: "x_out", label: "compressor inlet quality", color: C.red }, { key: "charge", label: "charge [kg]", color: C.yellow } ] },
+    { key: "rec_level", label: "receiver level", color: C.cyan }, { key: "cond_flood", label: "condenser flooded", color: C.purple },
+    { key: "M_q_liq", label: "liquid in mixing exch. [kg]", color: C.blue }, { key: "y_liq", label: "liquid share at compressor", color: C.red },
+    { key: "charge", label: "charge [kg]", color: C.yellow } ] },
 ];
 
 export default function TrendsTab({ history, version, snap }: { history: React.MutableRefObject<History>; version: number; snap: Snapshot }) {

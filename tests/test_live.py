@@ -87,9 +87,9 @@ def test_live_stand_operation():
         s = st.step()
     assert abs(s["charge"]["kg"] - (m0 + 0.1)) < 5e-3
     # live and deferred parameters
-    r = st.set_params({"UA_r_2ph": 2500.0, "V_i": 4e-3})
-    assert r["applied"] == ["UA_r_2ph"] and r["deferred"] == ["V_i"]
-    assert float(st.plant.p.UA_r_2ph[0]) == 2500.0
+    r = st.set_params({"alpha_r_2ph": 1200.0, "L_liq": 5.0})
+    assert r["applied"] == ["alpha_r_2ph"] and r["deferred"] == ["L_liq"]
+    assert float(st.plant.p.alpha_r_2ph[0]) == 1200.0
     # closing the water valve in manual trips the stand, reset requires it to be off
     st.set_loop("water", mode="manual", out=0.0)
     for _ in range(4800):          # 1200 s

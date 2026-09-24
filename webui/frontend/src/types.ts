@@ -6,7 +6,7 @@ export interface Loop extends Tuning {
   pv: number; sp: number; out: number; mode: "auto" | "manual"; manual_out: number;
 }
 export interface Snapshot {
-  t: number; step: number; paused: boolean; speed_factor: number; noise: boolean; dt_ctrl: number; fluid: string;
+  t: number; step: number; paused: boolean; speed_factor: number; achieved_speed: number; noise: boolean; dt_ctrl: number; fluid: string;
   compressor: {
     state: string; tripped: boolean; trip_reasons: string[]; run_request: boolean; speed_sp: number; speed: number;
     running: boolean; permissive_ok: boolean; permissives: Record<string, boolean>; t_state: number;
@@ -14,7 +14,8 @@ export interface Snapshot {
   };
   loops: Record<string, Loop>;
   meas: Record<string, number>;
-  true: Record<string, number>;
+  // true (model) values; x_q, T_q, T_g, T_mw are per mixing exchanger cell, top -> bottom
+  true: Record<string, number> & { x_q: number[]; T_q: number[]; T_g: number[]; T_mw: number[] };
   alarms: Record<string, boolean>;
   limits: Record<string, number>;
   charge: { kg: number; nominal_kg: number; pending_kg: number; rate_kg_s: number };
@@ -36,4 +37,6 @@ export interface ParamsView {
   values: Record<string, any>; meta: ParamMeta[]; pending: string[]; fluids: string[];
   named_points: Record<string, { T_evap: number; T_cond: number; T_int: number; SH: number }>;
   nominal_charge: number; defaults: Defaults; defaults_path: string | null;
+  derived: { volumes: { section: string; item: string; L: number }[]; V_s: number; V_d: number; V_i: number;
+    C_mw: number; C_cw: number; C_sw: number; C_dw: number; C_rw: number };
 }

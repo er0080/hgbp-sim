@@ -41,6 +41,10 @@ export default function App() {
                 <option key={v} value={v}>{v}x</option>
               ))}
             </select>
+            {!snap.paused && snap.achieved_speed > 0 && snap.achieved_speed < 0.9 * snap.speed_factor && (
+              <span className="note" title="the simulation cannot keep up with the selected speed">
+                actual {snap.achieved_speed.toFixed(1)}x</span>
+            )}
             <button onClick={togglePause} className={snap.paused ? "ok" : ""}>{snap.paused ? "Resume" : "Pause"}</button>
             <button onClick={() => setInit("cold")}>Cold start</button>
             <button onClick={() => setInit("warm")}>Warm start</button>
