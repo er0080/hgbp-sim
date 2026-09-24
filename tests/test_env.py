@@ -3,6 +3,7 @@ import pytest
 
 from hgbp_sim import OBS_GROUPS, OBS_NAMES, EnvConfig, HGBPVecEnv
 from hgbp_sim.env import ST_OFF, ST_RUNNING, ST_STARTING
+from hgbp_sim.plant import HGBPPlant
 
 
 def test_vec_env_api():
@@ -59,7 +60,7 @@ def test_charge_is_randomized():
 def test_start_stop_interlock_and_dwell_completion():
     cfg = EnvConfig(start_mode="cold", start_stop_action=True, k_points=(1, 1), hold_time=(900.0, 900.0),
                     dwell_required=60.0, min_off_time=10.0, min_run_time=30.0, noise=False,
-                    randomize_params=False, p_charge_extreme=0.0, cold_liquid_in_accumulator=(0.0, 0.0),
+                    randomize_params=False, p_charge_extreme=0.0, cold_liquid_in_suction=(0.0, 0.0),
                     auto_reset=False)
     env = HGBPVecEnv(2, cfg, seed=5)
     assert env.act_dim == 5
@@ -70,13 +71,13 @@ def test_start_stop_interlock_and_dwell_completion():
     assert (info["state"] == ST_OFF).all() and (info["r_idle"] < 0).all()
     # request a run with valve 1 closed -> blocked by the permissives
     env.u_cmd[:, 0] = 0.0
-    env.plant.x[:, 11] = 0.0
+    env.plant.x[:, HGBPPlant.U1] = 0.0
     a[:, 4] = 1.0
     obs, r, term, trunc, info = env.step(a)
     assert (info["state"] == ST_OFF).all() and (info["r_blocked"] < 0).all()
     # expert requests the run with sensible valve positions -> STARTING -> RUNNING
     env.u_cmd[:, 0] = 0.5
-    env.plant.x[:, 11] = 0.5
+    env.plant.x[:, HGBPPlant.U1] = 0.5
     seen_starting = False
     states = []
     done = np.zeros(2, bool)

@@ -114,7 +114,7 @@ class EnvConfig:
     p_cold: float = 0.3                  # probability of a cold start in "random"
     start_delay: tuple = (5.0, 30.0)     # automatic start: delay before the run request [s]
     p_warm_at_setpoint: float = 0.5      # warm start exactly at first point (else at a random point)
-    cold_liquid_in_accumulator: tuple = (0.0, 1.0)   # sampled per cold start
+    cold_liquid_in_suction: tuple = (0.0, 0.1)   # share of the liquid migrated to the suction side, per cold start
     action_mode: str = "incremental"     # "absolute" | "incremental"
     max_rate: float = 0.05               # incremental: max command change per step
     start_stop_action: bool = False      # 5th action = run request
@@ -285,8 +285,8 @@ class HGBPVecEnv:
         if len(cold_idx):
             mc = len(cold_idx)
             u0 = np.broadcast_to(self.expert.u_off, (mc, 4))
-            liq = rng.uniform(*cfg.cold_liquid_in_accumulator, mc)
-            pl.cold_start(cold_idx, T_amb=pl.T_amb[cold_idx], u_pos=u0, liquid_in_accumulator=liq)
+            liq = rng.uniform(*cfg.cold_liquid_in_suction, mc)
+            pl.cold_start(cold_idx, T_amb=pl.T_amb[cold_idx], u_pos=u0, liquid_in_suction=liq)
             self.u_cmd[cold_idx] = u0
             self.start_at[cold_idx] = rng.uniform(*cfg.start_delay, mc)
             self.interlock.reset(cold_idx, running=False)
@@ -349,20 +349,21 @@ class HGBPVecEnv:
         e = self._errors_K(aux["P_s"], aux["P_d"], aux["SH"], aux["P_i"])
         en = np.minimum(np.abs(e) / np.asarray(cfg.err_scale), cfg.err_cap)
         wts = np.asarray(cfg.err_weight)
-        in_tol = (np.abs(e[:, :3]) < np.asarray(cfg.tol)).all(1) & running & (aux["x_out"] >= 1.0)
+        trips = pl.trips()
+        flood = trips["floodback"]
+        in_tol = (np.abs(e[:, :3]) < np.asarray(cfg.tol)).all(1) & running & ~flood
         self.t_in_tol = np.where(in_tol, self.t_in_tol + cfg.dt_ctrl, 0.0)
         steady = self.t_in_tol >= cfg.steady_time
         active = running & self.run_required
         r_track = -cfg.w_track * (en * wts).sum(1) / wts.sum() * active
         r_bonus = cfg.w_tol_bonus * in_tol
         r_action = -cfg.w_action * np.abs(du).sum(1)
-        r_flood = -cfg.w_floodback * ((aux["x_out"] < 1.0) & running)
+        r_flood = -cfg.w_floodback * (flood & running)
         r_Td = -cfg.w_T_d * np.maximum(0.0, (aux["T_d"] - (pl.p.T_d_max - 15.0)) / 15.0)
         idle = self.run_required & (self.state == ST_OFF) & perm & off_ok & ~run_req
         r_idle = -cfg.w_idle * idle * cfg.start_stop_action
         r_blocked = -cfg.w_blocked_start * blocked
         r_shut = -cfg.w_run_in_shutdown * (~self.run_required & running)
-        trips = pl.trips()
         tripped = trips["high_P_d"] | trips["low_P_s"] | trips["high_P_s"] | trips["high_T_d"]
         r_trip = -cfg.trip_penalty * tripped
         if not cfg.terminate_on_trip:
@@ -405,8 +406,9 @@ class HGBPVecEnv:
         obs = self._observe()
         info = dict(
             true=dict(P_s=aux["P_s"], P_d=aux["P_d"], P_i=aux["P_i"], SH=aux["SH"], SC=aux["SC"],
-                      T_s=aux["T_s"], T_d=aux["T_d"], x_out=aux["x_out"], x_s=aux["x_s"], x_i=aux["x_i"],
-                      fill_s=aux["fill_s"], fill_i=aux["fill_i"], mdot=aux["mdot_c"], W=aux["W_el"],
+                      T_s=aux["T_s"], T_d=aux["T_d"], x_out=aux["x_out"], y_liq=aux["y_liq"], x_i=aux["x_i"],
+                      x_qo=aux["x_qo"], M_q_liq=aux["M_q_liq"], rec_level=aux["rec_level"],
+                      cond_flood=aux["cond_flood"], fill_i=aux["fill_i"], mdot=aux["mdot_c"], W=aux["W_el"],
                       mdot_1=aux["mdot_1"], mdot_2=aux["mdot_2"], mdot_3=aux["mdot_3"], mdot_w=aux["mdot_w"],
                       N=aux["N"], charge=aux["charge"], T_sh=aux["T_sh"], T_cw=aux["T_cw"]),
             charge_factor=self.charge_factor.copy(), steady=steady, t_in_tol=self.t_in_tol.copy(),

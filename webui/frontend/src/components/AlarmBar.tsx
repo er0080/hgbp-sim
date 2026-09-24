@@ -4,9 +4,10 @@ const LABELS: Record<string, [string, "bad" | "warn"]> = {
   floodback: ["LIQUID AT COMPRESSOR INLET", "bad"],
   high_P_d_warning: ["DISCHARGE PRESSURE HIGH", "warn"],
   high_T_d_warning: ["DISCHARGE TEMPERATURE HIGH", "warn"],
-  accumulator_liquid: ["liquid in accumulator", "warn"],
-  condenser_dry: ["condenser dry (undercharged)", "warn"],
-  condenser_flooded: ["condenser flooded (overcharged)", "warn"],
+  mixer_wet: ["quench liquid leaving the mixing exchanger", "warn"],
+  no_liquid_seal: ["receiver below dip tube: vapor in liquid line (undercharged)", "warn"],
+  receiver_full: ["receiver above 90 % (overcharged)", "warn"],
+  condenser_flooded: ["condenser flooding (overcharged)", "warn"],
 };
 
 export default function AlarmBar({ snap }: { snap: Snapshot }) {

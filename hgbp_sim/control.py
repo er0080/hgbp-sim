@@ -5,7 +5,7 @@ single-input single-output PI loops
 
     discharge pressure    -> valve 1, discharge pressure valve   (reverse acting)
     suction pressure      -> valve 2, hot gas bypass valve       (direct acting)
-    suction superheat     -> valve 3, liquid injection valve     (reverse acting)
+    suction superheat     -> valve 3, quench valve               (reverse acting)
     intermediate pressure -> valve 4, cooling water valve        (reverse acting)
 
 It serves as a sanity check of the plant, as a comparison for learned
@@ -65,11 +65,12 @@ class PID:
         return self.u.copy()
 
 
-# Tuned by batched gain sweeps over a 4-point schedule (see README).
+# Tuned by batched gain sweeps over a 4-point schedule (see README); the superheat loop
+# retuned for the mixing exchanger, whose suction temperature responds over about a minute.
 DEFAULT_GAINS = dict(
     dpv=dict(Kp=-0.05e-5, Ki=-0.01e-5, Kd=0.0),      # discharge pressure -> valve 1 [per Pa], Ti = 5 s
     spv=dict(Kp=0.15e-5, Ki=0.03e-5, Kd=0.0),        # suction pressure -> valve 2 [per Pa], Ti = 5 s
-    stv=dict(Kp=-0.004, Ki=-0.0004, Kd=0.0),         # superheat -> valve 3 [per K], Ti = 10 s
+    stv=dict(Kp=-0.003, Ki=-0.00005, Kd=0.0),        # superheat -> valve 3 [per K], Ti = 60 s
     water=dict(Kp=-0.40e-5, Ki=-0.0133e-5, Kd=0.0),  # intermediate pressure -> valve 4 [per Pa], Ti = 30 s
 )
 

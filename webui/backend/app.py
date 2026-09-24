@@ -54,15 +54,19 @@ class Runner(threading.Thread):
                 time.sleep(0.05)
                 next_t = time.monotonic()
                 continue
+            t0 = time.monotonic()
             with self.lock:
                 self.snapshot = st.step()
                 self.row = st.last_row()
             next_t += st.dt_ctrl / st.speed_factor
             delay = next_t - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            else:
-                next_t = time.monotonic()      # cannot keep up: run flat out
+            if delay <= 0:
+                next_t = time.monotonic()      # cannot keep up: run flat out ...
+            # ... but always yield, so that requests get the lock and the GIL
+            time.sleep(max(delay, 0.002))
+            # achieved simulation speed (simulated seconds per wall second), smoothed
+            rate = st.dt_ctrl / max(time.monotonic() - t0, 1e-6)
+            st.achieved_speed = 0.9 * st.achieved_speed + 0.1 * rate if st.achieved_speed else rate
 
 
 DEFAULTS_PATH = os.environ.get("HGBP_DEFAULTS") or None
@@ -116,7 +120,7 @@ class InitCmd(BaseModel):
     mode: str = "cold"                 # "cold" | "warm"
     T_amb: float | None = None
     T_wi: float | None = None
-    liquid_in_accumulator: float | None = None
+    liquid_in_suction: float | None = None
     point: str | dict | None = None    # warm: named point or {T_evap, T_cond, T_int, SH, N}
 
 
@@ -172,7 +176,7 @@ def post_init(cmd: InitCmd):
             if not ok:
                 raise HTTPException(409, "no equilibrium at this point with the current charge / parameters")
         else:
-            stand.cold_start(T_amb=cmd.T_amb, T_wi=cmd.T_wi, liquid_in_accumulator=cmd.liquid_in_accumulator)
+            stand.cold_start(T_amb=cmd.T_amb, T_wi=cmd.T_wi, liquid_in_suction=cmd.liquid_in_suction)
         return stand.snapshot()
 
 

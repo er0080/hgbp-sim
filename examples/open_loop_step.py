@@ -12,7 +12,7 @@ import numpy as np
 from hgbp_sim import HGBPPlant, PlantParams, named_point, solve_steady_state
 
 C2K = 273.15
-VALVES = ["1 discharge pressure", "2 suction pressure (HGBP)", "3 suction temperature (liquid)", "4 cooling water"]
+VALVES = ["1 discharge pressure", "2 suction pressure (HGBP)", "3 suction temperature (quench)", "4 cooling water"]
 
 
 def step_responses(T_end: float = 600.0, du: float = 0.10):

@@ -1,5 +1,10 @@
 # Suction mixer / accumulator: model review and known limitations
 
+> **Superseded (2026-09-24).** The stand no longer has a suction mixer tank: the model
+> now represents the brazed-plate mixing exchanger, the liquid receiver and the specified
+> piping (`STAND_MODEL.md`). This note is kept as the record of why the tank model was
+> replaced; the volumes, parameters and line numbers below refer to the former model.
+
 2026-09-22. Findings from an investigation into accumulator boil-off with the liquid
 injection valve (valve 3) closed. No model changes were made; this note records what the
 model does, what was measured, how the result should be read, and where the model departs

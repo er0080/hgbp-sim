@@ -43,10 +43,11 @@ at every setpoint change and needs several minutes to settle.
 
 Properties that shape the network design:
 
-* **Hidden state.** The condenser liquid inventory, the liquid stored in the suction
-  accumulator, the compressor shell temperature and the condenser wall temperature are
-  not measured but determine the plant gains and the time constants (tens of seconds to
-  ~20 min). The charge is also hidden.[^sensors]
+* **Hidden state.** The receiver level (visible only on a sight glass), the liquid held
+  up and the plate temperatures in the mixing exchanger, the compressor shell temperature
+  and the condenser wall temperature are not measured but determine the plant gains and
+  the time constants (about a minute for the suction temperature response to valve 3, up
+  to ~20 min for the shell). The charge is also hidden.[^sensors]
 * **Wide operating range.** Valve gains vary by more than an order of magnitude over
   their stroke; gas valves choke; the liquid valve flashes.
 * **Integral action needed.** Sensor bias, model mismatch and slow drifts require
@@ -106,14 +107,16 @@ policy's output a rate that the PLC can clamp.
   `run_required` drops to 0 and the episode terminates successfully once the compressor
   is off.
 * Start modes: warm (at or near a point, compressor running), cold (equalized stand at
-  ambient with liquid in the accumulator, compressor off), sampled 70/30.
+  ambient, liquid in the receiver and optionally some migrated to the suction side,
+  compressor off), sampled 70/30.
 * Per episode randomization: plant parameters (+-10..30 %), ambient 15..35 degC, water
   inlet 12..30 degC, charge factor 0.85..1.15 (85 % of episodes) or 0.3..1.8 (15 %),
-  liquid distribution at cold start, sensor noise.
+  liquid migrated to the suction side at cold start, sensor noise.
 * `info` provides training labels and privileged states: `charge_factor` (true charge /
   nominal), `steady` (in tolerance for >= 120 s), `true` (noise-free pressures,
-  temperatures, superheat, subcooling, condenser and accumulator liquid fills, inlet
-  quality, shell and condenser wall temperatures, flows, power, charge), interlock
+  temperatures, superheat, subcooling, receiver level, condenser flooding, quench outlet
+  quality, liquid held up in the mixing exchanger, liquid share at the compressor, shell
+  and condenser wall temperatures, flows, power, charge), interlock
   `state`, `permissive_ok`, `point_done`, `schedule_complete`, per-term reward
   components.
 
@@ -286,9 +289,11 @@ Add on the real stand: mass flow and power readings within +-1 % of their traili
 * Add a **liquid line sight glass or a light-transmission sensor** and a **condenser
   outlet temperature** sensor if the stand does not have them; subcooling is the most
   informative signal for charge.
-* Add an **accumulator level indication** (capacitive or differential pressure) if
-  possible; it turns the hardest hidden state into a measurement and reduces floodback
-  risk at startup.
+* Add a **receiver level transmitter** (capacitive or differential pressure) next to the
+  sight glass if possible; with the receiver absorbing charge changes, its level is the
+  direct charge signal and turns the charge advisory into a measurement.
+* Consider a **temperature at the quench outlet (S4)** of the mixing exchanger: it shows
+  the quench side running wet before liquid reaches the compressor.
 * Log the **water inlet temperature and flow**; the water loop is the slowest and least
   observable part of the plant.
 * Consider a **feed-forward table** (steady-state valve positions as a function of the
@@ -325,10 +330,10 @@ Add on the real stand: mass flow and power readings within +-1 % of their traili
     action shield, and only then the start/stop request and the charge advisory. Keep the
     PID baseline as a one-button fallback at every stage.
 
-[^sensors]: **Two cheap sensors pay for themselves.** A condenser-outlet temperature
-    sensor turns subcooling, the most informative charge signal, into a measurement; an
-    accumulator level indication (capacitive probe or differential pressure) removes the
-    hidden state that carries the most floodback risk at startup. Both reduce what the
+[^sensors]: **Two cheap sensors pay for themselves.** A receiver level transmitter turns
+    the charge, which the receiver otherwise absorbs silently, into a measurement; a
+    temperature at the mixing exchanger's quench outlet (S4) shows the quench side
+    running wet a few seconds before liquid reaches the compressor. Both reduce what the
     network has to infer from history.
 
 [^feedforward]: **Use a feed-forward table.** The equilibrium valve positions for a test
