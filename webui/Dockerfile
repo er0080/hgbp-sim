@@ -14,6 +14,8 @@ COPY pyproject.toml README.md LICENSE ./
 COPY hgbp_sim ./hgbp_sim
 COPY webui/backend/requirements.txt ./webui/backend/requirements.txt
 RUN pip install . CoolProp -r webui/backend/requirements.txt
+# compile the simulator's kernels into the image (numba caches them next to the sources)
+RUN python -m hgbp_sim.kernel.warmup
 COPY webui/backend ./webui/backend
 COPY --from=web /web/dist ./webui/frontend/dist
 EXPOSE 8000

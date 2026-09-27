@@ -145,14 +145,14 @@ suction line's residence time (about 0.3 s).
   rate × sub-step ≤ 1.8 (up to 32 sub-steps).
   * This matters because the real discharge volume (3.6 L) with a wide-open valve 1 at a
     small pressure drop has millisecond dynamics.
-* Sub-stepping is decided per environment: environments are grouped by the sub-steps
-  they need (a power of two), so one stiff environment does not slow the whole batch.
-  A sub-step that still produces a non-finite state or an implausible jump is rejected
-  and redone with four times finer steps.
-* Throughput: 10-20 times real time for a single live stand, and about 1 000 control
-  steps per second for 1024 environments (the tank model ran about 4 500). The extra
-  cost comes from the five exchanger cells, the gas-side march and the pressure
-  projection.
+* Sub-stepping is decided per environment: every environment of a batch integrates in
+  its own loop iteration with the sub-steps it needs (a power of two), so one stiff
+  environment does not slow the others. A sub-step that still produces a non-finite
+  state or an implausible jump is rejected and redone with four times finer steps.
+* The model is compiled with numba (`hgbp_sim/kernel/`): the right-hand side, the
+  projection, the step control and the integrator are scalar code for one environment,
+  and a batch runs in parallel over the CPU cores. See "Performance" in the README for
+  throughput figures.
 
 ### Steady-state solver
 A single Newton problem over the whole stand is ill-conditioned here, because a
@@ -164,7 +164,8 @@ dries out. The solver therefore alternates two steps:
    cell and wall dynamics, then a Newton polish.
 
 It repeats until the liquid held up on the suction side stops changing, typically 3-6
-rounds (about 0.5 s per batch).
+rounds. The solver is compiled as well; every environment is solved on its own (a
+batch in parallel), about 10-15 ms per stand.
 
 ## 3. Behaviour at the rating point
 

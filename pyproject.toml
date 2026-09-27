@@ -9,7 +9,7 @@ description = "Dynamic simulation of a hot-gas-bypass refrigeration compressor t
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["numpy>=1.24"]
+dependencies = ["numpy>=1.24", "numba>=0.59"]
 
 [project.optional-dependencies]
 build = ["CoolProp>=6.6"]          # only needed to build property tables for new fluids

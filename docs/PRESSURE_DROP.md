@@ -30,7 +30,7 @@ is unchanged.
 their resistances. The valve takes the share `1 / (1 + (C_valve / C_hx)^2 rho_up / rho_hx)`. It chokes
 on its own share, so a choked valve passes the same flow with or without the exchanger behind it. For
 valve 2 the expansion factor `Y` is evaluated at the valve's own share of the pressure ratio (two fixed-point
-passes). Closed-form, vectorized, no iteration over the plant state. The quench side's drop is not quadratic
+passes). Closed-form, no iteration over the plant state. The quench side's drop is not quadratic
 in the flow. The valve 3 pair therefore uses the side's equivalent resistance at the flow valve 3 would pass on
 its own. Valve 3 takes about 99 % of the difference, so the resulting flow error is well under 1 %.
 

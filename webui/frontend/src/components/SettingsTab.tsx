@@ -95,7 +95,7 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
           <table><tbody>
             <tr><td className="n">speed factor</td><td className="d">wall-clock speed-up</td><td className="i">
               <select value={snap.speed_factor} onChange={(e) => api("/api/sim", { speed_factor: Number(e.target.value) })}>
-                {[0.5, 1, 2, 5, 10, 20, 50].map((v) => <option key={v} value={v}>{v}x</option>)}</select></td></tr>
+                {[0.5, 1, 2, 5, 10, 20, 50, 100].map((v) => <option key={v} value={v}>{v}x</option>)}</select></td></tr>
             <tr><td className="n">sensor noise</td><td className="d">measurement noise on/off</td><td className="i">
               <input type="checkbox" checked={snap.noise} onChange={(e) => api("/api/sim", { noise: e.target.checked })} /></td></tr>
             <tr><td className="n">short-cycle timers</td><td className="d">compressor minimum off time 60 s and minimum run time 120 s (live)</td><td className="i">

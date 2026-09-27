@@ -425,6 +425,14 @@ class LiveStand:
             out[k] = arr.tolist()
         return out
 
+    def _nominal_charge(self) -> float:
+        """Nominal charge of the stand as built [kg] (follows the volumes: recomputed
+        when the plant's parameters are repacked, i.e. rebuilt or reassigned)."""
+        rec = self.plant.p.packed()
+        if getattr(self, "_nc_rec", None) is not rec:
+            self._nc_rec, self._nc = rec, float(self.plant.nominal_charge()[0])
+        return self._nc
+
     def snapshot(self, aux=None, meas=None, trips=None) -> dict:
         pl, p = self.plant, self.plant.p
         aux = aux if aux is not None else pl.outputs()
@@ -489,7 +497,7 @@ class LiveStand:
                         high_P_d_warning=f(aux["P_d"]) > 0.9 * f(p.P_d_max)),
             limits=dict(P_d_max=f(p.P_d_max) / 1e5, P_s_min=f(p.P_s_min) / 1e5, P_s_max=f(p.P_s_max) / 1e5,
                         T_d_max=f(p.T_d_max) - C2K),
-            charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=f(pl.nominal_charge()),
+            charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=self._nominal_charge(),
                         pending_kg=self.charge_pending, rate_kg_s=self.charge_rate),
             pending_params=sorted(self.pending_params),
             events=list(self.events)[:30],

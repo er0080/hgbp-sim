@@ -1,9 +1,10 @@
-"""Fast, vectorized refrigerant property tables for the HGBP simulator.
+"""Fast refrigerant property tables for the HGBP simulator.
 
 The dynamic model needs refrigerant properties thousands of times per second and
 for many parallel environments.  Calling CoolProp inside the ODE right-hand side
 is far too slow, so this module builds interpolation tables once (from CoolProp)
-and then answers every query with pure numpy array operations.
+and then answers every query by interpolation in compiled code
+(:mod:`hgbp_sim.kernel.props`; the model kernel calls the same functions).
 
 Table coordinates
 -----------------
@@ -27,6 +28,8 @@ import os
 import warnings
 
 import numpy as np
+
+from .kernel import props as kp
 
 # Saturation table rows (all as functions of P on the log-P grid)
 SAT_FIELDS = (
@@ -67,7 +70,7 @@ class PhState:
 
 
 class RefrigerantTables:
-    """Tabulated refrigerant properties with vectorized numpy lookups.
+    """Tabulated refrigerant properties with array lookups.
 
     Parameters
     ----------
@@ -258,149 +261,61 @@ class RefrigerantTables:
     def _finalize(self) -> None:
         self._lp0 = float(self._lp[0])
         self._inv_dlp = 1.0 / float(self._lp[1] - self._lp[0])
-        self._nz1 = self.n_z - 1
         self.T_sat_min = float(self._sat[_SI["T_l"], 0])
         self.T_sat_max = float(self._sat[_SI["T_l"], -1])
-        # flattened copies for fast gathers: index = i * n_z + j
-        self._vap_flat = np.ascontiguousarray(self._vap.reshape(self._vap.shape[0], -1))
-        self._liq_flat = np.ascontiguousarray(self._liq.reshape(self._liq.shape[0], -1))
-        self._vap_s_rows = np.ascontiguousarray(self._vap[_RI["s"]])
-        self._vap_T_rows = np.ascontiguousarray(self._vap[_RI["T"]])
-        self._liq_T_rows = np.ascontiguousarray(self._liq[_RI["T"]])
-        self._vap_rho_rows = np.ascontiguousarray(self._vap[_RI["rho"]])
-        self._liq_rho_rows = np.ascontiguousarray(self._liq[_RI["rho"]])
-        self._vap_T_flat = self._vap_T_rows.reshape(-1)
-        self._vap_rho_flat = self._vap_rho_rows.reshape(-1)
         self._sat_T = np.ascontiguousarray(self._sat[_SI["T_l"]])
-
-    # ------------------------------------------------------------- primitives
-    def _pidx(self, P):
-        lp = np.log(np.minimum(np.maximum(P, self.p_min), self.p_max))
-        f = (lp - self._lp0) * self._inv_dlp
-        i = np.minimum(np.maximum(f.astype(np.intp), 0), self.n_p - 2)
-        w = np.minimum(np.maximum(f - i, 0.0), 1.0)
-        return i, w
-
-    def _sat_at(self, i, w):
-        tab = self._sat
-        return tab.take(i, axis=1) * (1.0 - w) + tab.take(i + 1, axis=1) * w
-
-    def _interp2(self, flat, i, w, zeta):
-        """Bilinear interpolation of all fields of a flattened region table."""
-        f = zeta * self._nz1
-        j = np.minimum(np.maximum(f.astype(np.intp), 0), self.n_z - 2)
-        wz = np.minimum(np.maximum(f - j, 0.0), 1.0)
-        k0 = i * self.n_z + j
-        k1 = k0 + self.n_z
-        v00, v01 = flat.take(k0, axis=1), flat.take(k0 + 1, axis=1)
-        v10, v11 = flat.take(k1, axis=1), flat.take(k1 + 1, axis=1)
-        return (v00 * (1.0 - wz) + v01 * wz) * (1.0 - w) + (v10 * (1.0 - wz) + v11 * wz) * w
-
-    def _invert_row(self, rows_tab, i, w, target, decreasing=False):
-        """Find zeta such that rows_tab(P, zeta) == target (per element)."""
-        rows = rows_tab.take(i, axis=0) * (1.0 - w)[:, None] + rows_tab.take(i + 1, axis=0) * w[:, None]
-        t = target[:, None]
-        if decreasing:
-            cnt = (rows > t).sum(axis=1)
-        else:
-            cnt = (rows < t).sum(axis=1)
-        j = np.minimum(np.maximum(cnt - 1, 0), self.n_z - 2)
-        ar = np.arange(len(j))
-        r0, r1 = rows[ar, j], rows[ar, j + 1]
-        denom = np.where(np.abs(r1 - r0) > 1e-300, r1 - r0, 1e-300)
-        frac = np.minimum(np.maximum((target - r0) / denom, 0.0), 1.0)
-        return np.minimum(np.maximum((j + frac) / self._nz1, 0.0), 1.0)
+        # the tables as the compiled lookups take them (region tables flattened: i * n_z + j)
+        self.tab = kp.Tab(self._lp0, self._inv_dlp, float(self.p_min), float(self.p_max), self.n_p, self.n_z,
+                          np.ascontiguousarray(self._sat), np.ascontiguousarray(self._tr),
+                          np.ascontiguousarray(self._vap.reshape(self._vap.shape[0], -1)),
+                          np.ascontiguousarray(self._liq.reshape(self._liq.shape[0], -1)),
+                          np.ascontiguousarray(self._P))
 
     # ---------------------------------------------------------------- queries
+    # Array wrappers of the compiled scalar lookups (hgbp_sim.kernel.props); inputs
+    # broadcast against each other, results take the broadcast shape.
+    @staticmethod
+    def _flat(*a):
+        b = np.broadcast_arrays(*(np.asarray(v, dtype=float) for v in a))
+        return b[0].shape, [np.ascontiguousarray(v).reshape(-1) for v in b]
+
     def sat(self, P):
         """Saturation properties at pressure P (arrays).  Returns a dict."""
-        P = np.asarray(P, dtype=float)
-        i, w = self._pidx(P)
-        v = self._sat_at(i, w)
-        return {k: v[_SI[k]] for k in SAT_FIELDS}
+        shape, (Pf,) = self._flat(P)
+        out = np.empty((len(SAT_FIELDS), Pf.size))
+        kp.sat_array(self.tab, Pf, out)
+        return {k: out[_SI[k]].reshape(shape) for k in SAT_FIELDS}
 
     def transport(self, P):
         """Saturated liquid / vapor viscosity and surface tension at P (dict of arrays)."""
-        P = np.asarray(P, dtype=float)
-        i, w = self._pidx(P)
-        return {k: self._tr[_TI[k]].take(i) * (1.0 - w) + self._tr[_TI[k]].take(i + 1) * w
-                for k in TR_FIELDS}
+        shape, (Pf,) = self._flat(P)
+        out = np.empty((len(TR_FIELDS), Pf.size))
+        kp.transport_array(self.tab, Pf, out)
+        return {k: out[_TI[k]].reshape(shape) for k in TR_FIELDS}
 
     def T_sat(self, P):
-        P = np.asarray(P, dtype=float)
-        i, w = self._pidx(P)
-        r = self._sat_T
-        return r.take(i) * (1.0 - w) + r.take(i + 1) * w
+        """Saturation (bubble point) temperature at P."""
+        shape, (Pf,) = self._flat(P)
+        out = np.empty(Pf.size)
+        kp.sat_row_array(self.tab, _SI["T_l"], Pf, out)
+        return out.reshape(shape)
 
     def P_sat(self, T):
         """Saturation pressure for temperature T [K] (bubble line)."""
         T = np.asarray(T, dtype=float)
-        return np.interp(T, self._sat[_SI["T_l"]], self._P)
+        return np.interp(T, self._sat_T, self._P)
 
     def state(self, P, h, need_s: bool = False) -> PhState:
-        """Full state from pressure [Pa] and mass enthalpy [J/kg]."""
-        P = np.asarray(P, dtype=float)
-        h = np.asarray(h, dtype=float)
-        i, w = self._pidx(P)
-        sat = self._sat_at(i, w)
-        h_l, h_v = sat[_SI["h_l"]], sat[_SI["h_v"]]
-        rho_l, rho_v = sat[_SI["rho_l"]], sat[_SI["rho_v"]]
-        T_l, T_v = sat[_SI["T_l"]], sat[_SI["T_v"]]
-        hfg = h_v - h_l
-        x = (h - h_l) / hfg
-
-        is_v = x > 1.0
-        is_l = x < 0.0
-        any_v, any_l = bool(is_v.any()), bool(is_l.any())
-        # --- single-phase branches (evaluated only if some element needs them)
-        if any_v:
-            zv = np.minimum(np.maximum((h - h_v) / sat[_SI["dhmax_v"]], 0.0), 1.0)
-            V = self._interp2(self._vap_flat, i, w, zv)
-        if any_l:
-            zl = np.minimum(np.maximum((h_l - h) / sat[_SI["dhmax_l"]], 0.0), 1.0)
-            L = self._interp2(self._liq_flat, i, w, zl)
-
-        # --- two-phase branch (analytic from saturation line)
-        xc = np.minimum(np.maximum(x, 0.0), 1.0)
-        v_l, v_v = 1.0 / rho_l, 1.0 / rho_v
-        v2 = v_l + xc * (v_v - v_l)
-        rho2 = 1.0 / v2
-        T2 = T_l + xc * (T_v - T_l)
-        dv_dh = (v_v - v_l) / hfg
-        dvl_dP = -v_l * v_l * sat[_SI["drho_l_dP"]]
-        dvv_dP = -v_v * v_v * sat[_SI["drho_v_dP"]]
-        dx_dP = -(sat[_SI["dh_l_dP"]] + xc * (sat[_SI["dh_v_dP"]] - sat[_SI["dh_l_dP"]])) / hfg
-        dv_dP = dvl_dP + xc * (dvv_dP - dvl_dP) + (v_v - v_l) * dx_dP
-        drdP2 = -rho2 * rho2 * dv_dP
-        drdh2 = -rho2 * rho2 * dv_dh
-        cp2 = (sat[_SI["cp_l"]] + sat[_SI["cp_v"]]) * 0.5
-
+        """Full state from pressure [Pa] and mass enthalpy [J/kg] (``need_s`` is
+        accepted for compatibility; the entropy is always computed)."""
+        shape, (Pf, hf) = self._flat(P, h)
+        out = np.empty((13, Pf.size))
+        kp.state_array(self.tab, Pf, hf, out)
         st = PhState()
-        st.P, st.h, st.x = P, h, x
-        T, rho, drdP, drdh, cpv = T2, rho2, drdP2, drdh2, cp2
-        s2 = None
-        if need_s:
-            s2 = sat[_SI["s_l"]] + xc * (sat[_SI["s_v"]] - sat[_SI["s_l"]])
-        if any_l:
-            T = np.where(is_l, L[_RI["T"]], T)
-            rho = np.where(is_l, L[_RI["rho"]], rho)
-            drdP = np.where(is_l, L[_RI["drho_dP"]], drdP)
-            drdh = np.where(is_l, L[_RI["drho_dh"]], drdh)
-            cpv = np.where(is_l, L[_RI["cp"]], cpv)
-            if need_s:
-                s2 = np.where(is_l, L[_RI["s"]], s2)
-        if any_v:
-            T = np.where(is_v, V[_RI["T"]], T)
-            rho = np.where(is_v, V[_RI["rho"]], rho)
-            drdP = np.where(is_v, V[_RI["drho_dP"]], drdP)
-            drdh = np.where(is_v, V[_RI["drho_dh"]], drdh)
-            cpv = np.where(is_v, V[_RI["cp"]], cpv)
-            if need_s:
-                s2 = np.where(is_v, V[_RI["s"]], s2)
-        st.T, st.rho, st.drho_dP, st.drho_dh, st.cp, st.s = T, rho, drdP, drdh, cpv, s2
-        st.T_sat, st.h_l, st.h_v, st.rho_l, st.rho_v = T_l, h_l, h_v, rho_l, rho_v
-        st.cp_l = sat[_SI["cp_l"]]
-        st.phase = np.where(is_v, PHASE_VAPOR, np.where(is_l, PHASE_LIQUID, PHASE_TWOPHASE))
+        st.P, st.h = Pf.reshape(shape), hf.reshape(shape)
+        (st.T, st.rho, st.x, st.drho_dP, st.drho_dh, st.s, st.cp,
+         st.T_sat, st.h_l, st.h_v, st.rho_l, st.rho_v, st.cp_l) = (r.reshape(shape) for r in out)
+        st.phase = np.where(st.x > 1.0, PHASE_VAPOR, np.where(st.x < 0.0, PHASE_LIQUID, PHASE_TWOPHASE))
         return st
 
     def T_Ph(self, P, h):
@@ -411,79 +326,35 @@ class RefrigerantTables:
 
     def T_vapor(self, P, h):
         """Temperature assuming superheated vapor (clamped to the dome)."""
-        P = np.asarray(P, dtype=float)
-        h = np.asarray(h, dtype=float)
-        i, w = self._pidx(P)
-        sat = self._sat_at(i, w)
-        zv = np.minimum(np.maximum((h - sat[_SI["h_v"]]) / sat[_SI["dhmax_v"]], 0.0), 1.0)
-        f = zv * self._nz1
-        j = np.minimum(np.maximum(f.astype(np.intp), 0), self.n_z - 2)
-        wz = f - j
-        rows = self._vap_T_rows
-        k0 = i * self.n_z + j
-        k1 = k0 + self.n_z
-        flat = rows.reshape(-1)
-        return ((flat.take(k0) * (1.0 - wz) + flat.take(k0 + 1) * wz) * (1.0 - w)
-                + (flat.take(k1) * (1.0 - wz) + flat.take(k1 + 1) * wz) * w)
+        return self.vapor_props(P, h)[0]
 
     def vapor_props(self, P, h):
         """(T, rho) of superheated vapor at (P, h), clamped to the dew line."""
-        P = np.asarray(P, dtype=float)
-        h = np.asarray(h, dtype=float)
-        i, w = self._pidx(P)
-        sat = self._sat_at(i, w)
-        zv = np.minimum(np.maximum((h - sat[_SI["h_v"]]) / sat[_SI["dhmax_v"]], 0.0), 1.0)
-        f = zv * self._nz1
-        j = np.minimum(np.maximum(f.astype(np.intp), 0), self.n_z - 2)
-        wz = f - j
-        k0 = i * self.n_z + j
-        k1 = k0 + self.n_z
-        out = []
-        for flat in (self._vap_T_flat, self._vap_rho_flat):
-            out.append((flat.take(k0) * (1.0 - wz) + flat.take(k0 + 1) * wz) * (1.0 - w)
-                       + (flat.take(k1) * (1.0 - wz) + flat.take(k1 + 1) * wz) * w)
-        return out[0], out[1]
+        shape, (Pf, hf) = self._flat(P, h)
+        out = np.empty((2, Pf.size))
+        kp.vapor_array(self.tab, Pf, hf, out)
+        return out[0].reshape(shape), out[1].reshape(shape)
+
+    def _scalar_map(self, fn, a, b):
+        shape, (af, bf) = self._flat(a, b)
+        out = np.empty(af.size)
+        fn(self.tab, af, bf, out)
+        return out.reshape(shape)
 
     def h_from_P_rho(self, P, rho):
         """Enthalpy at (P, rho): two-phase lever rule inside the dome, table
         inversion in the vapor / liquid regions."""
-        P = np.asarray(P, dtype=float)
-        rho = np.asarray(rho, dtype=float)
-        i, w = self._pidx(P)
-        sat = self._sat_at(i, w)
-        rho_l, rho_v = sat[_SI["rho_l"]], sat[_SI["rho_v"]]
-        h_l, h_v = sat[_SI["h_l"]], sat[_SI["h_v"]]
-        v = 1.0 / np.maximum(rho, 1e-6)
-        x = (v - 1.0 / rho_l) / (1.0 / rho_v - 1.0 / rho_l)
-        h2 = h_l + np.minimum(np.maximum(x, 0.0), 1.0) * (h_v - h_l)
-        zv = self._invert_row(self._vap_rho_rows, i, w, rho, decreasing=True)
-        hv = h_v + zv * sat[_SI["dhmax_v"]]
-        zl = self._invert_row(self._liq_rho_rows, i, w, rho)
-        hl = h_l - zl * sat[_SI["dhmax_l"]]
-        return np.where(rho < rho_v, hv, np.where(rho > rho_l, hl, h2))
+        return self._scalar_map(kp.h_from_P_rho_array, P, rho)
 
     def h_Ps_vapor(self, P, s):
         """Enthalpy of superheated vapor at (P, s); clamps to saturated vapor
         if s is below the dew line (wet isentropic compression)."""
-        P = np.asarray(P, dtype=float)
-        s = np.asarray(s, dtype=float)
-        i, w = self._pidx(P)
-        sat = self._sat_at(i, w)
-        z = self._invert_row(self._vap_s_rows, i, w, s)
-        return sat[_SI["h_v"]] + z * sat[_SI["dhmax_v"]]
+        return self._scalar_map(kp.h_Ps_vapor_array, P, s)
 
     def h_PT(self, P, T):
         """Enthalpy at (P, T) for single-phase states.  Inside the dome
         (T == T_sat) the saturated-vapor value is returned."""
-        P = np.asarray(P, dtype=float)
-        T = np.asarray(T, dtype=float)
-        i, w = self._pidx(P)
-        sat = self._sat_at(i, w)
-        zv = self._invert_row(self._vap_T_rows, i, w, T)
-        zl = self._invert_row(self._liq_T_rows, i, w, T, decreasing=True)
-        hv = sat[_SI["h_v"]] + zv * sat[_SI["dhmax_v"]]
-        hl = sat[_SI["h_l"]] - zl * sat[_SI["dhmax_l"]]
-        return np.where(T >= sat[_SI["T_v"]], hv, np.where(T <= sat[_SI["T_l"]], hl, hv))
+        return self._scalar_map(kp.h_PT_array, P, T)
 
     def h_sat_vapor(self, P):
         return self.sat(P)["h_v"]
