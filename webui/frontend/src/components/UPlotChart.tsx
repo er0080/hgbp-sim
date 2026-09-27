@@ -4,7 +4,8 @@ import type { History } from "../types";
 
 const MAX_DRAW = 4000;
 
-export interface SeriesDef { key: string; label: string; color: string; dash?: number[]; width?: number }
+/** ``conv``: base (API) value -> display value */
+export interface SeriesDef { key: string; label: string; color: string; dash?: number[]; width?: number; conv?: (v: number) => number }
 
 function fmtTime(v: number) {
   const s = Math.max(0, Math.floor(v));
@@ -35,7 +36,8 @@ export default function UPlotChart({ title, series, history, version, windowS, u
     const xs = idx.map((i) => t[i]);
     const ys = series.map((s) => {
       const a = h[s.key] ?? [];
-      return idx.map((i) => (Number.isFinite(a[i]) ? a[i] : null));
+      const cv = s.conv ?? ((v: number) => v);
+      return idx.map((i) => (Number.isFinite(a[i]) ? cv(a[i]) : null));
     });
     return [xs, ...ys] as uPlot.AlignedData;
   };
@@ -65,7 +67,7 @@ export default function UPlotChart({ title, series, history, version, windowS, u
     ro.observe(el.current);
     return () => { ro.disconnect(); plot.current?.destroy(); plot.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, series.map((s) => s.key).join(",")]);
+  }, [title, unit, series.map((s) => `${s.key}:${s.label}`).join(",")]);     // rebuilt when the units change
 
   useEffect(() => {
     plot.current?.setData(buildData());

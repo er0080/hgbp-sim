@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { ParamsView, Snapshot } from "../types";
+import { useQtyInput, useUnits } from "../units";
 
 export default function InitDialog({ mode, snap, onClose }: { mode: "cold" | "warm"; snap: Snapshot; onClose: () => void }) {
-  const [T_amb, setTamb] = useState(snap.meas.T_amb.toFixed(1));
-  const [T_wi, setTwi] = useState(snap.meas.T_wi.toFixed(1));
+  const u = useUnits();
+  const [T_amb, setTamb, T_ambBase] = useQtyInput("T", snap.meas.T_amb);
+  const [T_wi, setTwi, T_wiBase] = useQtyInput("T", snap.meas.T_wi);
   const [liq, setLiq] = useState("0");
   const [named, setNamed] = useState("MT_standard");
   const [custom, setCustom] = useState(false);
-  const [pt, setPt] = useState({ T_evap: "-10", T_cond: "45", T_int: "38", SH: "10", N: String(Math.round(snap.compressor.speed_sp)) });
+  // custom test point, in display units
+  const ptIn = {
+    T_evap: useQtyInput("T", -10), T_cond: useQtyInput("T", 45), T_int: useQtyInput("T", 38), SH: useQtyInput("dT", 10),
+  };
+  const [N, setN] = useState(String(Math.round(snap.compressor.speed_sp)));
   const [points, setPoints] = useState<ParamsView["named_points"]>({});
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,10 +23,10 @@ export default function InitDialog({ mode, snap, onClose }: { mode: "cold" | "wa
     setBusy(true); setErr("");
     try {
       if (mode === "cold") {
-        await api("/api/init", { mode: "cold", T_amb: Number(T_amb), T_wi: Number(T_wi), liquid_in_suction: Number(liq) });
+        await api("/api/init", { mode: "cold", T_amb: T_ambBase(), T_wi: T_wiBase(), liquid_in_suction: Number(liq) });
       } else {
-        const point = custom ? { T_evap: Number(pt.T_evap), T_cond: Number(pt.T_cond), T_int: Number(pt.T_int), SH: Number(pt.SH), N: Number(pt.N) } : named;
-        await api("/api/init", { mode: "warm", T_amb: Number(T_amb), T_wi: Number(T_wi), point });
+        const point = custom ? { T_evap: ptIn.T_evap[2](), T_cond: ptIn.T_cond[2](), T_int: ptIn.T_int[2](), SH: ptIn.SH[2](), N: Number(N) } : named;
+        await api("/api/init", { mode: "warm", T_amb: T_ambBase(), T_wi: T_wiBase(), point });
       }
       onClose();
     } catch (e: any) { setErr(String(e.message ?? e)); }
@@ -31,8 +37,8 @@ export default function InitDialog({ mode, snap, onClose }: { mode: "cold" | "wa
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{mode === "cold" ? "Cold start (equalized stand, compressor off)" : "Warm start (equilibrium at a test point)"}</h3>
         {snap.pending_params.length > 0 && <p className="note">Pending parameter changes will be applied: {snap.pending_params.join(", ")}</p>}
-        <div className="form-row"><label>ambient temperature [°C]</label><input type="number" value={T_amb} onChange={(e) => setTamb(e.target.value)} /></div>
-        <div className="form-row"><label>cooling water inlet [°C]</label><input type="number" value={T_wi} onChange={(e) => setTwi(e.target.value)} /></div>
+        <div className="form-row"><label>ambient temperature [{u.unit("T")}]</label><input type="number" value={T_amb} onChange={(e) => setTamb(e.target.value)} /></div>
+        <div className="form-row"><label>cooling water inlet [{u.unit("T")}]</label><input type="number" value={T_wi} onChange={(e) => setTwi(e.target.value)} /></div>
         {mode === "cold" && (
           <>
             <div className="form-row"><label>share of the liquid charge migrated to the suction side (rest in the receiver)</label><input type="number" min={0} max={1} step={0.05} value={liq} onChange={(e) => setLiq(e.target.value)} /></div>
@@ -43,14 +49,16 @@ export default function InitDialog({ mode, snap, onClose }: { mode: "cold" | "wa
           <>
             <div className="form-row"><label>test point</label>
               <select value={custom ? "custom" : named} onChange={(e) => { if (e.target.value === "custom") setCustom(true); else { setCustom(false); setNamed(e.target.value); } }}>
-                {Object.entries(points).map(([k, p]) => <option key={k} value={k}>{k}: {p.T_evap}/{p.T_cond} °C, int {p.T_int} °C, SH {p.SH} K</option>)}
+                {Object.entries(points).map(([k, p]) => <option key={k} value={k}>{k}: {u.fmt("T", p.T_evap, 0)}/{u.fmt("T", p.T_cond, 0)} {u.unit("T")}, int {u.fmt("T", p.T_int, 0)} {u.unit("T")}, SH {u.fmt("dT", p.SH, 0)} {u.unit("dT")}</option>)}
                 <option value="custom">custom...</option>
               </select>
             </div>
-            {custom && (["T_evap", "T_cond", "T_int", "SH", "N"] as const).map((k) => (
-              <div className="form-row" key={k}><label>{{ T_evap: "evaporating (suction sat.) [°C]", T_cond: "condensing (discharge sat.) [°C]", T_int: "intermediate sat. [°C]", SH: "superheat [K]", N: "speed [rpm]" }[k]}</label>
-                <input type="number" value={pt[k]} onChange={(e) => setPt({ ...pt, [k]: e.target.value })} /></div>
+            {custom && (["T_evap", "T_cond", "T_int", "SH"] as const).map((k) => (
+              <div className="form-row" key={k}><label>{{ T_evap: "evaporating (suction sat.)", T_cond: "condensing (discharge sat.)", T_int: "intermediate sat.", SH: "superheat" }[k]} [{u.unit(k === "SH" ? "dT" : "T")}]</label>
+                <input type="number" value={ptIn[k][0]} onChange={(e) => ptIn[k][1](e.target.value)} /></div>
             ))}
+            {custom && <div className="form-row"><label>speed [rpm]</label>
+              <input type="number" value={N} onChange={(e) => setN(e.target.value)} /></div>}
             <p className="note">The warm start solves the equilibrium with the current charge; an unreachable point is reported.</p>
           </>
         )}

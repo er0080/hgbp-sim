@@ -26,6 +26,10 @@ VALVE_CHARS = ("linear", "eqpct", "quick")
 
 # SP and PV input range RL..RH in the loop's display unit (bar absolute or degC),
 # output limits OL..OH in %.  P, I, D and DR are derived from DEFAULT_GAINS.
+# UT35A PV input filter FL: OFF with the built-in gains, which were tuned without it (a 4 s
+# filter makes their discharge pressure loop overshoot to the trip at a cold start); the
+# stand's defaults file sets FL = 4 with the stand's own tuning, as on its controllers
+PV_FILTER = "OFF"
 _LOOPS = dict(
     dpv=dict(SP=33.89, RL=0.0, RH=50.0, OL=2.0, OH=100.0),
     spv=dict(SP=9.98, RL=0.0, RH=30.0, OL=0.0, OH=100.0),
@@ -47,7 +51,8 @@ _ABOUT = [
     "  short_cycle_timers [bool] compressor minimum off time 60 s / minimum run time 120 s.",
     "loops: one Yokogawa UT35A per loop. SP setpoint and RL..RH PV input range in bar absolute (dpv, spv,",
     "  water) or degC (stv); P proportional band [% of RL..RH]; I integral and D derivative time [s] or",
-    "  \"OFF\"; DR \"DIR\" (output rises with PV) or \"RVS\"; OL..OH output limits [%].",
+    "  \"OFF\"; DR \"DIR\" (output rises with PV) or \"RVS\"; OL..OH output limits [%]; FL PV input filter",
+    "  (first-order lag ahead of the PV display and the PID) [s] or \"OFF\".",
     "plant: model parameters in SI units as listed on the Settings tab (units and descriptions there).",
 ]
 
@@ -64,7 +69,7 @@ def builtin_defaults() -> dict:
         g = {n: DEFAULT_GAINS[k][n] * _GAIN_SCALE[k] for n in ("Kp", "Ki", "Kd")}
         tune = ut35a.from_gains(g["Kp"], g["Ki"], g["Kd"], cfg["RH"] - cfg["RL"])
         loops[k] = dict(SP=cfg["SP"], P=tune["P"], I=tune["I"], D=tune["D"], DR=tune["DR"],
-                        RL=cfg["RL"], RH=cfg["RH"], OL=cfg["OL"], OH=cfg["OH"])
+                        RL=cfg["RL"], RH=cfg["RH"], OL=cfg["OL"], OH=cfg["OH"], FL=PV_FILTER)
     p = PlantParams()
     return dict(_about=list(_ABOUT), simulation=dict(_SIMULATION), loops=loops,
                 plant={f.name: getattr(p, f.name) for f in _plant_fields()})
@@ -94,7 +99,7 @@ def validate_loop(cfg: dict, where: str) -> dict:
                I=ut35a.normalize_time(cfg["I"], f"{where}.I"), D=ut35a.normalize_time(cfg["D"], f"{where}.D"),
                DR=ut35a.normalize_action(cfg["DR"]), RL=_num(cfg["RL"], f"{where}.RL"),
                RH=_num(cfg["RH"], f"{where}.RH"), OL=_num(cfg["OL"], f"{where}.OL", (0.0, 100.0)),
-               OH=_num(cfg["OH"], f"{where}.OH", (0.0, 100.0)))
+               OH=_num(cfg["OH"], f"{where}.OH", (0.0, 100.0)), FL=ut35a.normalize_filter(cfg["FL"]))
     if out["RL"] >= out["RH"]:
         raise ValueError(f"{where}: RL must be below RH")
     if not out["RL"] <= out["SP"] <= out["RH"]:

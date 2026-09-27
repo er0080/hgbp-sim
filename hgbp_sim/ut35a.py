@@ -11,6 +11,9 @@ with e the deviation in % of the PV input span, and these parameters:
     D    derivative time [s] (on PV, standard mode)           OFF or 1 .. 6000 s, 1 s steps
     DR   DIR: output rises when PV rises (e = PV - SP)
          RVS: output falls when PV rises (e = SP - PV)
+    FL   PV input filter [s] (section 7.1): first-order lag on the PV input,
+         ahead of both the PV display and the control computation
+                                                              OFF or 1 .. 120 s, 1 s steps
 
 The simulator's :class:`hgbp_sim.control.PID` works in the parallel form
 u = Kp e + Ki integral(e dt) - Kd dy/dt with e = SP - PV in engineering units
@@ -27,6 +30,7 @@ from __future__ import annotations
 OFF = "OFF"
 P_RANGE = (0.1, 999.9)
 T_RANGE = (1, 6000)
+FL_RANGE = (1, 120)
 ACTIONS = ("DIR", "RVS")
 
 
@@ -41,6 +45,20 @@ def normalize_time(v, name: str):
     t = int(round(t))
     if not T_RANGE[0] <= t <= T_RANGE[1]:
         raise ValueError(f"{name} must be OFF or {T_RANGE[0]}..{T_RANGE[1]} s, got {v!r}")
+    return t
+
+
+def normalize_filter(v):
+    """PV input filter time constant FL: ``"OFF"`` (also None, 0, "" or "off") or whole
+    seconds in 1..120.  Raises ValueError outside the range."""
+    if v is None or (isinstance(v, str) and v.strip().upper() in ("", OFF)):
+        return OFF
+    t = float(v)
+    if t == 0.0:
+        return OFF
+    t = int(round(t))
+    if not FL_RANGE[0] <= t <= FL_RANGE[1]:
+        raise ValueError(f"FL must be OFF or {FL_RANGE[0]}..{FL_RANGE[1]} s, got {v!r}")
     return t
 
 

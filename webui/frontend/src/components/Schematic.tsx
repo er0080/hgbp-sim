@@ -1,5 +1,6 @@
 import { fmt } from "../api";
 import type { Snapshot } from "../types";
+import { useUnits } from "../units";
 
 const VS = 13;   // valve half size
 
@@ -35,6 +36,7 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 export default function Schematic({ snap }: { snap: Snapshot }) {
   const m = snap.meas, t = snap.true;
+  const u = useUnits();
   const running = snap.compressor.running;
   const rec = clamp01(t.rec_level), flood = clamp01(t.cond_flood);
   const xq: number[] = t.x_q ?? [], Tq: number[] = t.T_q ?? [], Tg: number[] = t.T_g ?? [];
@@ -102,26 +104,26 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <Valve {...V.v1} open={m.u1} label="1 discharge press." />
         {/* discharge probe, as close to the compressor port as the suction probe */}
         <circle cx={CX} cy={CY - PROBE} r={6} fill="#263238" stroke="#cfd8dc" strokeWidth={1.5} />
-        <text x={CX + 12} y={CY - PROBE - 4}>{fmt(m.T_d, 1)} °C · {fmt(m.P_d, 2)} bar</text>
-        <text x={CX + 12} y={CY - PROBE + 10} className="lbl">discharge probe · sat {fmt(m.Tsat_d, 1)} °C</text>
-        <text x={CX + 12} y={CY - PROBE - 22} className="lbl">discharge line ΔP {fmt(t.dP_dis, 1)} kPa</text>
-        <text x={560} y={TOP - 14} textAnchor="middle" className="lbl">hot gas header · line ΔP {fmt(t.dP_hdr, 1)} kPa</text>
-        <text x={560} y={TOP + 22} textAnchor="middle">{fmt(t.P_h, 2)} bar · sat {fmt(t.Tsat_h, 1)} °C</text>
-        <text x={CIN + 8} y={TOP + 26} className="lbl">refrigerant ΔP {fmt(t.dP_cr, 1)} kPa</text>
+        <text x={CX + 12} y={CY - PROBE - 4}>{u.fmtU("T", m.T_d)} · {u.fmtU("P", m.P_d)}</text>
+        <text x={CX + 12} y={CY - PROBE + 10} className="lbl">discharge probe · sat {u.fmtU("T", m.Tsat_d)}</text>
+        <text x={CX + 12} y={CY - PROBE - 22} className="lbl">discharge line ΔP {u.fmtU("dP", t.dP_dis)}</text>
+        <text x={560} y={TOP - 14} textAnchor="middle" className="lbl">hot gas header · line ΔP {u.fmtU("dP", t.dP_hdr)}</text>
+        <text x={560} y={TOP + 22} textAnchor="middle">{u.fmtU("P", t.P_h)} · sat {u.fmtU("T", t.Tsat_h)}</text>
+        <text x={CIN + 8} y={TOP + 26} className="lbl">refrigerant ΔP {u.fmtU("dP", t.dP_cr)}</text>
 
         {/* condenser: liquid backs up from a full receiver */}
         <rect x={COND.x} y={COND.y} width={COND.w} height={COND.h} rx={6} className="vessel" />
         <rect x={COND.x} y={COND.y + COND.h - 2 - (COND.h - 4) * flood} width={COND.w} height={(COND.h - 4) * flood + 2} className="liquid" clipPath="url(#condClip)" />
         <text x={CIN} y={COND.y + 18} textAnchor="middle" className="lbl">condenser (BPHE)</text>
-        <text x={CIN} y={COND.y + 35} textAnchor="middle">flooded {fmt(flood * 100, 0)} % · SC {fmt(m.SC, 1)} K</text>
-        <text x={CIN} y={COND.y + 50} textAnchor="middle">wall {fmt(t.T_cw, 0)} °C</text>
-        <text x={CIN} y={COND.y + 65} textAnchor="middle" className="lbl">{fmt(t.Q_w / 1000, 1)} kW to water</text>
+        <text x={CIN} y={COND.y + 35} textAnchor="middle">flooded {fmt(flood * 100, 0)} % · SC {u.fmtU("dT", m.SC)}</text>
+        <text x={CIN} y={COND.y + 50} textAnchor="middle">wall {u.fmtU("T", t.T_cw, 0)}</text>
+        <text x={CIN} y={COND.y + 65} textAnchor="middle" className="lbl">{u.fmtU("heat", t.Q_w)} to water</text>
         <Valve {...V.v4} open={m.u4} label="4 cooling water" side="left" />
-        <text x={COND.x + COND.w + 8} y={COND.y + 56} className="lbl">water ΔP {fmt(t.dP_cw, 1)} kPa</text>
+        <text x={COND.x + COND.w + 8} y={COND.y + 56} className="lbl">water ΔP {u.fmtU("dP", t.dP_cw)}</text>
         <text x={WX + 12} y={462} className="lbl">water in</text>
-        <text x={WX + 12} y={476} className="lbl">{fmt(m.T_wi, 1)} °C</text>
+        <text x={WX + 12} y={476} className="lbl">{u.fmtU("T", m.T_wi)}</text>
         <text x={WX} y={TOP - 4} textAnchor="middle" className="lbl">water out</text>
-        <text x={WX} y={TOP + 11} textAnchor="middle" className="lbl">{fmt(m.T_wo, 1)} °C · {fmt(t.mdot_w, 1)} kg/min</text>
+        <text x={WX} y={TOP + 11} textAnchor="middle" className="lbl">{u.fmtU("T", m.T_wo)} · {u.fmtU("flow_w", t.mdot_w)}</text>
 
         {/* receiver (dished heads); the level fills the vessel outline */}
         <rect x={REC.x} y={REC.y} width={REC.w} height={REC.h} rx={REC.w / 2} ry={18} className="vessel" />
@@ -132,17 +134,17 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
 
         <Valve {...V.v3} open={m.u3} label="3 suction temp." />
         <text x={LX + 8} y={liquidY - 36} className="lbl">quench</text>
-        <text x={LX + 8} y={liquidY - 22}>{fmt(t.mdot_3, 1)} g/s</text>
-        <text x={LX + 8} y={liquidY - 8} className="lbl">{fmt(m.T_co, 1)} °C</text>
+        <text x={LX + 8} y={liquidY - 22}>{u.fmtU("mdot", t.mdot_3)}</text>
+        <text x={LX + 8} y={liquidY - 8} className="lbl">{u.fmtU("T", m.T_co)}</text>
         {/* liquid (intermediate) pressure transmitter, after the receiver */}
         <circle cx={PTX} cy={liquidY} r={6} fill="#263238" stroke="#cfd8dc" strokeWidth={1.5} />
-        <text x={PTX} y={liquidY + 22} textAnchor="middle">{fmt(m.P_i, 2)} bar</text>
-        <text x={PTX} y={liquidY + 36} textAnchor="middle" className="lbl">liquid pressure · sat {fmt(m.Tsat_i, 1)} °C</text>
+        <text x={PTX} y={liquidY + 22} textAnchor="middle">{u.fmtU("P", m.P_i)}</text>
+        <text x={PTX} y={liquidY + 36} textAnchor="middle" className="lbl">liquid pressure · sat {u.fmtU("T", m.Tsat_i)}</text>
 
         <Valve {...V.v2} open={m.u2} label="2 suction press. (HGBP)" />
         <text x={BX - 10} y={300} textAnchor="end" className="lbl">bypass</text>
-        <text x={BX - 10} y={314} textAnchor="end">{fmt(t.mdot_2, 1)} g/s</text>
-        <text x={BX - 10} y={328} textAnchor="end" className="lbl">line ΔP {fmt(t.dP_bp, 1)} kPa</text>
+        <text x={BX - 10} y={314} textAnchor="end">{u.fmtU("mdot", t.mdot_2)}</text>
+        <text x={BX - 10} y={328} textAnchor="end" className="lbl">line ΔP {u.fmtU("dP", t.dP_bp)}</text>
 
         <circle cx={TX} cy={TY} r={5} fill="#66bb6a" />
 
@@ -154,8 +156,8 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
           return (
             <g key={j}>
               <rect x={MX.x + MX.w / 2 + 1} y={y + 1} width={MX.w / 2 - 3} height={cellH - 2} className="liquid" style={{ opacity: 0.1 + 0.75 * wet }} />
-              <text x={MX.x + MX.w * 0.75} y={y + cellH / 2 + 4} textAnchor="middle">{x < 1 ? `x ${fmt(x, 2)}` : `${fmt(Tq[j], 0)}°`}</text>
-              <text x={MX.x + MX.w * 0.25} y={y + cellH / 2 + 4} textAnchor="middle" className="lbl">{fmt(Tg[j], 0)}°</text>
+              <text x={MX.x + MX.w * 0.75} y={y + cellH / 2 + 4} textAnchor="middle">{x < 1 ? `x ${fmt(x, 2)}` : `${u.fmt("T", Tq[j], 0)}°`}</text>
+              <text x={MX.x + MX.w * 0.25} y={y + cellH / 2 + 4} textAnchor="middle" className="lbl">{u.fmt("T", Tg[j], 0)}°</text>
             </g>
           );
         })}
@@ -166,22 +168,22 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <text x={QX + 8} y={MB + 12} className="lbl">S4</text>
         <text x={MX.x + MX.w + 8} y={MX.y + 30} className="lbl">mixing</text>
         <text x={MX.x + MX.w + 8} y={MX.y + 44} className="lbl">exchanger</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 62}>{fmt(t.Q_mx / 1000, 1)} kW</text>
+        <text x={MX.x + MX.w + 8} y={MX.y + 62}>{u.fmtU("heat", t.Q_mx)}</text>
         <text x={MX.x + MX.w + 8} y={MX.y + 84} className="lbl">gas (S1 → S2)</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 98}>out {fmt(t.T_go, 1)} °C</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 112}>ΔP {fmt(t.dP_mg, 1)} kPa</text>
+        <text x={MX.x + MX.w + 8} y={MX.y + 98}>out {u.fmtU("T", t.T_go)}</text>
+        <text x={MX.x + MX.w + 8} y={MX.y + 112}>ΔP {u.fmtU("dP", t.dP_mg)}</text>
         <text x={MX.x + MX.w + 8} y={MX.y + 132} className="lbl">quench (S3 → S4)</text>
         <text x={MX.x + MX.w + 8} y={MX.y + 146} style={{ fill: t.x_qo < 1 ? "var(--bad)" : undefined }}>
-          out {t.x_qo < 1 ? `x ${fmt(t.x_qo, 2)}` : `${fmt(t.T_qo, 1)} °C`}</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 160}>ΔP {fmt(t.dP_mq, 1)} kPa</text>
+          out {t.x_qo < 1 ? `x ${fmt(t.x_qo, 2)}` : u.fmtU("T", t.T_qo)}</text>
+        <text x={MX.x + MX.w + 8} y={MX.y + 160}>ΔP {u.fmtU("dP", t.dP_mq)}</text>
 
         {/* suction line: probe at the compressor port */}
         <circle cx={CX} cy={CY + PROBE} r={6} fill="#263238" stroke="#cfd8dc" strokeWidth={1.5} />
-        <text x={CX + 12} y={CY + PROBE - 4}>{fmt(m.T_s, 1)} °C · SH {fmt(m.SH, 1)} K</text>
+        <text x={CX + 12} y={CY + PROBE - 4}>{u.fmtU("T", m.T_s)} · SH {u.fmtU("dT", m.SH)}</text>
         <text x={CX + 12} y={CY + PROBE + 10} className="lbl">suction probe</text>
-        <text x={(TX + CX) / 2} y={TY - 26} textAnchor="middle">{fmt(m.P_s, 2)} bar · sat {fmt(m.Tsat_s, 1)} °C</text>
-        <text x={(TX + CX) / 2} y={TY - 10} textAnchor="middle" className="lbl">suction {fmt(m.mdot, 1)} g/s</text>
-        <text x={(TX + CX) / 2} y={TY - 42} textAnchor="middle" className="lbl">suction line ΔP {fmt(t.dP_suc, 1)} kPa</text>
+        <text x={(TX + CX) / 2} y={TY - 26} textAnchor="middle">{u.fmtU("P", m.P_s)} · sat {u.fmtU("T", m.Tsat_s)}</text>
+        <text x={(TX + CX) / 2} y={TY - 10} textAnchor="middle" className="lbl">suction {u.fmtU("mdot", m.mdot)}</text>
+        <text x={(TX + CX) / 2} y={TY - 42} textAnchor="middle" className="lbl">suction line ΔP {u.fmtU("dP", t.dP_suc)}</text>
         {t.y_liq > 0.0005 && (
           <text x={(TX + CX) / 2} y={TY + 20} textAnchor="middle" style={{ fill: "var(--bad)" }}>
             liquid at compressor {fmt(t.y_liq * 100, 1)} %</text>
@@ -191,9 +193,9 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <path d={compChords} className="comp-body" style={{ fill: "none", stroke: compStroke }} />
         <text x={CX - CR - 8} y={CY + 4} textAnchor="end" className="lbl">compressor</text>
         <text x={CX + CR + 8} y={CY - 12}>{fmt(m.N, 0)} rpm</text>
-        <text x={CX + CR + 8} y={CY + 3}>{fmt(m.W / 1000, 2)} kW</text>
-        <text x={CX + CR + 8} y={CY + 18} className="lbl">shell {fmt(t.T_sh, 0)} °C</text>
-        <text x={20} y={492} className="lbl">charge {fmt(snap.charge.kg, 3)} kg (nominal {fmt(snap.charge.nominal_kg, 3)} kg) · {snap.fluid} · ambient {fmt(m.T_amb, 1)} °C</text>
+        <text x={CX + CR + 8} y={CY + 3}>{u.fmtU("power", m.W)}</text>
+        <text x={CX + CR + 8} y={CY + 18} className="lbl">shell {u.fmtU("T", t.T_sh, 0)}</text>
+        <text x={20} y={492} className="lbl">charge {u.fmtU("mass", snap.charge.kg)} (nominal {u.fmtU("mass", snap.charge.nominal_kg)}) · {snap.fluid} · ambient {u.fmtU("T", m.T_amb)}</text>
       </svg>
     </div>
   );

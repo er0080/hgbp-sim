@@ -110,6 +110,7 @@ class LiveStand:
         self.sp = {info["pv"]: float(_TO_SI[info["unit"]](loops[k]["SP"])) for k, info in LOOPS.items()}
         self.history = {k: deque(maxlen=self.history_len) for k in HISTORY_CHANNELS}
         self.t = 0.0
+        self.pv_filt = {k: None for k in LOOPS}   # each controller's filtered PV (SI), see _filter_pv
 
     def _T_s_for(self, pt: dict) -> float:
         """Suction temperature setpoint [K] giving the point's superheat."""
@@ -126,6 +127,17 @@ class LiveStand:
         on = self.short_cycle_timers
         self.interlock.min_off_time = MIN_OFF_TIME if on else 0.0
         self.interlock.min_run_time = MIN_RUN_TIME if on else 0.0
+
+    def _filter_pv(self, k: str, pv: float, dt: float) -> float:
+        """The UT35A's PV input filter FL: a first-order lag with time constant FL on the
+        PV input, ahead of both the PV display and the control computation (OFF: the PV
+        passes unchanged).  Controller side only; the plant is not involved."""
+        FL, prev = self.tuning[k].get("FL", ut35a.OFF), self.pv_filt[k]
+        if FL == ut35a.OFF or prev is None:
+            self.pv_filt[k] = float(pv)
+        else:
+            self.pv_filt[k] = prev + (1.0 - np.exp(-dt / FL)) * (float(pv) - prev)
+        return self.pv_filt[k]
 
     def _pids(self) -> dict:
         return dict(dpv=self.ctrl.pid_1, spv=self.ctrl.pid_2, stv=self.ctrl.pid_3, water=self.ctrl.pid_4)
@@ -154,6 +166,7 @@ class LiveStand:
         self.plant.set_inputs(T_amb=self.T_amb, T_wi=self.T_wi)
         u0 = self.ctrl.u_off.copy()
         self.plant.cold_start(T_amb=self.T_amb, u_pos=u0[None, :], liquid_in_suction=liquid_in_suction)
+        self.pv_filt = {k: None for k in LOOPS}   # the filters start from the new PVs
         for k, pid in self._pids().items():
             pid.reset(u0[LOOPS[k]["valve"]])
             self.manual_out[k] = float(u0[LOOPS[k]["valve"]])
@@ -188,6 +201,7 @@ class LiveStand:
             return False
         self.plant.set_state(0, res["x"])
         self.plant.set_inputs(u_cmd=res["u"], N_cmd=pt["N"])
+        self.pv_filt = {k: None for k in LOOPS}
         self.sp = dict(P_d=pt["P_d"], P_s=pt["P_s"], T_s=self._T_s_for(pt), P_i=pt["P_i"])
         self.speed_sp = pt["N"]
         for k, pid in self._pids().items():
@@ -203,10 +217,11 @@ class LiveStand:
 
     # ------------------------------------------------------------ operator
     def set_loop(self, name: str, mode: str | None = None, sp: float | None = None,
-                 out: float | None = None, P=None, I=None, D=None) -> None:
+                 out: float | None = None, P=None, I=None, D=None, FL=None) -> None:
         """Operator actions on one loop.  ``sp`` in the loop's display unit and
-        inside its input range; ``P`` [%], ``I`` and ``D`` [s or "OFF"] as on the
-        UT35A (raises ValueError, before changing anything, if one is invalid)."""
+        inside its input range; ``P`` [%], ``I`` and ``D`` [s or "OFF"] and the PV
+        input filter ``FL`` [s or "OFF"] as on the UT35A (raises ValueError, before
+        changing anything, if one is invalid)."""
         info = LOOPS[name]
         pid = self._pids()[name]
         tune = dict(self.tuning[name])
@@ -216,6 +231,8 @@ class LiveStand:
             tune["I"] = ut35a.normalize_time(I, "I")
         if D is not None:
             tune["D"] = ut35a.normalize_time(D, "D")
+        if FL is not None:
+            tune["FL"] = ut35a.normalize_filter(FL)
         if sp is not None:
             sp = float(sp)
             if not tune["RL"] <= sp <= tune["RH"]:
@@ -234,7 +251,8 @@ class LiveStand:
             self.tuning[name] = tune
             self._apply_tuning()
             sec = lambda v: v if v == ut35a.OFF else f"{v} s"
-            self.log(f"{info['label']} tuning: P {tune['P']} %, I {sec(tune['I'])}, D {sec(tune['D'])}")
+            self.log(f"{info['label']} tuning: P {tune['P']} %, I {sec(tune['I'])}, D {sec(tune['D'])}, "
+                     f"FL {sec(tune.get('FL', ut35a.OFF))}")
 
     def set_compressor(self, run: bool | None = None, speed: float | None = None, reset: bool = False) -> None:
         if speed is not None:
@@ -327,6 +345,20 @@ class LiveStand:
                     fluids=list(FLUIDS), named_points=NAMED_POINTS, derived=derived,
                     nominal_charge=float(self.plant.nominal_charge()[0]), defaults=self.defaults)
 
+    def saturation(self, T_sat: float) -> dict:
+        """Dew point (saturated vapor, x = 1) pressure [bar, absolute] of the stand's
+        refrigerant at saturation temperature ``T_sat`` [degC], for compressor state points
+        (the operator panel's calculator), with the tables' valid temperature range [degC]
+        and whether ``T_sat`` lies inside it.  Inverts the tables' dew line on their own
+        pressure grid; the model is not involved."""
+        pr = self.props
+        P = np.exp(np.linspace(np.log(pr.p_min), np.log(pr.p_max), pr.n_p))    # the tables' grid
+        T_dew = pr.sat(P)["T_v"]
+        T = float(T_sat) + C2K
+        return dict(fluid=pr.fluid, T_sat=float(T_sat), P=float(np.interp(T, T_dew, P)) / 1e5,
+                    T_min=float(T_dew[0]) - C2K, T_max=float(T_dew[-1]) - C2K,
+                    in_range=bool(T_dew[0] <= T <= T_dew[-1]))
+
     # -------------------------------------------------------------- physics
     def _inject_charge(self, dm: float) -> None:
         """Add (dm > 0) liquid from a cylinder at ambient temperature at the
@@ -354,7 +386,7 @@ class LiveStand:
         u = np.zeros(4)
         for k, info in LOOPS.items():
             pid = self._pids()[k]
-            pv = meas[info["pv"]][0]
+            pv = self._filter_pv(k, meas[info["pv"]][0], dt)       # the controller sees the filtered PV
             if self.mode[k] == "auto":          # controls whether or not the compressor runs, like a UT35A
                 u[info["valve"]] = pid.update(self.sp[info["pv"]], pv, dt)[0]
             else:
@@ -465,7 +497,8 @@ class LiveStand:
         for k, info in LOOPS.items():
             conv = _FROM_SI[info["unit"]]
             loops[k] = dict(label=info["label"], valve_label=info["valve_label"], unit=info["unit"],
-                            pv=float(conv(f(meas[info["pv"]]))), sp=float(conv(self.sp[info["pv"]])),
+                            pv=float(conv(self.pv_filt[k] if self.pv_filt[k] is not None else f(meas[info["pv"]]))),
+                            sp=float(conv(self.sp[info["pv"]])),
                             out=f(aux["u%d" % (info["valve"] + 1)]), mode=self.mode[k],
                             manual_out=self.manual_out[k], **self.tuning[k])
         perm_detail = dict(

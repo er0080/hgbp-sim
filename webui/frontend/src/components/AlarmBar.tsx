@@ -1,4 +1,5 @@
 import type { Snapshot } from "../types";
+import { useUnits } from "../units";
 
 const LABELS: Record<string, [string, "bad" | "warn"]> = {
   floodback: ["LIQUID AT COMPRESSOR INLET", "bad"],
@@ -12,6 +13,7 @@ const LABELS: Record<string, [string, "bad" | "warn"]> = {
 
 export default function AlarmBar({ snap }: { snap: Snapshot }) {
   const c = snap.compressor;
+  const u = useUnits();
   const active = Object.entries(snap.alarms).filter(([, v]) => v);
   return (
     <div className="alarms">
@@ -22,7 +24,7 @@ export default function AlarmBar({ snap }: { snap: Snapshot }) {
       {snap.pending_params.length > 0 && (
         <span className="chip warn">parameter changes pending: {snap.pending_params.join(", ")} (applied at next cold/warm start)</span>
       )}
-      {snap.charge.pending_kg !== 0 && <span className="chip">charging {snap.charge.pending_kg > 0 ? "+" : ""}{snap.charge.pending_kg.toFixed(3)} kg</span>}
+      {snap.charge.pending_kg !== 0 && <span className="chip">charging {snap.charge.pending_kg > 0 ? "+" : ""}{u.fmtU("mass", snap.charge.pending_kg)}</span>}
       {snap.paused && <span className="chip">PAUSED</span>}
       {!c.tripped && active.length === 0 && <span className="chip ok">no alarms</span>}
     </div>

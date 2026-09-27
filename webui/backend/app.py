@@ -107,6 +107,7 @@ class LoopCmd(BaseModel):
     P: float | None = None                 # proportional band [%]
     I: float | str | None = None           # integral time [s] or "OFF"
     D: float | str | None = None           # derivative time [s] or "OFF"
+    FL: float | str | None = None          # PV input filter [s] or "OFF"
 
 
 class CompressorCmd(BaseModel):
@@ -214,6 +215,13 @@ def post_charge(cmd: ChargeCmd):
         return stand.snapshot()["charge"]
 
 
+@app.get("/api/saturation")
+def get_saturation(T: float):
+    """Dew point (x = 1) pressure of the stand's refrigerant at saturation temperature ``T`` [°C]."""
+    with runner.lock:
+        return stand.saturation(T)
+
+
 @app.get("/api/history")
 def get_history(since: float = -1.0, stride: int = 1, max_points: int = 15000):
     with runner.lock:
@@ -221,18 +229,46 @@ def get_history(since: float = -1.0, stride: int = 1, max_points: int = 15000):
     return JSONResponse(h)          # plain lists of floats: no need for FastAPI's generic encoder
 
 
+# Units of the history channels as the API gives them, and their US (English) display units
+# (the same conversions as the UI's units.ts): name -> (factor, offset)
+_CSV_UNITS = {
+    "bar": ("psia", 14.5037738, 0.0), "°C": ("°F", 1.8, 32.0), "K": ("°F", 1.8, 0.0),
+    "g/s": ("lb/h", 7.93664144, 0.0), "kg": ("lb", 2.20462262, 0.0), "kg/min": ("gpm", 0.264172052, 0.0),
+    "W_heat": ("Btu/h", 3.41214163, 0.0), "kW_heat": ("kBtu/h", 3.41214163, 0.0),
+}
+_CHANNEL_UNITS = {
+    "t": "s", "N": "rpm", "sp_N": "rpm", "W": "W", "Q_w": "W_heat", "Q_mx": "kW_heat", "state": "-",
+    **{k: "bar" for k in ("P_s", "P_d", "P_i", "sp_P_d", "sp_P_s", "sp_P_i")},
+    **{k: "°C" for k in ("Tsat_s", "Tsat_d", "Tsat_i", "T_s", "T_d", "T_co", "T_wi", "T_wo", "sp_T_s", "T_qo", "T_go",
+                         "T_sh", "T_cw")},
+    "SH": "K", "SC": "K", "mdot": "g/s", "mdot_w": "kg/min", "M_q_liq": "kg", "charge": "kg",
+}
+
+
 @app.get("/api/export.csv")
-def export_csv():
+def export_csv(units: str = "metric"):
+    """The history as CSV, every column labelled with its unit; ``units``: metric (the
+    API's units) or english."""
+    if units not in ("metric", "english"):
+        raise HTTPException(400, "units must be metric or english")
     with runner.lock:
         h = stand.history_since(-1.0)
+    cols = []
+    for k in HISTORY_CHANNELS:
+        base = _CHANNEL_UNITS.get(k, "-")
+        if units == "english" and base in _CSV_UNITS:
+            unit, f, o = _CSV_UNITS[base]
+            cols.append((k, unit, f, o))
+        else:
+            cols.append((k, base.replace("_heat", ""), 1.0, 0.0))
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(HISTORY_CHANNELS)
+    w.writerow([f"{k} [{unit}]" for k, unit, _, _ in cols])
     for i in range(len(h["t"])):
-        w.writerow([h[k][i] for k in HISTORY_CHANNELS])
+        w.writerow([h[k][i] * f + o if (f, o) != (1.0, 0.0) else h[k][i] for k, _, f, o in cols])
     buf.seek(0)
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
-                             headers={"Content-Disposition": "attachment; filename=hgbp_stand.csv"})
+                             headers={"Content-Disposition": f"attachment; filename=hgbp_stand_{units}.csv"})
 
 
 WS_INTERVAL = 0.1        # shortest interval between two messages to a client [s]

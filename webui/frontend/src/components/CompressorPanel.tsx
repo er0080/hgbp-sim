@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, fmt } from "../api";
 import type { Snapshot } from "../types";
+import { useUnits } from "../units";
 
 const PERM_LABELS: Record<string, string> = {
   P_s_above_min: "suction pressure above low limit",
@@ -14,6 +15,7 @@ const PERM_LABELS: Record<string, string> = {
 
 export default function CompressorPanel({ snap }: { snap: Snapshot }) {
   const c = snap.compressor;
+  const u = useUnits();
   const [speed, setSpeed] = useState(String(Math.round(c.speed_sp)));
   const [editing, setEditing] = useState(false);
   useEffect(() => { if (!editing) setSpeed(String(Math.round(c.speed_sp))); }, [c.speed_sp, editing]);
@@ -45,8 +47,8 @@ export default function CompressorPanel({ snap }: { snap: Snapshot }) {
           </div>
           <div className="kpis" style={{ marginTop: 10 }}>
             <div className="kpi"><div className="l">speed</div><div className="v">{fmt(c.speed, 0)}<small>rpm</small></div></div>
-            <div className="kpi"><div className="l">power</div><div className="v">{fmt(snap.meas.W / 1000, 2)}<small>kW</small></div></div>
-            <div className="kpi"><div className="l">shell temp.</div><div className="v">{fmt(snap.true.T_sh, 0)}<small>°C</small></div></div>
+            <div className="kpi"><div className="l">power</div><div className="v">{u.fmt("power", snap.meas.W)}<small>{u.unit("power")}</small></div></div>
+            <div className="kpi"><div className="l">shell temp.</div><div className="v">{u.fmt("T", snap.true.T_sh, 0)}<small>{u.unit("T")}</small></div></div>
           </div>
           {c.tripped && <p className="err">Trip: {c.trip_reasons.join(", ") || "latched"}. Stop condition cleared? Press RESET TRIP, then START.</p>}
         </div>

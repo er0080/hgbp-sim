@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { api, hms } from "./api";
 import { useStand } from "./useStand";
 import OperatorPanel from "./components/OperatorPanel";
@@ -6,6 +6,7 @@ import TrendsTab from "./components/TrendsTab";
 import SettingsTab from "./components/SettingsTab";
 import InitDialog from "./components/InitDialog";
 import AlarmBar from "./components/AlarmBar";
+import { SYSTEMS, UnitsContext, loadSystem, makeUnits, saveSystem, type UnitSystem } from "./units";
 
 type Tab = "operator" | "trends" | "settings";
 
@@ -13,11 +14,15 @@ export default function App() {
   const { snap, connected, history, histVersion } = useStand();
   const [tab, setTab] = useState<Tab>("operator");
   const [init, setInit] = useState<null | "cold" | "warm">(null);
+  const [system, setSystem] = useState<UnitSystem>(loadSystem);
+  const units = useMemo(() => makeUnits(system), [system]);
+  const chooseSystem = (s: UnitSystem) => { setSystem(s); saveSystem(s); };
 
   const setSpeed = (v: number) => api("/api/sim", { speed_factor: v });
   const togglePause = () => api("/api/sim", { paused: !snap?.paused });
 
   return (
+    <UnitsContext.Provider value={units}>
     <div className="app">
       <div className="topbar">
         <h1>HGBP Test Stand</h1>
@@ -31,6 +36,11 @@ export default function App() {
           ))}
         </div>
         <div className="spacer" />
+        <label className="note">units</label>
+        <select value={system} onChange={(e) => chooseSystem(e.target.value as UnitSystem)}
+          title="display units of this browser (the simulator always works in SI)">
+          {SYSTEMS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+        </select>
         {snap && (
           <>
             <span className="note">{snap.fluid}</span>
@@ -60,5 +70,6 @@ export default function App() {
       </div>
       {init && snap && <InitDialog mode={init} snap={snap} onClose={() => setInit(null)} />}
     </div>
+    </UnitsContext.Provider>
   );
 }
