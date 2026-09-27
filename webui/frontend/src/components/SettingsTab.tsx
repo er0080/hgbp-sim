@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { ParamMeta, ParamsView, Snapshot, Time, Tuning } from "../types";
 
 const GROUP_ORDER = ["Refrigerant", "Charge", "Compressor", "Piping", "Condenser", "Receiver", "Mixing exchanger",
-  "Valves", "Pipe walls", "Sensors", "Safety limits", "Baseline control"];
+  "Pressure drops", "Valves", "Pipe walls", "Sensors", "Safety limits", "Baseline control"];
 const LOOPS = ["dpv", "spv", "stv", "water"];
 
 type TuneEdit = { P: string; I: string; D: string };
@@ -38,7 +38,9 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
     if (!view) return [] as [string, ParamMeta[]][];
     const by: Record<string, ParamMeta[]> = {};
     for (const m of view.meta) (by[m.group] ??= []).push(m);
-    return GROUP_ORDER.filter((g) => by[g]).map((g) => [g, by[g]] as [string, ParamMeta[]]);
+    // groups the backend adds later than this list still show, at the end
+    const order = [...GROUP_ORDER.filter((g) => by[g]), ...Object.keys(by).filter((g) => !GROUP_ORDER.includes(g))];
+    return order.map((g) => [g, by[g]] as [string, ParamMeta[]]);
   }, [view]);
 
   const apply = async (andInit: boolean) => {
@@ -80,7 +82,7 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
   };
   const applySim = async () => {
     await api("/api/sim", { T_amb: Number(sim.T_amb), T_wi: Number(sim.T_wi),
-      charge_rate_g_s: Math.min(50, Math.max(1, Number(sim.rate))) });
+      charge_rate_g_s: Math.min(250, Math.max(1, Number(sim.rate))) });
     setMsg("conditions and charge rate applied");
   };
   if (!view) return <p className="note">loading parameters...</p>;
@@ -103,7 +105,7 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
                 {[0.1, 0.2, 0.25, 0.5, 1, 2].map((v) => <option key={v} value={v}>{v} s</option>)}</select></td></tr>
             <tr><td className="n">T_amb</td><td className="d">ambient temperature (live)</td><td className="i"><input type="number" step={0.5} value={sim.T_amb} onChange={(e) => setSim({ ...sim, T_amb: e.target.value })} /> °C</td></tr>
             <tr><td className="n">T_wi</td><td className="d">cooling water inlet temperature (live)</td><td className="i"><input type="number" step={0.5} value={sim.T_wi} onChange={(e) => setSim({ ...sim, T_wi: e.target.value })} /> °C</td></tr>
-            <tr><td className="n">charge rate</td><td className="d">rate at which refrigerant is added or recovered (1-50)</td><td className="i"><input type="number" min={1} max={50} step={1} value={sim.rate} onChange={(e) => setSim({ ...sim, rate: e.target.value })} /> g/s</td></tr>
+            <tr><td className="n">charge rate</td><td className="d">rate at which refrigerant is added or recovered (1-250)</td><td className="i"><input type="number" min={1} max={250} step={1} value={sim.rate} onChange={(e) => setSim({ ...sim, rate: e.target.value })} /> g/s</td></tr>
           </tbody></table>
           <div style={{ marginTop: 8 }}><button className="primary" onClick={applySim}>Apply conditions</button></div>
         </div>

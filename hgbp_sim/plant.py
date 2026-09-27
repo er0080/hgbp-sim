@@ -6,12 +6,12 @@ Topology (the stand being simulated)
 
     compressor discharge --> [discharge volume, P_d] --> valve 1 (discharge pressure)
                                                               |
-                                        hot gas header, P_i (condensing pressure)
+                                        hot gas header (P_i + condenser pressure drop)
                                             |                        |
                           path 2: valve 2 (suction pressure,   path 1: brazed-plate condenser
                                   hot gas bypass)                      <-- cooling water (valve 4)
                                             |                        |
-                                            |                   liquid receiver (dip tube)
+                                            |                   liquid receiver (dip tube) -> P_i sensor
                                             |                        |
                                             |               valve 3 (suction temperature, quench)
                                             v                        v
@@ -28,8 +28,9 @@ condenser, drains into a liquid receiver and is injected ("quench") through
 valve 3 into the other side of the mixing exchanger, where it evaporates
 against the bypass gas in counterflow.  The two outlets join at a tee and feed
 the compressor through the suction line.  Valve 4 meters the cooling water
-(drawn from a supply at the fixed pressure ``P_w_sup``) and thereby sets the
-intermediate (condensing) pressure.  There is no accumulator: quench liquid
+(driven by the fixed supply-to-return pressure difference of the plant water
+loop through valve 4, the piping and the condenser) and thereby sets the
+intermediate (condensing) pressure, measured after the receiver.  There is no accumulator: quench liquid
 the exchanger does not evaporate reaches the compressor.
 
 Manipulated variables (0..1 stem commands, in this order):
@@ -61,6 +62,13 @@ Model structure
   end of the suction line reads the vapor temperature, which can be
   superheated while liquid still reaches the compressor.
 
+Every side of the two plate heat exchangers is a quasi-steady flow resistance
+(friction and ports, dP ~ mdot^2 / rho_m) plus, on the refrigerant sides, the
+static head of its column.  The drops add no pressure states: the header sits
+above the measured liquid pressure P_i by the condenser drop, valve 2 and
+valve 3 each discharge through their exchanger side in series, and the quench
+cells boil at their own pressure along the S3 -> S4 column.
+
 Mass and internal energy of every volume (the suction side as one group) are
 integrated as conserved states; after every sub-step (P, h) are projected
 back onto them (a bracketed density-energy flash for the discharge and
@@ -74,14 +82,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from .components import (actuator_rate, clip, compressor, counterflow_effectiveness, cv_balance,
-                         gas_valve_flow, kv_to_C, liquid_valve_flow, smoothstep, valve_characteristic,
+from .components import (actuator_rate, amalfi_ftp, clip, compressor, counterflow_effectiveness,
+                         cv_balance, gas_valve_flow, hx_drop, kv_to_C, liquid_valve_flow, martin_xi,
+                         mixture_viscosity, pipe_drop, series_C, smoothstep, valve_characteristic,
                          water_valve_flow)
 from .geometry import derive
 from .params import PlantParams, nominal_charge, sample_params
 from .properties import RefrigerantTables, get_tables
 
 MX = 5          # finite-volume cells per side of the mixing exchanger
+G = 9.81        # gravity [m/s^2]
 
 
 def _valve_slope(Cf, rho_up, dP, eps):
@@ -244,6 +254,59 @@ class HGBPPlant:
         return {a: getattr(S, a).reshape(nb, k) for a in
                 ("rho", "T", "x", "drho_dP", "drho_dh", "s", "T_sat", "h_l", "h_v", "rho_l")}
 
+    @staticmethod
+    def _pipe(p, key, mdot, rho, mu, share=1.0):
+        """Friction and fittings drop of refrigerant line ``key`` (or the ``share`` of it)."""
+        D, t, L, K = (getattr(p, f"{a}_{key}") for a in ("D", "t", "L", "K"))
+        return pipe_drop(mdot, np.maximum(D - 2.0 * t, 1e-4), share * L, share * K, rho, mu)
+
+    @staticmethod
+    def _equiv_C(m0, dP0, rho_ref):
+        """Equivalent series coefficient (m = C sqrt(rho_ref dP)) of flow-dependent
+        drops ``dP0`` evaluated at the flow ``m0`` a valve passes on its own."""
+        dP0 = np.abs(dP0)
+        return np.where(dP0 > 1.0, np.abs(m0) / np.sqrt(rho_ref * np.maximum(dP0, 1.0)), 1e3)
+
+    def _quench_drops(self, p, mdot, rho_in, rho_c, x_c, sat_s, tr):
+        """Flow-dependent pressure drops of the mixing exchanger's quench side (S3 -> S4)
+        at quench flow ``mdot``, static heads excluded.  ``rho_in``: the valve 3 outlet
+        mixture; ``rho_c``, ``x_c``: density and quality of the quench cells (top ->
+        bottom).  Returns the drop ahead of the channels (distributor, S3 connection and
+        port), each cell's friction plus acceleration, and the drop after them (S4 port
+        and connection, into the outlet pipe)."""
+        n = self.MX
+        m, sgn = np.abs(mdot), np.sign(mdot)
+        dh = (2.0 * p.mx_b / p.mx_phi)[:, None]
+        Gc = (m / ((p.V_mx_q / p.mx_V_ch) * p.mx_b * p.mx_W))[:, None]     # channel mass flux
+        dz = (p.mx_H / n)[:, None]
+        rl, rv = sat_s["rho_l"][:, None], sat_s["rho_v"][:, None]
+        beta = p.mx_beta[:, None]
+        # friction: two-phase (Amalfi et al.) in the evaporating cells, Martin's single-phase
+        # correlation for vapor (after dry-out) or liquid, blended across the dome
+        f_tp = amalfi_ftp(Gc, dh, rho_c, rl, rv, tr["sigma"][:, None], beta)
+        dp_tp = 2.0 * f_tp * Gc * Gc * dz / (dh * rho_c)
+        mu = np.where(x_c >= 0.5, tr["mu_v"][:, None], tr["mu_l"][:, None])
+        dp_sp = martin_xi(Gc * dh / mu, beta) * dz / dh * Gc * Gc / (2.0 * rho_c)
+        w_sp = smoothstep((x_c - 0.975) / 0.05) + smoothstep((0.025 - x_c) / 0.05)
+        fric = sgn[:, None] * ((1.0 - w_sp) * dp_tp + w_sp * dp_sp)
+        # acceleration of the evaporating flow (homogeneous), forward flow only
+        v_prev = np.concatenate([1.0 / rho_in[:, None], 1.0 / rho_c[:, :n - 1]], 1)
+        acc = (mdot > 0.0)[:, None] * Gc * Gc * (1.0 / rho_c - v_prev)
+        # ports (Shah & Focke: 0.75 velocity heads each end) and the 7/8 in connections:
+        # expansion from the connection into the port at S3, contraction from the port into
+        # the connection and expansion into the outlet pipe at S4
+        A_p, A_c = 0.25 * np.pi * p.mx_d_port ** 2, 0.25 * np.pi * p.mx_d_S34 ** 2
+        d_mo = np.maximum(p.D_mo - 2.0 * p.t_mo, p.mx_d_S34)
+        a_cp = (p.mx_d_S34 / p.mx_d_port) ** 2
+        K_in = (1.0 - a_cp) ** 2
+        K_out = 0.5 * (1.0 - a_cp) + (1.0 - (p.mx_d_S34 / d_mo) ** 2) ** 2
+        vh = lambda A, rho: mdot * m / (A * A * 2.0 * rho)       # signed velocity head
+        rho_out = rho_c[:, n - 1]
+        dist = mdot * m / (kv_to_C(p.mx_Kv_dist) ** 2 * rho_in)
+        inlet = dist + 0.75 * vh(A_p, rho_in) + K_in * vh(A_c, rho_in)
+        outlet = 0.75 * vh(A_p, rho_out) + K_out * vh(A_c, rho_out)
+        return dict(dist=dist, inlet=inlet, seg=fric + acc, outlet=outlet)
+
     def _gas_cells(self, P_s, Hg):
         nb, k = Hg.shape
         T, rho = self.props.vapor_props(np.repeat(P_s, k), Hg.reshape(-1))
@@ -280,6 +343,7 @@ class HGBPPlant:
         Vc = p.V_sc
         M_c = C["rho"] * Vc
         T_sat_s, h_ls, h_vs = C["T_sat"][:, 0], C["h_l"][:, 0], C["h_v"][:, 0]
+        sat_s = pr.sat(P_s)
         D = pr.state(P_d, h_d)                          # discharge volume
         I = pr.state(P_i, h_i)                          # intermediate section
 
@@ -299,27 +363,113 @@ class HGBPPlant:
         rho_co = I.rho_l * (1.0 - dry) + I.rho * dry
         h_iv = I.h_v * (1.0 - dry) + h_i * dry                    # vapor phase of the section
 
-        # ---- valve 1: discharge -> intermediate header
-        T_g, rho_g = pr.vapor_props(P_i, h_d)                    # header gas after throttling
+        # ---- condenser, refrigerant -> wall.  Plate area shares: flooded by liquid backing
+        # up from a full receiver, condensing (a_c) and vapor-covered (the rest).
+        w2 = (1.0 - smoothstep((I.x - 0.85) / 0.15)) * (1.0 - smoothstep(-I.x / 0.05))
+        a_c = w2 * (1.0 - cond_flood)
+        UA_r = p.cond_A * (p.alpha_r_2ph * a_c + p.alpha_r_1ph * (1.0 - cond_flood - a_c))
+        Q_r = UA_r * (I.T - T_cw)                        # refrigerant -> wall
+
+        # ---- condenser pressure drop.  P_i is measured at the outlet (after the receiver,
+        # ahead of valve 3); the header at the inlet sits above it by the friction drop of
+        # the condensing flow and below it by the static head of the refrigerant column
+        # (homogeneous two-phase over the condensing area, liquid where flooded).
+        sat_i = pr.sat(P_i)
+        rho_v = np.where(I.x >= 1.0, I.rho, sat_i["rho_v"])
+        rho_l = sat_i["rho_l"]
+        mdot_cr = np.maximum(Q_r, 0.0) / np.maximum(h_d - I.h_l, 1e4)
+        rho_fr = w2 * 2.0 / (1.0 / rho_v + 1.0 / rho_l) + (1.0 - w2) * rho_v
+        r_lv = np.maximum(rho_l / rho_v, 1.001)
+        rho_hm = rho_v * np.log(r_lv) / (1.0 - 1.0 / r_lv)          # column mean, quality 1 -> 0
+        rho_col = cond_flood * rho_l + a_c * rho_hm + (1.0 - cond_flood - a_c) * rho_v
+        dP_cr = (1.0 - cond_flood) * hx_drop(mdot_cr, kv_to_C(p.cond_Kv_r), rho_fr) - G * p.cond_H * rho_col
+
+        # ---- pressure chain of the intermediate side, from the P_i sensor (receiver outlet)
+        # upstream: condensate drain, condenser, the header from the condenser back to the
+        # valve 2 branch (taken halfway along the header), which is the header pressure P_h
+        tr_i, tr_d, tr_s = pr.transport(P_i), pr.transport(P_d), pr.transport(P_s)
+        mu_co = tr_i["mu_l"] * (1.0 - dry) + tr_i["mu_v"] * dry
+        dP_drn = self._pipe(p, "drn", mdot_cr, rho_co, mu_co)
+        rho_hg = pr.vapor_props(P_i + dP_drn + dP_cr, h_d)[1]      # header gas
+        dP_hdr2 = self._pipe(p, "hdr", mdot_cr, rho_hg, tr_i["mu_v"], 0.5)
+        P_h = np.maximum(P_i + dP_drn + dP_cr + dP_hdr2, pr.p_min * 1.001)   # hot gas header at the branch
+
+        # ---- suction side: P_s is the compressor suction port; the tee sits above it by the
+        # suction line's drop (compressor flow, the line's own mixture)
+        mu_l1 = mixture_viscosity(C["x"][:, n], tr_s["mu_l"], tr_s["mu_v"])
+        dP_suc = self._pipe(p, "suc", mdot_c, C["rho"][:, n], mu_l1)
+        P_tee = P_s + dP_suc
+
+        # ---- valve 1: discharge -> header branch, in series with the discharge line and the
+        # first half of the header (equivalent resistance at the valve-alone flow)
+        T_g, rho_g = pr.vapor_props(P_h, h_d)                    # header gas after throttling
         f1 = valve_characteristic(u1, p.dpv_char, p.dpv_R)
-        mdot_1 = gas_valve_flow(kv_to_C(p.Kv_dpv) * f1, P_d, P_i, D.rho, rho_g, p.kappa, p.xT, p.eps_valve)
+        C1 = kv_to_C(p.Kv_dpv) * f1
+        pipes1 = lambda m: (self._pipe(p, "dis", m, D.rho, tr_d["mu_v"]),
+                            self._pipe(p, "hdr", m, rho_g, tr_i["mu_v"], 0.5))
+        m0 = gas_valve_flow(C1, P_d, P_h, D.rho, rho_g, p.kappa, p.xT, p.eps_valve)
+        mdot_1 = gas_valve_flow(C1, P_d, P_h, D.rho, rho_g, p.kappa, p.xT, p.eps_valve,
+                                self._equiv_C(m0, sum(pipes1(m0)), rho_g), rho_g)
+        dP_dis, dP_hdr1 = pipes1(mdot_1)
         h_1f = np.where(mdot_1 >= 0.0, h_d, h_iv)
 
-        # ---- valve 2: hot gas header -> mixing exchanger gas side (S1)
+        # ---- valve 2: header branch -> bypass line -> mixing exchanger gas side (S1 at the
+        # bottom, rising to S2) -> outlet leg -> tee, all in series
         f2 = valve_characteristic(u2, p.spv_char, p.spv_R)
-        mdot_2 = gas_valve_flow(kv_to_C(p.Kv_spv) * f2, P_i, P_s, rho_g, C["rho"][:, n], p.kappa, p.xT,
-                                p.eps_valve)
+        C2 = kv_to_C(p.Kv_spv) * f2
+        rho_gin = pr.vapor_props(P_s, h_d)[1]                    # bypass gas after throttling
+        rho_gm = 2.0 / (1.0 / rho_gin + 1.0 / sat_s["rho_v"])
+        head_g = G * p.mx_H * rho_gm
+        C_mg = kv_to_C(p.mx_Kv_g)
+        pipes2 = lambda m: (self._pipe(p, "bp", m, rho_gin, tr_s["mu_v"]), hx_drop(m, C_mg, rho_gm),
+                            self._pipe(p, "mo", m, sat_s["rho_v"], tr_s["mu_v"], 0.5))
+        m0 = gas_valve_flow(C2, P_h, P_tee + head_g, rho_g, C["rho"][:, n], p.kappa, p.xT, p.eps_valve)
+        mdot_2 = gas_valve_flow(C2, P_h, P_tee + head_g, rho_g, C["rho"][:, n], p.kappa, p.xT, p.eps_valve,
+                                self._equiv_C(m0, sum(pipes2(m0)), rho_gm), rho_gm)
+        dP_bp, dP_mg_f, dP_mog = pipes2(mdot_2)
+        dP_mg = dP_mg_f + head_g                                 # S1 above S2
         m_from_inlet = clip(np.minimum(mdot_2, np.maximum(mdot_1, 0.0)), 0.0, np.inf)
         h_2f_fwd = (m_from_inlet * h_d + (np.maximum(mdot_2, 0.0) - m_from_inlet) * h_iv) \
             / np.maximum(mdot_2, 1e-12)
         fwd2 = mdot_2 > 0.0
         h_2f = np.where(fwd2, h_2f_fwd, h_l1)
 
-        # ---- valve 3: receiver / liquid line -> mixing exchanger quench side (S3)
+        # ---- valve 3: receiver / liquid line -> mixing exchanger quench side (S3 on top), in
+        # series with it (distributor, ports, channels; see _quench_drops).  The drop is not
+        # quadratic in the flow, so the series pair is solved with the side's equivalent
+        # resistance at the valve-alone flow (the valve takes almost all of the difference).
+        # Each cell adds its static head and boils at its own pressure; the distributor and
+        # the S3 port are ahead of the channels and do not raise the boiling pressure.
         f3 = valve_characteristic(u3, p.stv_char, p.stv_R)
-        mdot_3 = liquid_valve_flow(kv_to_C(p.Kv_stv) * f3, P_i, P_s, rho_co, C["rho"][:, 0], p.f_choke_liq,
-                                   p.eps_valve)
+        rho_c, x_c = C["rho"][:, :n], C["x"][:, :n]
+        head_q = G * (p.mx_H / n)[:, None] * rho_c
+        S3 = pr.state(P_s, h_cv_out)                             # valve 3 outlet, flashed
+        rho_3 = S3.rho
+        mu_3 = mixture_viscosity(S3.x, tr_s["mu_l"], tr_s["mu_v"])
+        mu_qo = mixture_viscosity(x_c[:, n - 1], tr_s["mu_l"], tr_s["mu_v"])
+        C3 = kv_to_C(p.Kv_stv) * f3
+        P_3dn = P_tee - head_q.sum(1)
+
+        def drops3(m):                    # liquid line, quench line, quench side, outlet leg
+            dq = self._quench_drops(p, m, rho_3, rho_c, x_c, sat_s, tr_s)
+            dq["liq"] = self._pipe(p, "liq", m, rho_co, mu_co)
+            dq["q"] = self._pipe(p, "q", m, rho_3, mu_3)
+            dq["mo"] = self._pipe(p, "mo", m, rho_c[:, n - 1], mu_qo, 0.5)
+            return dq, dq["liq"] + dq["q"] + dq["inlet"] + dq["seg"].sum(1) + dq["outlet"] + dq["mo"]
+
+        m0 = liquid_valve_flow(C3, P_i, P_3dn, rho_co, rho_c[:, 0], p.f_choke_liq, p.eps_valve)
+        mdot_3 = liquid_valve_flow(C3, P_i, P_3dn, rho_co, rho_c[:, 0], p.f_choke_liq, p.eps_valve,
+                                   self._equiv_C(m0, drops3(m0)[1], rho_3), rho_3)
         fwd3 = mdot_3 >= 0.0
+        dq, _ = drops3(mdot_3)
+        seg_q = dq["seg"] - head_q                               # P(top of cell) - P(bottom of cell)
+        # cell centres above the compressor port: suction line, outlet leg, S4 port, cells below
+        dP_qc = (dP_suc + dq["mo"] + dq["outlet"])[:, None] + np.cumsum(seg_q[:, ::-1], 1)[:, ::-1] - 0.5 * seg_q
+        dP_mq = dq["inlet"] + seg_q.sum(1) + dq["outlet"]       # S3 (ahead of the distributor) above S4
+        dP_mq_ch = seg_q.sum(1)                                  # across the channels
+        # boiling temperature shift of each cell (Clausius-Clapeyron at P_s)
+        dTs = (sat_s["T_v"] * (1.0 / sat_s["rho_v"] - 1.0 / sat_s["rho_l"])
+               / np.maximum(sat_s["h_v"] - sat_s["h_l"], 1e3))[:, None] * dP_qc
 
         # ---- walls of suction and discharge lines, receiver shell
         Q_sg = p.UA_sg * (T_sw - C["T"][:, n])           # suction line wall -> refrigerant
@@ -329,12 +479,15 @@ class HGBPPlant:
         Q_rw = p.rec_UA_r * (T_rw - I.T)                 # receiver shell -> refrigerant
         dT_rw = (p.rec_UA_a * (T_amb - T_rw) - Q_rw) / p.C_rw
 
-        # ---- condenser.  Plate area shares: flooded by liquid backing up from a full
-        # receiver, condensing (a_c) and vapor-covered (the rest).  Water enters at the
-        # liquid end: it first subcools the leaving liquid (flooded zone, or the draining
-        # condensate film on cond_sc_film of the area), then cools the wall.
+        # ---- condenser, water side.  Water enters at the liquid end: it first subcools the
+        # leaving liquid (flooded zone, or the draining condensate film on cond_sc_film of
+        # the area), then cools the wall.  The plant loop's supply-to-return difference
+        # drives it through valve 4, the piping and the condenser in series.
         f_w = valve_characteristic(u4, p.w_char, p.w_R)
-        mdot_w = water_valve_flow(kv_to_C(p.Kv_w) * f_w, p.P_w_sup, p.rho_w)
+        C_cw = kv_to_C(p.cond_Kv_w)
+        mdot_w = water_valve_flow(series_C(kv_to_C(p.Kv_w) * f_w, C_cw, kv_to_C(p.Kv_wpipe)),
+                                  p.P_w_sup - p.P_w_ret, p.rho_w)
+        dP_cw = hx_drop(mdot_w, C_cw, p.rho_w)
         Cw = mdot_w * p.cp_w
         UA_w = p.alpha_w0 * p.cond_A * np.power(np.maximum(mdot_w / p.mdot_w_ref, 1e-6), 0.8)
         a_sc = np.maximum(cond_flood, p.cond_sc_film) * (1.0 - dry)
@@ -350,10 +503,6 @@ class HGBPPlant:
         SC = I.T_sat - T_co
         h_3i = np.where(fwd3, h_cv_out, H[:, 0])                  # leaving the intermediate section
         h_3f = np.where(fwd3, h_co, H[:, 0])                      # entering the quench side
-        w2 = (1.0 - smoothstep((I.x - 0.85) / 0.15)) * (1.0 - smoothstep(-I.x / 0.05))
-        a_c = w2 * (1.0 - cond_flood)
-        UA_r = p.cond_A * (p.alpha_r_2ph * a_c + p.alpha_r_1ph * (1.0 - cond_flood - a_c))
-        Q_r = UA_r * (I.T - T_cw)                        # refrigerant -> wall
         T_w1 = T_wi + Q_sc / np.maximum(Cw, 1e-9)        # water leaving the subcooled zone
         eps_w = 1.0 - np.exp(-UA_w * (1.0 - a_sc) / np.maximum(Cw, 1e-9))
         Q_ww = eps_w * Cw * (T_cw - T_w1)                # wall -> water
@@ -367,7 +516,6 @@ class HGBPPlant:
         m2p = np.maximum(mdot_2, 0.0)
         Tw_eff = np.maximum(T_mw, T_sat_s[:, None])
         # vapor at the wall temperature (linearized from the dew point; an effectiveness target)
-        sat_s = pr.sat(P_s)
         h_eq = h_vs[:, None] + sat_s["cp_v"][:, None] * np.maximum(Tw_eff - sat_s["T_v"][:, None], 0.0)
         UA_g = p.mx_alpha_g0 * p.A_mx_cell * np.power(
             np.maximum(m2p, 1e-3 * p.mx_mdot_g_ref) / p.mx_mdot_g_ref, 0.8)
@@ -401,17 +549,18 @@ class HGBPPlant:
         # liquid needs at the evaporating coefficient; the rest heats vapor.  Blended over
         # DRYOUT_BAND above the dew point, so the dry-out point moves continuously
         # through the cells and the vapor never leaves hotter than its wall.
-        dT_sat = T_mw - T_sat_s[:, None]
+        dT_sat = T_mw - (T_sat_s[:, None] + dTs)
         Q_2ph = UA_e[:, None] * dT_sat
         need = np.abs(mdot_3)[:, None] * np.maximum(h_vs[:, None] - H_up, 0.0)
         phi_f = clip(need / np.maximum(UA_e[:, None] * np.maximum(dT_sat, 0.0), 1e-9), 0.0, 1.0)
 
         def quench_heat(Hq, Tq):
+            w_wet = 1.0 - smoothstep((Hq - h_vs[:, None]) / self.DRYOUT_BAND)
+            Tq = Tq + w_wet * dTs                        # liquid boils at the cell's own pressure
             # ... never more than the share of the cell's enthalpy rise below the dew point
             phi_h = clip((h_vs[:, None] - H_up) / np.maximum(Hq - H_up, 1.0), 0.0, 1.0)
             phi = np.minimum(phi_f, np.where(Hq > H_up, phi_h, 1.0))
             Q_dry = phi * Q_2ph + (1.0 - phi) * UA_v[:, None] * (T_mw - Tq)
-            w_wet = 1.0 - smoothstep((Hq - h_vs[:, None]) / self.DRYOUT_BAND)
             return w_wet * UA_e[:, None] * (T_mw - Tq) + (1.0 - w_wet) * Q_dry     # wall -> quench
 
         Q_q = quench_heat(H[:, :n], T_q)
@@ -474,8 +623,8 @@ class HGBPPlant:
         # ---- fastest local rates (1/s) for the integrator's step subdivision: valve
         # conductance over the capacitance of each pressure node, and advection plus
         # heat transfer of the quench cells
-        k1 = _valve_slope(kv_to_C(p.Kv_dpv) * f1, np.maximum(D.rho, rho_g), P_d - P_i, p.eps_valve)
-        k2 = _valve_slope(kv_to_C(p.Kv_spv) * f2, rho_g, P_i - P_s, p.eps_valve)
+        k1 = _valve_slope(C1, np.maximum(D.rho, rho_g), P_d - P_h, p.eps_valve)
+        k2 = _valve_slope(C2, rho_g, P_h - P_s, p.eps_valve)
         k3 = _valve_slope(kv_to_C(p.Kv_stv) * f3, rho_co, P_i - P_s, p.eps_valve)
         C_d = p.V_d * np.maximum(D.drho_dP + D.drho_dh / D.rho, 1e-12)
         C_i = p.V_i * np.maximum(I.drho_dP + I.drho_dh / I.rho, 1e-12)
@@ -557,10 +706,15 @@ class HGBPPlant:
             x_qo=x_qo, T_qo=T_q[:, n - 1], T_go=pr.T_vapor(P_s, h_go), h_go=h_go, T_l1=C["T"][:, n],
             fill_i=fill_i, rec_level=rec_level, ll_fill=ll_fill, cond_flood=cond_flood,
             M_q_liq=((1.0 - clip(x_q, 0.0, 1.0)) * M_c[:, :n]).sum(axis=1),
-            h_q=H[:, :n], x_q=x_q, T_q=T_q, T_g=T_gc, h_g=H_g, T_mw=T_mw,
+            h_q=H[:, :n], x_q=x_q,
+            T_q=T_q + (1.0 - smoothstep((H[:, :n] - h_vs[:, None]) / self.DRYOUT_BAND)) * dTs, T_g=T_gc, h_g=H_g, T_mw=T_mw,
             Q_mx=Q_g.sum(axis=1), Q_q=Q_q.sum(axis=1),
             rho_s=Cin.rho, h_l1=h_l1, h_l2=h_l2, h_cin=h_cin, x_l2=C["x"][:, n + 1], h_d=h_d, h_i=h_i, h_co=h_co, h2=h2,
             h_2f=h_2f, h_3f=h_3f, T2_ad=cp["T2_ad"],
+            P_tee=P_tee, dP_suc=dP_suc, dP_dis=dP_dis, dP_hdr=dP_hdr1 + dP_hdr2, dP_bp=dP_bp, dP_mog=dP_mog,
+            dP_moq=dq["mo"], dP_q=dq["q"], dP_liq=dq["liq"], dP_drn=dP_drn,
+            P_h=P_h, dP_cr=dP_cr, dP_cw=dP_cw, dP_mg=dP_mg, dP_mq=dP_mq, dP_mq_ch=dP_mq_ch, dP_qc=dP_qc,
+            dP_q_dist=dq["dist"], dP_q_in=dq["inlet"], dP_q_out=dq["outlet"], mdot_cr=mdot_cr,
             mdot_c=mdot_c, mdot_1=mdot_1, mdot_2=mdot_2, mdot_3=mdot_3, mdot_w=mdot_w,
             W_el=cp["W_el"], W_shaft=cp["W_shaft"], Pr=cp["Pr"], eta_v=cp["eta_v"], eta_s=cp["eta_s"],
             Q_r=Q_r, Q_w=Q_w, Q_sc=Q_sc, Q_sg=Q_sg, Q_dg=Q_dg, Q_rw=Q_rw, T_wo=T_wo, T_sw=T_sw, T_dw=T_dw,
@@ -791,6 +945,7 @@ class HGBPPlant:
         if self.aux is None:
             _, self.aux = self.rhs(self.x, self.u_cmd, self.N_cmd, self.T_amb,
                                    self.T_wi, want_aux=True)
+            self._lam = self._lam_last       # rate estimate of this state (not a previous episode's)
         return self.aux
 
     def conserved_mass(self):

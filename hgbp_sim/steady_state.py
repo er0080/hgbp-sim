@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .components import compressor, gas_valve_flow, kv_to_C, liquid_valve_flow, water_valve_flow
+from .components import compressor, gas_valve_flow, kv_to_C, liquid_valve_flow, series_C, water_valve_flow
 
 from .params import liquid_volume_for_level
 
@@ -89,12 +89,13 @@ def initial_guess(plant, p, P_s, h_s, P_d, P_i, N, T_amb, T_wi):
     # condenser duty and water flow (bisection on the effectiveness relation)
     Q = mdot_3 * (h_d - h_l)
     T_cw = sati["T_l"] - Q / (0.6 * p.alpha_r_2ph * p.cond_A)
-    mdot_w_full = water_valve_flow(kv_to_C(p.Kv_w), p.P_w_sup, p.rho_w)
+    C_fix = [kv_to_C(p.cond_Kv_w), kv_to_C(p.Kv_wpipe)]
     lo, hi = np.full_like(P_s, 1e-4), np.ones_like(P_s)
     for _ in range(40):
-        mid = 0.5 * (lo + hi)
-        Cw = mdot_w_full * mid * p.cp_w
-        UA_w = p.alpha_w0 * p.cond_A * np.power(mdot_w_full * mid / p.mdot_w_ref, 0.8)
+        mid = 0.5 * (lo + hi)                                 # installed flow fraction f(u4)
+        mdot_w = water_valve_flow(series_C(kv_to_C(p.Kv_w) * mid, *C_fix), p.P_w_sup - p.P_w_ret, p.rho_w)
+        Cw = mdot_w * p.cp_w
+        UA_w = p.alpha_w0 * p.cond_A * np.power(mdot_w / p.mdot_w_ref, 0.8)
         eps = 1.0 - np.exp(-UA_w / Cw)
         Qw = eps * Cw * (T_cw - T_wi)
         too_much = Qw > Q

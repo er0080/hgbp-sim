@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from hgbp_sim import BaselineController, HGBPPlant, PlantParams, named_point, solve_steady_state
+from hgbp_sim.components import churchill_f, kv_to_C, pipe_drop, series_C, valve_characteristic
 from hgbp_sim.geometry import tube_volume
 
 C2K = 273.15
@@ -276,3 +277,64 @@ def test_subcooled_zone_is_bounded_by_the_water_inlet():
     _, b = pl.rhs(x, res["u"] * np.array([1.0, 1.0, 0.0, 1.0]), np.full(3, RATING["N"]), pl.T_amb, pl.T_wi,
                   want_aux=True)
     assert np.allclose(b["Q_sc"], 0.0, atol=1e-6)
+
+
+def test_plate_exchanger_pressure_drops():
+    """Every exchanger side is a flow resistance: the header sits above the
+    liquid pressure sensor by the condenser drop, the bypass gas enters S1 and
+    the quench S3 above the tee pressure, and the cooling water shares the
+    plant's supply-to-return difference with valve 4 and the piping.  The quench
+    side splits into the distributor and ports (ahead of the channels, no effect
+    on boiling) and the channels, where every cell boils at its own pressure;
+    without flow only the static head of its column remains."""
+    pl, res = _rating_state()
+    assert res["converged"].all()
+    a, p = res["aux"], pl.p
+    assert 0.0 < a["dP_cr"][0] < 1e4
+    assert 1e4 < a["dP_mg"][0] < 1e5
+    C_w = series_C(kv_to_C(p.Kv_w) * valve_characteristic(a["u4"], p.w_char, p.w_R), kv_to_C(p.cond_Kv_w),
+                   kv_to_C(p.Kv_wpipe))
+    assert np.allclose(a["mdot_w"], C_w * np.sqrt(p.rho_w * (p.P_w_sup - p.P_w_ret)))
+    assert np.allclose(a["dP_cw"], (a["mdot_w"] / kv_to_C(p.cond_Kv_w)) ** 2 / p.rho_w)
+    # quench side: distributor + ports ahead, channels, ports after
+    assert np.allclose(a["dP_mq"], a["dP_q_in"] + a["dP_mq_ch"] + a["dP_q_out"])
+    assert 0.0 < a["dP_q_dist"][0] < a["dP_q_in"][0] and 0.0 < a["dP_mq_ch"][0] < a["dP_mq"][0] < 5e4
+    assert np.all(np.diff(a["dP_qc"], axis=1) < 0.0)                # pressure falls along the quench flow
+    assert np.all(a["dP_qc"][:, -1] > a["dP_q_out"])                # channels sit above the outlet port
+    wet = a["x_q"][0] < 1.0
+    assert np.all(a["T_q"][0][wet] > a["T_sat_s"][0])               # and boil warmer than the tee
+    # valve 3 closed: no flow, the quench column's static head only
+    x = res["x"].copy()
+    x[:, HGBPPlant.U3] = 0.0
+    _, b = pl.rhs(x, res["u"] * np.array([1.0, 1.0, 0.0, 1.0]), np.full(1, RATING["N"]), pl.T_amb, pl.T_wi,
+                  want_aux=True)
+    rho_q = pl._suction_cells(b["P_s"], b["h_q"])["rho"]
+    assert np.allclose(b["dP_mq"], -9.81 * p.mx_H / pl.MX * rho_q.sum(1))
+
+
+def test_pipe_pressure_drops():
+    """Refrigerant lines are friction + fittings resistances carrying their own flow:
+    Churchill's friction factor reduces to 64/Re laminar and to smooth-pipe values
+    turbulent; on the stand the suction line puts the tee (and the exchanger) above
+    the compressor port, the discharge line and header sit between P_d and P_i."""
+    Re_l, Re_t = 800.0, 1e5
+    assert np.isclose(churchill_f(Re_l, 0.0), 64.0 / Re_l, rtol=1e-3)
+    assert np.isclose(churchill_f(Re_t, 0.0), 0.0180, rtol=0.03)            # Moody chart, smooth
+    d, L, K, rho, mu, m = 0.03, 4.0, 1.5, 30.0, 1.3e-5, 0.5
+    u = m / (rho * 0.25 * np.pi * d * d)
+    f = churchill_f(rho * u * d / mu, 1.5e-6 / d)
+    assert np.isclose(pipe_drop(m, d, L, K, rho, mu), (f * L / d + K) * rho * u * u / 2.0)
+    assert np.isclose(pipe_drop(-m, d, L, K, rho, mu), -pipe_drop(m, d, L, K, rho, mu))
+
+    pl, res = _rating_state()
+    a, p = res["aux"], pl.p
+    assert np.allclose(a["P_tee"], a["P_s"] + a["dP_suc"]) and 2e3 < a["dP_suc"][0] < 5e4
+    assert np.all(a["dP_qc"] > a["dP_suc"][:, None])                # the exchanger sits above the tee
+    for k in ("dP_dis", "dP_hdr", "dP_bp", "dP_mog", "dP_moq", "dP_q", "dP_liq", "dP_drn"):
+        assert np.all(a[k] > 0.0), k
+    assert np.all(a["P_h"] > a["P_i"] + a["dP_cr"])                  # drain and header half above P_i
+    # compressor stopped: no suction line drop
+    x = res["x"].copy()
+    x[:, HGBPPlant.N_] = 0.0
+    _, b = pl.rhs(x, res["u"], np.zeros(1), pl.T_amb, pl.T_wi, want_aux=True)
+    assert np.allclose(b["dP_suc"], 0.0) and np.allclose(b["P_tee"], b["P_s"])
