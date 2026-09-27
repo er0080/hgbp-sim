@@ -6,7 +6,8 @@
     "  short_cycle_timers [bool] compressor minimum off time 60 s / minimum run time 120 s.",
     "loops: one Yokogawa UT35A per loop. SP setpoint and RL..RH PV input range in bar absolute (dpv, spv,",
     "  water) or degC (stv); P proportional band [% of RL..RH]; I integral and D derivative time [s] or",
-    "  \"OFF\"; DR \"DIR\" (output rises with PV) or \"RVS\"; OL..OH output limits [%].",
+    "  \"OFF\"; DR \"DIR\" (output rises with PV) or \"RVS\"; OL..OH output limits [%]; FL PV input filter",
+    "  (first-order lag ahead of the PV display and the PID) [s] or \"OFF\".",
     "plant: model parameters in SI units as listed on the Settings tab (units and descriptions there)."
   ],
   "simulation": {
@@ -28,7 +29,8 @@
       "RL": 0.0,
       "RH": 50.0,
       "OL": 2.0,
-      "OH": 100.0
+      "OH": 100.0,
+      "FL": 4
     },
     "spv": {
       "SP": 9.98,
@@ -39,7 +41,8 @@
       "RL": 0.0,
       "RH": 30.0,
       "OL": 0.0,
-      "OH": 100.0
+      "OH": 100.0,
+      "FL": 4
     },
     "stv": {
       "SP": 18.33,
@@ -50,7 +53,8 @@
       "RL": -50.0,
       "RH": 150.0,
       "OL": 0.0,
-      "OH": 100.0
+      "OH": 100.0,
+      "FL": 4
     },
     "water": {
       "SP": 18.0,
@@ -61,7 +65,8 @@
       "RL": 0.0,
       "RH": 50.0,
       "OL": 2.0,
-      "OH": 100.0
+      "OH": 100.0,
+      "FL": 4
     }
   },
   "plant": {

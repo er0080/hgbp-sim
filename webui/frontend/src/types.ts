@@ -1,6 +1,7 @@
 export type Time = number | "OFF";
-// UT35A settings: P proportional band [% of RL..RH], I / D [s] or OFF, DR action, OL..OH output limits [%]
-export interface Tuning { P: number; I: Time; D: Time; DR: "DIR" | "RVS"; RL: number; RH: number; OL: number; OH: number }
+// UT35A settings: P proportional band [% of RL..RH], I / D [s] or OFF, DR action, OL..OH output limits [%],
+// FL PV input filter [s] or OFF
+export interface Tuning { P: number; I: Time; D: Time; DR: "DIR" | "RVS"; RL: number; RH: number; OL: number; OH: number; FL: Time }
 export interface Loop extends Tuning {
   label: string; valve_label: string; unit: string;
   pv: number; sp: number; out: number; mode: "auto" | "manual"; manual_out: number;

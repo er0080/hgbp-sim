@@ -56,7 +56,8 @@ input.pending { border-color: var(--warn); }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .kpi { background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
 .kpi .l { color: var(--muted); font-size: 11px; }
-.kpi .v { font-family: var(--mono); font-size: 20px; }
+.kpi .v { font-family: var(--mono); font-size: 20px; white-space: nowrap; }
+.kpi .v.long { font-size: 16px; }         /* long values (e.g. 106,883 Btu/h) fit the tile */
 .kpi .v small { font-size: 11px; color: var(--muted); margin-left: 3px; }
 .comp { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .state { display: inline-block; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-family: var(--mono); }

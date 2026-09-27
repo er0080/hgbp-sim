@@ -1,4 +1,7 @@
+import os
+
 import numpy as np
+import pytest
 
 from hgbp_sim.interlock import ST_OFF, ST_RUNNING, ST_STARTING, ST_STOPPING, Interlock
 from hgbp_sim.live import HISTORY_CHANNELS, LiveStand
@@ -162,3 +165,55 @@ def test_incremental_history_rows():
         st.step()
     rows, count = st.rows_after(count)
     assert len(rows["t"]) == 50 and rows["t"][-1] == st.t
+
+
+def test_saturation_calculator():
+    """Dew point (x = 1) pressure of the stand's refrigerant (UI calculator) against CoolProp."""
+    CP = pytest.importorskip("CoolProp.CoolProp")
+    st = LiveStand()
+    for T in (-20.0, 0.0, 40.0):
+        s = st.saturation(T)
+        assert s["fluid"] == "R410A" and s["in_range"]
+        assert np.isclose(s["P"], CP.PropsSI("P", "T", T + 273.15, "Q", 1, "R410A") / 1e5, rtol=2e-3)
+    assert not st.saturation(150.0)["in_range"]
+    st.params = st.params.replace(fluid="R407C")        # a blend: the dew line, not the bubble line
+    st.apply_pending()
+    s = st.saturation(0.0)
+    assert np.isclose(s["P"], CP.PropsSI("P", "T", 273.15, "Q", 1, "R407C") / 1e5, rtol=2e-3)
+
+
+def test_pv_input_filter():
+    """UT35A FL: a first-order lag on each controller's PV, ahead of the faceplate and
+    the PID; the plant's measurements and the trend history stay unfiltered."""
+    from hgbp_sim import ut35a
+    assert ut35a.normalize_filter(4) == 4 and ut35a.normalize_filter("off") == ut35a.OFF
+    with pytest.raises(ValueError):
+        ut35a.normalize_filter(121)
+    st = LiveStand()
+    assert all(st.tuning[k]["FL"] == ut35a.OFF for k in st.tuning)   # built-in gains: tuned without it
+    st.set_loop("spv", FL=4)
+    # step response of the filter itself: exactly first order with time constant FL
+    st.pv_filt["spv"] = 0.0
+    y = [st._filter_pv("spv", 1.0, 0.2) for _ in range(20)]         # 4 s
+    assert np.isclose(y[-1], 1.0 - np.exp(-1.0))
+    # with sensor noise the faceplate PV is smoother than the measurement
+    assert st.warm_start("MT_standard")
+    st.noise = True
+    fp, meas = [], []
+    for _ in range(300):
+        s = st.step()
+        fp.append(s["loops"]["spv"]["pv"])
+        meas.append(s["meas"]["P_s"])
+    assert np.std(np.diff(fp)) < 0.3 * np.std(np.diff(meas))
+    assert st.last_row()["P_s"] != s["loops"]["spv"]["pv"]            # the history is not filtered
+    st.set_loop("spv", FL="OFF")
+    s = st.step()
+    assert s["loops"]["spv"]["pv"] == s["meas"]["P_s"] and s["loops"]["spv"]["FL"] == "OFF"
+
+
+def test_stand_defaults_set_the_pv_filter():
+    """The stand's controllers run with FL = 4 (defaults file), and its tuning copes with it."""
+    from hgbp_sim.defaults import load_defaults
+    path = os.path.join(os.path.dirname(__file__), "..", "webui", "config", "stand_defaults.json")
+    d = load_defaults(path, create=False)
+    assert all(d["loops"][k]["FL"] == 4 for k in d["loops"])

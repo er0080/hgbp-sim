@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { ParamMeta, ParamsView, Snapshot, Time, Tuning } from "../types";
+import { loopQty, useQtyInput, useUnits, type Qty } from "../units";
 
 const GROUP_ORDER = ["Refrigerant", "Charge", "Compressor", "Piping", "Condenser", "Receiver", "Mixing exchanger",
   "Pressure drops", "Valves", "Pipe walls", "Sensors", "Safety limits", "Baseline control"];
 const LOOPS = ["dpv", "spv", "stv", "water"];
 
-type TuneEdit = { P: string; I: string; D: string };
+type TuneEdit = { P: string; I: string; D: string; FL: string };
 const timeStr = (t: Time) => (t === "OFF" ? "" : String(t));
 const timeVal = (s: string): Time => (s.trim() === "" || s.trim().toUpperCase() === "OFF" ? "OFF" : Number(s));
-const tuneEdit = (t: Tuning): TuneEdit => ({ P: t.P.toFixed(1), I: timeStr(t.I), D: timeStr(t.D) });
+const tuneEdit = (t: Tuning): TuneEdit => ({ P: t.P.toFixed(1), I: timeStr(t.I), D: timeStr(t.D), FL: timeStr(t.FL) });
 
 function fmtVal(v: any) {
   if (typeof v !== "number") return String(v);
@@ -23,8 +24,11 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const [tune, setTune] = useState<Record<string, TuneEdit>>({});
-  const [sim, setSim] = useState({ T_amb: snap.meas.T_amb.toFixed(1), T_wi: snap.meas.T_wi.toFixed(1),
-    rate: (snap.charge.rate_kg_s * 1000).toFixed(0) });
+  const u = useUnits();
+  const [T_amb, setTamb, T_ambBase] = useQtyInput("T", snap.meas.T_amb);
+  const [T_wi, setTwi, T_wiBase] = useQtyInput("T", snap.meas.T_wi);
+  const [rate, setRate, rateBase] = useQtyInput("rate", snap.charge.rate_kg_s * 1000);
+  const rng = (q: Qty, v: number) => String(Number(u.to(q, v).toFixed(2)));
   const reload = () => api<ParamsView>("/api/params").then((v) => { setView(v); setEdits({}); });
   useEffect(() => { reload(); }, []);
   useEffect(() => {
@@ -68,7 +72,7 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
   const applyTune = async (k: string) => {
     const t = tune[k];
     try {
-      const r = await api(`/api/loop/${k}`, { P: Number(t.P), I: timeVal(t.I), D: timeVal(t.D) });
+      const r = await api(`/api/loop/${k}`, { P: Number(t.P), I: timeVal(t.I), D: timeVal(t.D), FL: timeVal(t.FL) });
       setTune({ ...tune, [k]: tuneEdit(r) });            // show the values as the controller rounded them
       setMsg(`${snap.loops[k].label} tuning applied`);
     } catch (e: any) { setMsg("error: " + e.message); }
@@ -81,8 +85,10 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
     setMsg("default tuning loaded into the fields; press Apply on each loop to use it");
   };
   const applySim = async () => {
-    await api("/api/sim", { T_amb: Number(sim.T_amb), T_wi: Number(sim.T_wi),
-      charge_rate_g_s: Math.min(250, Math.max(1, Number(sim.rate))) });
+    const body: Record<string, number> = {};
+    for (const [k, v] of [["T_amb", T_ambBase()], ["T_wi", T_wiBase()], ["charge_rate_g_s", rateBase()]] as const)
+      if (Number.isFinite(v)) body[k] = k === "charge_rate_g_s" ? Math.min(250, Math.max(1, v)) : v;
+    await api("/api/sim", body);
     setMsg("conditions and charge rate applied");
   };
   if (!view) return <p className="note">loading parameters...</p>;
@@ -103,19 +109,19 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
             <tr><td className="n">control interval</td><td className="d">PID execution and display update period (applied immediately)</td><td className="i">
               <select value={snap.dt_ctrl} onChange={(e) => api("/api/sim", { dt_ctrl: Number(e.target.value) })}>
                 {[0.1, 0.2, 0.25, 0.5, 1, 2].map((v) => <option key={v} value={v}>{v} s</option>)}</select></td></tr>
-            <tr><td className="n">T_amb</td><td className="d">ambient temperature (live)</td><td className="i"><input type="number" step={0.5} value={sim.T_amb} onChange={(e) => setSim({ ...sim, T_amb: e.target.value })} /> °C</td></tr>
-            <tr><td className="n">T_wi</td><td className="d">cooling water inlet temperature (live)</td><td className="i"><input type="number" step={0.5} value={sim.T_wi} onChange={(e) => setSim({ ...sim, T_wi: e.target.value })} /> °C</td></tr>
-            <tr><td className="n">charge rate</td><td className="d">rate at which refrigerant is added or recovered (1-250)</td><td className="i"><input type="number" min={1} max={250} step={1} value={sim.rate} onChange={(e) => setSim({ ...sim, rate: e.target.value })} /> g/s</td></tr>
+            <tr><td className="n">T_amb</td><td className="d">ambient temperature (live)</td><td className="i"><input type="number" step={u.step("T")} value={T_amb} onChange={(e) => setTamb(e.target.value)} /> {u.unit("T")}</td></tr>
+            <tr><td className="n">T_wi</td><td className="d">cooling water inlet temperature (live)</td><td className="i"><input type="number" step={u.step("T")} value={T_wi} onChange={(e) => setTwi(e.target.value)} /> {u.unit("T")}</td></tr>
+            <tr><td className="n">charge rate</td><td className="d">rate at which refrigerant is added or recovered ({rng("rate", 1)}-{rng("rate", 250)})</td><td className="i"><input type="number" min={u.to("rate", 1)} max={u.to("rate", 250)} step={u.step("rate")} value={rate} onChange={(e) => setRate(e.target.value)} /> {u.unit("rate")}</td></tr>
           </tbody></table>
           <div style={{ marginTop: 8 }}><button className="primary" onClick={applySim}>Apply conditions</button></div>
         </div>
         <div className="card">
           <h2>PID tuning, UT35A units (applied live) <button className="small" style={{ float: "right" }} onClick={defaultTunes}>defaults</button></h2>
-          <p className="note">As on the Yokogawa UT35A: P = proportional band in % of the PV input range (0.1-999.9), I = integral time and D = derivative time in seconds (1-6000, empty = OFF). Action (DIR/RVS), input range and output limits come from the defaults file.</p>
+          <p className="note">As on the Yokogawa UT35A: P = proportional band in % of the PV input range (0.1-999.9), I = integral time and D = derivative time in seconds (1-6000, empty = OFF), FL = PV input filter, a first-order lag in seconds on the PV ahead of both the display and the PID (1-120, empty = OFF). Action (DIR/RVS), input range and output limits come from the defaults file.</p>
           {LOOPS.map((k) => tune[k] && (
             <div className="gainrow" key={k}>
               <div className="gainname"><b>{snap.loops[k].label}</b>
-                <span>{snap.loops[k].valve_label} · {snap.loops[k].DR} · range {snap.loops[k].RL}..{snap.loops[k].RH} {snap.loops[k].unit} · output {snap.loops[k].OL}..{snap.loops[k].OH} %</span></div>
+                <span>{snap.loops[k].valve_label} · {snap.loops[k].DR} · range {rng(loopQty(snap.loops[k].unit), snap.loops[k].RL)}..{rng(loopQty(snap.loops[k].unit), snap.loops[k].RH)} {u.unit(loopQty(snap.loops[k].unit))} · output {snap.loops[k].OL}..{snap.loops[k].OH} %</span></div>
               <div className="gaininputs">
                 <label>P<input type="number" min={0.1} max={999.9} step={0.1} value={tune[k].P}
                   onChange={(e) => setTune({ ...tune, [k]: { ...tune[k], P: e.target.value } })} />%</label>
@@ -123,6 +129,8 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
                   <label key={g}>{g}<input type="number" min={1} max={6000} step={1} placeholder="OFF" value={tune[k][g]}
                     onChange={(e) => setTune({ ...tune, [k]: { ...tune[k], [g]: e.target.value } })} />s</label>
                 ))}
+                <label title="PV input filter: first-order lag on the PV, ahead of the display and the PID">FL<input type="number" min={1} max={120} step={1} placeholder="OFF" value={tune[k].FL}
+                  onChange={(e) => setTune({ ...tune, [k]: { ...tune[k], FL: e.target.value } })} />s</label>
                 <button className="small" onClick={() => applyTune(k)}>Apply</button>
               </div>
             </div>
@@ -131,7 +139,8 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
         {groups.map(([g, ms]) => (
           <div className="card" key={g}>
             <h2>{g} <button className="small" style={{ float: "right" }} onClick={() => resetGroup(ms)}>defaults</button></h2>
-            {g === "Charge" && <p className="note">Current charge {view.values.charge.toFixed(3)} kg, nominal for these volumes {view.nominal_charge.toFixed(3)} kg (receiver 40 % full). The value set here applies at the next cold/warm start; use the Add / Recover buttons on the operator panel to charge or recover at the receiver while running. Leave empty for nominal.</p>}
+            {u.sys !== "metric" && g === GROUP_ORDER[0] && <p className="note">Model parameters are shown in the simulator's SI units whatever the display units.</p>}
+            {g === "Charge" && <p className="note">Current charge {view.values.charge.toFixed(3)} kg ({u.fmtU("mass", view.values.charge)}), nominal for these volumes {view.nominal_charge.toFixed(3)} kg (receiver 40 % full). The value set here applies at the next cold/warm start; use the Add / Recover buttons on the operator panel to charge or recover at the receiver while running. Leave empty for nominal.</p>}
             {g === "Piping" && view.derived && (
               <details className="note" style={{ marginBottom: 8 }}>
                 <summary>Refrigerant volumes derived from piping and components: suction {(view.derived.V_s * 1e3).toFixed(1)} L,

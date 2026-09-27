@@ -181,6 +181,15 @@ controller's input range. `hgbp_sim.ut35a` converts to the simulator's internal 
 input range, as on the controller. The default control interval is 0.2 s, the UT35A's
 control period.
 
+**PV input filter `FL`** (IM 05P01D31-01EN, 7.1): a first-order lag with time constant
+`FL` (1-120 s or OFF) on each controller's PV, ahead of both the PV display and the PID,
+as in the controller's block diagram. The faceplates show the filtered PV; the
+schematic, process values, trends and the start permissives use the sensor values, and
+the plant is not involved. The stand's defaults file sets `FL = 4` on every loop, as on
+its controllers; the built-in defaults leave it OFF, because their gains were tuned
+without it (with a 4 s filter their discharge pressure loop overshoots to the trip at a
+cold start).
+
 **Loops run whenever they are in AUTO**, compressor on or off, as the stand's controllers
 do. At standstill the pressures are far from their setpoints, so the loops drive their
 valves to a limit (valves 1, 2 and 4 closed, the liquid valve open) and the start
@@ -226,9 +235,21 @@ also be scripted directly. As on the real stand, the third loop controls the suc
 *temperature* (setpoint in degC; a warm start derives it from the test point's
 superheat), whereas the training environment's baseline expert works on superheat. The backend (`webui/backend/app.py`) exposes a small REST API
 (`/api/state`, `/api/loop/{name}` (mode, sp, out, P, I, D), `/api/compressor`, `/api/sim`, `/api/init`,
-`/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`) and streams the latest
+`/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`, `/api/saturation?T=` (dew point
+pressure of the stand's refrigerant, x = 1, for compressor state points; the saturation
+calculator on the operator panel)) and streams the latest
 snapshot with the new history rows on `/ws` (after every control step, at most ten
 messages per second: at high speed factors one message covers several steps).
+
+**Display units.** The unit selector in the top bar switches each browser between
+metric (bar absolute, °C, K, g/s, kg/min, kW, kPa, kg) and US units (psia, °F, °F for
+superheat and subcooling, lb/h, gpm, Btu/h, psi, lb; electrical power stays in kW); the
+choice is remembered in the browser. It applies to operating values: the schematic,
+faceplates and setpoint entry, process values, trends, the start dialog, conditions and
+the CSV export (`/api/export.csv?units=metric|english`, every column labelled with its
+unit). The simulator and the API always work in their own units (SI in the model, the
+metric set above in the API), and the plant parameter table on the Settings tab stays in
+SI.
 
 ## Performance
 
@@ -477,7 +498,7 @@ hgbp_sim/
   env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium)
   interlock.py     compressor start/stop interlock state machine (shared by env and live stand)
   live.py          LiveStand: interactive single stand with PID loops, charging, history
-  ut35a.py         Yokogawa UT35A tuning (P band %, I/D s, DIR/RVS) <-> internal PID gains
+  ut35a.py         Yokogawa UT35A tuning (P band %, I/D s, DIR/RVS, FL) <-> internal PID gains
   defaults.py      stand defaults document: built-in values, JSON file loading and validation
   data/            prebuilt property tables
 webui/             React + FastAPI operator interface, Dockerfile, docker-compose.yml,
