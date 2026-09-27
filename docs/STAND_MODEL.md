@@ -6,11 +6,11 @@ replaces the suction mixer tank model reviewed in `SUCTION_MIXER_ANALYSIS.md`.
 ## 1. Hardware represented
 
 ```
-compressor --> discharge line --> valve 1 --> hot gas header (intermediate pressure P_i)
+compressor --> discharge line --> valve 1 --> hot gas header (P_i + condenser pressure drop)
                                                  |                         |
                                               valve 2              condenser (BPHE) <-- water, valve 4
                                                  |                         | drain
-                                                 |                  receiver (UR66, dip tube)
+                                                 |                  receiver (UR66, dip tube) -> P_i sensor
                                                  |                         | liquid line
                                                  |                      valve 3
                                                  v                         v
@@ -92,7 +92,10 @@ Consequences:
   ambient. The receiver level is reported as a sight glass reading (`rec_level`).
 
 ### Suction side
-The whole suction side shares one pressure P_s (pressure drop neglected). The cells are:
+The whole suction side shares one pressure P_s for mass and energy; P_s is the compressor suction port,
+and the suction line, outlet legs and exchanger sides sit above it by their pressure drops. The quench cells boil at their own
+pressure along the S3 -> S4 column, and valves 2 and 3 discharge through their exchanger sides in series
+(`PRESSURE_DROP.md`). The cells are:
 * five quench-side cells of the mixing exchanger (enthalpy states, top to bottom), each
   against its own plate-wall temperature;
 * the tee plus suction line;

@@ -372,20 +372,26 @@ exploit: every valve moves suction pressure, discharge pressure and superheat to
 |---|---|
 | compressor | `V_disp` (355 cm3/rev), `N_nom` (3550 rpm), `eta_v0`, `c_cl`, `eta_s0`, `a_s`, `Pr_opt`, `eta_motor`, `f_motor_gas`, `C_shell`, `UA_gs`, `UA_sha`, `ramp_N` |
 | compressor volumes | `V_comp_suc` (5 L, behind the suction probe), `V_comp_dis` |
-| piping | `D_*`, `t_*`, `L_*` (outside diameter, wall, length) for the discharge, header, bypass, quench, exchanger outlet, suction, drain and liquid lines |
+| piping | `D_*`, `t_*`, `L_*`, `K_*` (outside diameter, wall, length, fittings loss) for the discharge, header, bypass, quench, exchanger outlet, suction, drain and liquid lines |
 | charge | `charge`, `cold_liquid_in_suction` |
 | condenser | `cond_n_plates`, `cond_V_ch`, `cond_A`, `cond_mass`, `alpha_r_2ph`, `alpha_r_1ph`, `alpha_sc`, `cond_sc_film`, `alpha_w0`, `mdot_w_ref`, `UA_ca` |
 | receiver | `rec_V` (26.5 L), `rec_dip`, `rec_mass`, `rec_UA_r`, `rec_UA_a` |
 | mixing exchanger | `mx_n_plates`, `mx_V_ch`, `mx_A`, `mx_mass`, `mx_alpha_g0`, `mx_alpha_e`, `mx_alpha_v0`, `mx_mdot_g_ref`, `mx_mdot_q_ref`, `mx_UA_a`, `tee_tau_evap` |
 | pipe walls | `UA_sg`, `UA_sa`, `UA_dg`, `UA_da` (heat capacities follow from the tube data) |
-| valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w` in m3/h (+ characteristic, `tau_*`, `rate_*`), water supply `P_w_sup` |
+| pressure drops | `cond_Kv_r`, `cond_Kv_w`, `mx_Kv_g` (exchanger sides, m3/h), quench side from the plate geometry (`mx_Kv_dist` distributor, `mx_beta`, `mx_b`, `mx_W`, `mx_phi`, `mx_d_port`, `mx_d_S34`), `cond_H`, `mx_H` (port height, static head), water loop `P_w_sup` / `P_w_ret` (gauge) and `Kv_wpipe` |
+| valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w` in m3/h (+ characteristic, `tau_*`, `rate_*`) |
 | sensors | `tau_T`, `tau_m`, `tau_W`, `sig_*` |
 | limits | `P_d_max`, `P_s_min`, `P_s_max`, `T_d_max`, `y_flood` |
 
 Defaults describe a variable-speed 355 cm3/rev semi-hermetic compressor on R410A. All
 four valves are sized by their `Kv` (m3/h of water at a 1 bar drop), the way the hardware
 is specified; internally `mdot = (Kv / 36000) f(u) sqrt(rho dP)`. The cooling water valve
-uses the same relation against a fixed supply pressure `P_w_sup` (1.5 bar by default).
+is in series with the condenser water side and the plant piping, driven by the water loop's supply-to-return
+difference (`P_w_sup` 1.5 barg, `P_w_ret` 0.35 barg). Each side of the two plate heat exchangers is a
+flow resistance of the same form, except the evaporating quench side, which is computed from the plate
+geometry (distributor, ports, cell-by-cell two-phase friction); refrigerant sides add the static head of their
+columns. Every refrigerant line adds its friction and fittings drop; the suction pressure is taken at the
+compressor port (`docs/PRESSURE_DROP.md`).
 Fit `V_disp`, the efficiency coefficients, piping and valve Kv values to your compressor
 and stand; the steady-state solver plus `open_loop_step.py` make this quick.
 
@@ -393,7 +399,8 @@ and stand; the steady-state solver plus `open_loop_step.py` make this quick.
 
 * the condenser, receiver and lines are one equilibrium volume (no stratified, subcooled
   receiver pool); the mixing exchanger is discretized into five cells per side
-* no oil, no pressure drops inside the suction side, no suction-gas heater
+* no oil, no suction-gas heater; pressure drops (exchangers, lines) are quasi-steady, with estimated
+  coefficients and fittings, and without static heads between components
 * compressor map is generic; replace `components.compressor` for a measured map
 * water inlet temperature and ambient are constant within an episode (easy to make
   time-varying via `plant.set_inputs`)
@@ -429,6 +436,7 @@ webui/             React + FastAPI operator interface, Dockerfile, docker-compos
 docs/              STAND_MODEL.md: the stand model (receiver, mixing exchanger, piping, numerics);
                    NN_CONTROLLER_SPEC.md: controller architecture, training and deployment spec;
                    REFRIGERANT_CHARGE.md: how the nominal charge is calculated;
+                   PRESSURE_DROP.md: exchanger and line pressure drops and their estimate;
                    SUCTION_MIXER_ANALYSIS.md: review of the former suction tank model (superseded)
 examples/          closed-loop, open-loop, dataset, behaviour cloning, benchmark
 tests/             property accuracy, conservation, charge effects, steady state, controllers, env API

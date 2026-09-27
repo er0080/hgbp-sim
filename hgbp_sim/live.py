@@ -254,14 +254,14 @@ class LiveStand:
     def set_sim(self, paused: bool | None = None, speed_factor: float | None = None,
                 noise: bool | None = None, dt_ctrl: float | None = None,
                 charge_rate: float | None = None, short_cycle_timers: bool | None = None) -> None:
-        """``charge_rate`` in kg/s (1 .. 50 g/s) for adding / recovering refrigerant;
+        """``charge_rate`` in kg/s (1 .. 250 g/s) for adding / recovering refrigerant;
         ``short_cycle_timers`` switches the minimum off / run times on or off."""
         if short_cycle_timers is not None and bool(short_cycle_timers) != self.short_cycle_timers:
             self.short_cycle_timers = bool(short_cycle_timers)
             self._apply_timers()
             self.log("anti-short-cycle timers " + ("on" if self.short_cycle_timers else "off"))
         if charge_rate is not None:
-            self.charge_rate = float(np.clip(charge_rate, 0.001, 0.05))
+            self.charge_rate = float(np.clip(charge_rate, 0.001, 0.25))
         if paused is not None:
             self.paused = bool(paused)
         if speed_factor is not None:
@@ -473,7 +473,13 @@ class LiveStand:
                       mdot_1=f(aux["mdot_1"]) * 1e3, mdot_2=f(aux["mdot_2"]) * 1e3, mdot_3=f(aux["mdot_3"]) * 1e3,
                       mdot_w=f(aux["mdot_w"]) * 60.0, Q_w=f(aux["Q_w"]), Q_r=f(aux["Q_r"]), W_el=f(aux["W_el"]),
                       eta_v=f(aux["eta_v"]), eta_s=f(aux["eta_s"]), Pr=f(aux["Pr"]),
-                      M_s=f(aux["M_s"]), M_d=f(aux["M_d"]), M_i=f(aux["M_i"])),
+                      M_s=f(aux["M_s"]), M_d=f(aux["M_d"]), M_i=f(aux["M_i"]),
+                      P_h=f(aux["P_h"]) / 1e5,
+                      Tsat_h=float(self.plant.props.T_sat(np.maximum(aux["P_h"][:1], self.plant.props.p_min))[0]) - C2K,
+                      dP_cr=f(aux["dP_cr"]) / 1e3, dP_cw=f(aux["dP_cw"]) / 1e3,
+                      dP_mg=f(aux["dP_mg"]) / 1e3, dP_mq=f(aux["dP_mq"]) / 1e3,
+                      dP_suc=f(aux["dP_suc"]) / 1e3, dP_dis=f(aux["dP_dis"]) / 1e3, dP_hdr=f(aux["dP_hdr"]) / 1e3,
+                      dP_bp=f(aux["dP_bp"]) / 1e3),
             alarms=dict(floodback=bool(trips["floodback"][0]) and running,
                         mixer_wet=bool(trips["mixer_wet"][0]) and running,
                         no_liquid_seal=bool(trips["no_liquid_seal"][0]),

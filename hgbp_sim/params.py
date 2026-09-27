@@ -59,32 +59,41 @@ class PlantParams:
     comp_x_min: float = 0.7     # lowest quality the compressor draws in; more liquid collects in its shell (internal suction volume)
 
     # -------------------------------------------------------------- piping
-    # Copper refrigerant lines: outside diameter, wall thickness and length.
+    # Copper refrigerant lines: outside diameter, wall thickness, length and fittings loss
+    # (friction: Churchill, smooth drawn copper; fittings in velocity heads).
     # Defaults are ACR type L tube; see geometry.LINES for the routing.
     D_dis: float = 0.028575     # discharge line (compressor -> valve 1) outside diameter, 1-1/8 in [m]
     t_dis: float = 0.00127      # discharge line wall thickness [m]
     L_dis: float = 4.0          # discharge line length [m]
+    K_dis: float = 1.2          # discharge line fittings loss (bends; estimate) [velocity heads]
     D_hdr: float = 0.028575     # hot gas header (valve 1 -> condenser and valve 2) outside diameter, 1-1/8 in [m]
     t_hdr: float = 0.00127      # hot gas header wall thickness [m]
     L_hdr: float = 4.0          # hot gas header length [m]
+    K_hdr: float = 1.6          # hot gas header fittings loss (bends, run through the valve 2 tee; estimate) [velocity heads]
     D_bp: float = 0.028575      # bypass line (valve 2 -> mixing exchanger S1) outside diameter, 1-1/8 in [m]
     t_bp: float = 0.00127       # bypass line wall thickness [m]
     L_bp: float = 0.5           # bypass line length (estimate) [m]
+    K_bp: float = 1.3           # bypass line fittings loss (branch of the header tee, bend; estimate) [velocity heads]
     D_q: float = 0.022225       # quench line (valve 3 -> mixing exchanger S3) outside diameter, 7/8 in [m]
     t_q: float = 0.001143       # quench line wall thickness [m]
     L_q: float = 0.5            # quench line length (estimate) [m]
+    K_q: float = 0.6            # quench line fittings loss (bends; estimate) [velocity heads]
     D_mo: float = 0.034925      # mixing exchanger outlets (S2, S4 -> tee) outside diameter, 1-3/8 in [m]
     t_mo: float = 0.001397      # mixing exchanger outlet piping wall thickness [m]
     L_mo: float = 1.0           # mixing exchanger outlet piping, both legs together (estimate) [m]
+    K_mo: float = 1.3           # mixing exchanger outlet piping fittings loss per leg (bend, joining at the tee; estimate) [velocity heads]
     D_suc: float = 0.041275     # suction line (tee -> compressor) outside diameter, 1-5/8 in [m]
     t_suc: float = 0.001524     # suction line wall thickness [m]
     L_suc: float = 4.0          # suction line length; the suction temperature probe is at its end [m]
+    K_suc: float = 1.2          # suction line fittings loss (bends; estimate) [velocity heads]
     D_drn: float = 0.022225     # condensate drain (condenser -> receiver) outside diameter, 7/8 in [m]
     t_drn: float = 0.001143     # condensate drain wall thickness [m]
     L_drn: float = 0.5          # condensate drain length (estimate) [m]
+    K_drn: float = 0.6          # condensate drain fittings loss (bends; estimate) [velocity heads]
     D_liq: float = 0.022225     # liquid line (receiver -> valve 3) outside diameter, 7/8 in [m]
     t_liq: float = 0.001143     # liquid line wall thickness [m]
     L_liq: float = 3.0          # liquid line length [m]
+    K_liq: float = 1.8          # liquid line fittings loss (dip tube, bends; filter-drier or sight glass would add; estimate) [velocity heads]
 
     # -------------------------------------------------------------- charge
     charge: float | None = None  # total refrigerant mass; empty = nominal charge for this stand [kg]
@@ -128,6 +137,32 @@ class PlantParams:
     mx_UA_a: float = 2.0        # mixing exchanger -> ambient conductance (insulated) [W/K]
     tee_tau_evap: float = 0.3   # evaporation time constant of liquid droplets from the quench outlet in the gas downstream of the tee [s]
 
+    # ------------------------------------------------------- pressure drops
+    # The condenser sides and the mixing exchanger gas side are flow resistances sized like
+    # a valve: dP = (mdot / (Kv / 36000))^2 / rho_m, plates and ports together, with the
+    # side's mean density rho_m (two-phase: homogeneous).  The evaporating quench side is
+    # computed from the plate geometry below.  Estimated from the ACH-70X geometry
+    # (docs/PRESSURE_DROP.md).  The refrigerant sides add the static head of
+    # their column over the port height; the cooling water circuit is closed, so its
+    # static heads cancel.
+    cond_Kv_r: float = 10.5     # condenser refrigerant side (header -> drain) flow coefficient [m^3/h]
+    cond_Kv_w: float = 21.0     # condenser water side flow coefficient [m^3/h]
+    cond_H: float = 0.466       # condenser port height (inlet to outlet port centres) [m]
+    mx_Kv_g: float = 23.5       # mixing exchanger gas side (S1 -> S2) flow coefficient [m^3/h]
+    # quench side (S3 -> S4) from the plate geometry: distributor and ports, then every cell's
+    # friction (two-phase Amalfi et al. 2016, vapor / liquid Martin), acceleration and static head
+    mx_Kv_dist: float = 4.0     # S3 refrigerant distributor, ahead of the channels (estimate: about 1 bar at the unit's 0.4 kg/s design flow) [m^3/h]
+    mx_beta: float = 45.0       # mixing exchanger corrugation angle to the flow (M channels: one high- and one low-angle plate) [deg]
+    mx_b: float = 2.0e-3        # mixing exchanger channel gap (pressing depth) [m]
+    mx_W: float = 0.090         # mixing exchanger effective channel width [m]
+    mx_phi: float = 1.17        # mixing exchanger plate surface enlargement factor (hydraulic diameter 2 b / phi)
+    mx_d_port: float = 0.0315   # mixing exchanger port bore [m]
+    mx_d_S34: float = 0.020     # mixing exchanger S3 / S4 connection bore (7/8 in) [m]
+    mx_H: float = 0.466         # mixing exchanger port height (S1/S4 to S2/S3 port centres) [m]
+    P_w_sup: float = 1.5e5      # cooling water supply pressure, gauge [Pa]
+    P_w_ret: float = 0.35e5     # cooling water return pressure, gauge; supply minus return drives the water through valve 4, the piping and the condenser [Pa]
+    Kv_wpipe: float = 12.0      # cooling water piping, fittings and strainer between supply and return, outside valve 4 and the condenser (estimate) [m^3/h]
+
     # ------------------------------------------------------------ pipe walls
     UA_sg: float = 40.0         # suction line wall -> refrigerant conductance [W/K]
     UA_sa: float = 6.0          # suction line wall -> ambient conductance (insulated) [W/K]
@@ -158,7 +193,6 @@ class PlantParams:
     w_R: float = 30.0           # valve 4 rangeability (largest / smallest controllable flow), used by eqpct
     tau_w: float = 2.0          # valve 4 actuator time constant [s]
     rate_w: float = 0.1         # valve 4 actuator stroke speed limit, full strokes per second [1/s]
-    P_w_sup: float = 1.5e5      # cooling water supply pressure across valve 4 [Pa]
     xT: float = 0.70            # gas valve pressure-drop ratio at which the flow chokes (ISA xT)
     eps_valve: float = 2e3      # numerical smoothing of valve flow near zero pressure drop [Pa]
     f_choke_liq: float = 0.7    # largest effective pressure-drop ratio for flashing liquid in valve 3 (liquid choking)
@@ -282,7 +316,7 @@ def liquid_volume_for_level(p, level):
 # ---------------------------------------------------------------- metadata
 _GROUPS = [
     ("fluid", "Refrigerant"), ("V_disp", "Compressor"), ("D_dis", "Piping"), ("charge", "Charge"),
-    ("cond_n_plates", "Condenser"), ("rec_V", "Receiver"), ("mx_n_plates", "Mixing exchanger"),
+    ("cond_n_plates", "Condenser"), ("rec_V", "Receiver"), ("mx_n_plates", "Mixing exchanger"), ("cond_Kv_r", "Pressure drops"),
     ("UA_sg", "Pipe walls"), ("Kv_dpv", "Valves"), ("tau_T", "Sensors"), ("P_d_max", "Safety limits"),
     ("dP_i_margin", "Baseline control"),
 ]
@@ -297,12 +331,17 @@ _REQUIRE_INIT = {"fluid", "charge", "cold_liquid_in_suction", "V_comp_suc", "V_c
 _RANGES: dict[str, tuple[float, float]] = {
     "Kv_dpv": (0.01, 200.0), "Kv_spv": (0.01, 200.0),
     "Kv_stv": (0.01, 200.0), "Kv_w": (0.01, 200.0),
-    "P_w_sup": (0.2e5, 10e5),
+    "P_w_sup": (0.2e5, 10e5), "P_w_ret": (0.0, 9e5),
+    "cond_Kv_r": (0.1, 500.0), "cond_Kv_w": (0.1, 500.0), "mx_Kv_g": (0.1, 500.0), "mx_Kv_dist": (0.1, 500.0),
+    "mx_beta": (20.0, 70.0), "mx_b": (0.5e-3, 5e-3), "mx_W": (0.02, 0.5), "mx_phi": (1.0, 1.5),
+    "mx_d_port": (0.005, 0.2), "mx_d_S34": (0.005, 0.2),
+    "Kv_wpipe": (0.1, 500.0), "cond_H": (0.0, 2.0), "mx_H": (0.0, 2.0),
     "cond_n_plates": (4.0, 124.0), "mx_n_plates": (4.0, 124.0), "rec_dip": (0.0, 0.5),
     "cond_sc_film": (0.0, 0.5), "y_flood": (1e-4, 0.5), "tee_tau_evap": (0.01, 10.0), "comp_x_min": (0.0, 1.0),
     "V_comp_suc": (0.0, 0.1), "V_comp_dis": (0.0, 0.1), "rec_V": (1e-3, 1.0),
     **{f"{a}_{k}": (0.0, 0.2 if a != "L" else 50.0) for a in ("D", "t", "L")
        for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")},
+    **{f"K_{k}": (0.0, 100.0) for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")},
 }
 
 

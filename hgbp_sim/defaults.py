@@ -38,7 +38,7 @@ _SIMULATION = dict(speed_factor=1.0, noise=True, dt_ctrl=0.2, T_amb=25.0, T_wi=2
                    short_cycle_timers=True)
 _SIM_BOOLS = ("noise", "short_cycle_timers")
 _SIM_RANGES = dict(speed_factor=(0.1, 100.0), dt_ctrl=(0.1, 10.0), T_amb=(-20.0, 60.0), T_wi=(0.0, 50.0),
-                   charge_rate_g_s=(1.0, 50.0))
+                   charge_rate_g_s=(1.0, 250.0))
 
 _ABOUT = [
     "Defaults of the simulated test stand, read when the backend starts (restart to apply edits).",

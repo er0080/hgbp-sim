@@ -34,10 +34,14 @@ SAT_FIELDS = (
     "dT_l_dP", "dh_l_dP", "dh_v_dP", "drho_l_dP", "drho_v_dP",
     "dhmax_v", "dhmax_l",
 )
+# Saturation transport properties (functions of P on the same grid): liquid and
+# vapor viscosity [Pa s], surface tension [N/m]; used by the pressure drop correlations
+TR_FIELDS = ("mu_l", "mu_v", "sigma")
 # Single-phase region table fields
 REG_FIELDS = ("T", "rho", "s", "drho_dP", "drho_dh", "cp")
 
 _SI = {k: i for i, k in enumerate(SAT_FIELDS)}
+_TI = {k: i for i, k in enumerate(TR_FIELDS)}
 _RI = {k: i for i, k in enumerate(REG_FIELDS)}
 
 PHASE_LIQUID, PHASE_TWOPHASE, PHASE_VAPOR = 0, 1, 2
@@ -208,15 +212,32 @@ class RefrigerantTables:
         self._sat = sat
         self._vap = vap
         self._liq = liq
+        self._tr = self._transport_rows(P)
 
     # -------------------------------------------------------------- persistence
     def save(self, path: str) -> None:
         np.savez_compressed(
             path, lp=self._lp, zeta=self._zeta, sat=self._sat, vap=self._vap,
-            liq=self._liq,
+            liq=self._liq, tr=self._tr,
             meta=np.array([self.p_min, self.p_max, self.t_min, self.t_max,
                            self.T_crit, self.P_crit, self.M_molar]),
             fluid=np.array(self.fluid), backend=np.array(self.backend))
+
+    def _transport_rows(self, P, fluid: str | None = None):
+        """Viscosities and surface tension at saturation (CoolProp)."""
+        try:
+            import CoolProp.CoolProp as CP
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError("this property table has no transport properties; adding them "
+                              "requires CoolProp (pip install CoolProp)") from exc
+        AS = CP.AbstractState(self.backend, fluid or self.fluid)
+        tr = np.zeros((len(TR_FIELDS), len(P)))
+        for i, p in enumerate(P):
+            AS.update(CP.PQ_INPUTS, float(p), 0.0)
+            tr[_TI["mu_l"], i], tr[_TI["sigma"], i] = AS.viscosity(), AS.surface_tension()
+            AS.update(CP.PQ_INPUTS, float(p), 1.0)
+            tr[_TI["mu_v"], i] = AS.viscosity()
+        return tr
 
     def _load(self, path: str) -> None:
         d = np.load(path)
@@ -226,6 +247,8 @@ class RefrigerantTables:
         self._sat = d["sat"]
         self._vap = d["vap"]
         self._liq = d["liq"]
+        # tables saved before the transport rows were added: compute them now
+        self._tr = d["tr"] if "tr" in d.files else self._transport_rows(np.exp(d["lp"]), fluid=str(d["fluid"]))
         (self.p_min, self.p_max, self.t_min, self.t_max,
          self.T_crit, self.P_crit, self.M_molar) = (float(v) for v in d["meta"])
         self.n_p = len(self._lp)
@@ -295,6 +318,13 @@ class RefrigerantTables:
         i, w = self._pidx(P)
         v = self._sat_at(i, w)
         return {k: v[_SI[k]] for k in SAT_FIELDS}
+
+    def transport(self, P):
+        """Saturated liquid / vapor viscosity and surface tension at P (dict of arrays)."""
+        P = np.asarray(P, dtype=float)
+        i, w = self._pidx(P)
+        return {k: self._tr[_TI[k]].take(i) * (1.0 - w) + self._tr[_TI[k]].take(i + 1) * w
+                for k in TR_FIELDS}
 
     def T_sat(self, P):
         P = np.asarray(P, dtype=float)

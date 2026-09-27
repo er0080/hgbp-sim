@@ -53,11 +53,24 @@ def kv_to_C(Kv):
     return Kv * KV_TO_C
 
 
-def gas_valve_flow(C, P1, P2, rho1, rho2, kappa, xT, eps):
+def _series_share(C, rho_up, C_hx, rho_hx):
+    """Share of a series pair's pressure drop taken by the valve (coefficient
+    ``C`` at upstream density ``rho_up``), the rest by a resistance ``C_hx``
+    at density ``rho_hx``; both obey m = C sqrt(rho dP)."""
+    if C_hx is None:
+        return 1.0
+    r = C / np.maximum(C_hx, 1e-12)
+    return 1.0 / (1.0 + r * r * rho_up / np.maximum(rho_hx, 1e-9))
+
+
+def gas_valve_flow(C, P1, P2, rho1, rho2, kappa, xT, eps, C_hx=None, rho_hx=None):
     """Compressible flow through a valve/orifice (ISA-style with choking).
 
     Positive flow is from side 1 to side 2.  ``rho1``/``rho2`` are the
-    densities on each side; the upstream one is used.
+    densities on each side; the upstream one is used.  ``C_hx`` optionally
+    adds a resistance in series downstream (a heat exchanger side, density
+    ``rho_hx``): the pair shares ``P1 - P2``, and the valve chokes on its own
+    share of it.
     """
     dP = P1 - P2
     fwd = dP >= 0.0
@@ -66,25 +79,69 @@ def gas_valve_flow(C, P1, P2, rho1, rho2, kappa, xT, eps):
     Fk = kappa / 1.4
     x = np.abs(dP) / P_up
     x_ch = Fk * xT
-    x_eff = np.minimum(x, x_ch)
-    Y = 1.0 - x_eff / (3.0 * x_ch)
+    Y = 1.0 - np.minimum(x, x_ch) / (3.0 * x_ch)
+    share = 1.0
+    for _ in range(2 if C_hx is not None else 0):   # the valve's share and its expansion factor
+        share = _series_share(C * Y, rho_up, C_hx, rho_hx)
+        Y = 1.0 - np.minimum(x * share, x_ch) / (3.0 * x_ch)
+    share = _series_share(C * Y, rho_up, C_hx, rho_hx)
+    x_eff = np.minimum(x, x_ch / share)
     dPe = np.sign(dP) * x_eff * P_up
-    return C * Y * np.sqrt(rho_up) * regroot(dPe, eps)
+    return C * Y * np.sqrt(share * rho_up) * regroot(dPe, eps)
 
 
-def liquid_valve_flow(C, P1, P2, rho1, rho2, f_choke, eps):
-    """Incompressible/flashing flow through an expansion valve, signed."""
+def liquid_valve_flow(C, P1, P2, rho1, rho2, f_choke, eps, C_hx=None, rho_hx=None):
+    """Incompressible/flashing flow through an expansion valve, signed;
+    optionally with a series resistance ``C_hx`` as in :func:`gas_valve_flow`."""
     dP = P1 - P2
     fwd = dP >= 0.0
     P_up = np.where(fwd, P1, P2)
     rho_up = np.where(fwd, rho1, rho2)
-    dPe = np.sign(dP) * np.minimum(np.abs(dP), f_choke * P_up)
-    return C * np.sqrt(rho_up) * regroot(dPe, eps)
+    share = _series_share(C, rho_up, C_hx, rho_hx)
+    dPe = np.sign(dP) * np.minimum(np.abs(dP), f_choke * P_up / share)
+    return C * np.sqrt(share * rho_up) * regroot(dPe, eps)
+
+
+def martin_xi(Re, beta_deg):
+    """Single-phase Darcy friction factor of a chevron plate channel (Martin 1996,
+    VDI Heat Atlas): dP = xi L / d_h rho u^2 / 2; ``beta_deg`` is the corrugation
+    angle to the flow, d_h = 2 b / phi."""
+    Re = np.maximum(Re, 1e-6)
+    lam = Re < 2000.0
+    xi0 = np.where(lam, 64.0 / Re, (1.8 * np.log10(np.maximum(Re, 2000.0)) - 1.5) ** -2)
+    xi1 = np.where(lam, 597.0 / Re + 3.85, 39.0 / np.maximum(Re, 2000.0) ** 0.289)
+    be = np.radians(beta_deg)
+    c = np.cos(be)
+    inv = c / np.sqrt(0.18 * np.tan(be) + 0.36 * np.sin(be) + xi0 / c) + (1.0 - c) / np.sqrt(3.8 * xi1)
+    return inv ** -2
+
+
+def amalfi_ftp(G, d_h, rho_m, rho_l, rho_v, sigma, beta_deg):
+    """Two-phase Fanning friction factor of flow boiling in plate heat exchangers
+    (Amalfi, Vakili-Farahani & Thome 2016, 1513 points, 13 studies):
+    dP = 2 f L G^2 / (d_h rho_m), rho_m the homogeneous density."""
+    We = np.maximum(G * G * d_h / (rho_m * sigma), 1e-12)
+    Bd = (rho_l - rho_v) * 9.81 * d_h * d_h / sigma
+    C = 2.125 * (beta_deg / 70.0) ** 9.993 + 0.955
+    return C * 15.698 * We ** -0.475 * Bd ** 0.255 * (rho_l / rho_v) ** -0.571
+
+
+def series_C(*Cs):
+    """Coefficient of flow resistances in series (same fluid density):
+    1 / C^2 = sum 1 / C_k^2.  A zero coefficient (closed valve) gives zero."""
+    inv = sum(1.0 / np.maximum(np.asarray(C, float), 1e-30) ** 2 for C in Cs)
+    return 1.0 / np.sqrt(inv)
+
+
+def hx_drop(mdot, C, rho):
+    """Signed friction pressure drop m |m| / (C^2 rho) of a heat exchanger side [Pa]."""
+    return mdot * np.abs(mdot) / (C * C * np.maximum(rho, 1e-9))
 
 
 def water_valve_flow(C, dP, rho):
-    """Cooling water through the condenser water valve: incompressible, never
-    flashing, and fed from a supply of fixed pressure ``dP`` above the drain."""
+    """Cooling water: incompressible, never flashing, driven by the fixed
+    supply-to-return pressure difference ``dP`` (``C`` may be the series
+    coefficient of the valve, the piping and the condenser, see :func:`series_C`)."""
     return C * np.sqrt(rho * np.maximum(dP, 0.0))
 
 
@@ -97,11 +154,28 @@ def counterflow_effectiveness(NTU, Cr):
     return np.where(d > 1e-6, eps, NTU / (1.0 + NTU))       # balanced limit Cr -> 1
 
 
-def line_flow(K, P1, P2, rho1, rho2, eps):
-    """Pipe/fitting resistance: m = K sqrt(rho dP), signed and regularized."""
-    dP = P1 - P2
-    rho_up = np.where(dP >= 0.0, rho1, rho2)
-    return K * np.sqrt(rho_up) * regroot(dP, eps)
+def churchill_f(Re, rel_rough):
+    """Darcy friction factor of a round pipe, all regimes (Churchill 1977)."""
+    Re = np.maximum(Re, 1.0)
+    A = (-2.457 * np.log((7.0 / Re) ** 0.9 + 0.27 * rel_rough)) ** 16
+    B = (37530.0 / Re) ** 16
+    return 8.0 * ((8.0 / Re) ** 12 + (A + B) ** -1.5) ** (1.0 / 12.0)
+
+
+def pipe_drop(mdot, d, L, K, rho, mu, rough=1.5e-6):
+    """Signed friction and fittings pressure drop of a round pipe of bore ``d``,
+    length ``L`` and fittings loss coefficient ``K`` (velocity heads) [Pa].
+    Two-phase flow is taken as homogeneous (``rho``, ``mu`` of the mixture)."""
+    A = 0.25 * np.pi * d * d
+    Re = np.abs(mdot) * d / (A * np.maximum(mu, 1e-7))
+    f = churchill_f(Re, rough / np.maximum(d, 1e-4))
+    return mdot * np.abs(mdot) / (2.0 * np.maximum(rho, 1e-6) * A * A) * (f * L / d + K)
+
+
+def mixture_viscosity(x, mu_l, mu_v):
+    """Homogeneous two-phase viscosity (McAdams); single phase outside 0 <= x <= 1."""
+    x = clip(x, 0.0, 1.0)
+    return 1.0 / (x / mu_v + (1.0 - x) / mu_l)
 
 
 # ---------------------------------------------------------------- actuator
