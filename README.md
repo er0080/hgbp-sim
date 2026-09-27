@@ -13,9 +13,9 @@ controllers that automate compressor performance testing.
 * total refrigerant **charge is a parameter**: undercharged and overcharged stands behave
   differently (receiver level, loss of the liquid seal, condenser flooding and loss of
   condensing area, subcooling, quench liquid reaching the compressor)
-* fully **vectorized**: thousands of stands integrate in lock-step with numpy
-  (about 1 000 control steps / s at 1024 parallel environments on a laptop; the live
-  stand runs 10-20 times faster than real time)
+* **compiled** (numba): the live stand runs about 250 times faster than real time, and a
+  batch of stands integrates in parallel on all cores (about 16 000 environment steps per
+  second at 256 environments on an 8-core laptop; see [Performance](#performance))
 * `gymnasium`-compatible single environment plus a batched environment for
   high-throughput training, with refrigerant-agnostic observations (saturation
   temperatures, normalized flow and power, compressor and refrigerant context), an
@@ -63,12 +63,16 @@ The compressor speed follows the test schedule (an exogenous input). A test poin
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"          # numpy + CoolProp + gymnasium + matplotlib + pytest
-pytest                            # ~7 min
+pip install -e ".[dev]"          # numpy + numba + CoolProp + gymnasium + matplotlib + pytest
+python -m hgbp_sim.kernel.warmup  # compile the model once (1-2 min; cached afterwards)
+pytest                            # ~1 min
 ```
 
-Only `numpy` is required at run time. Prebuilt R410A (the default) and R134a property
-tables ship with the package (`hgbp_sim/data/`). Any other CoolProp fluid (`R404A`,
+Only `numpy` and `numba` are required at run time. The model is compiled on first use
+and the machine code is cached next to the sources (`__pycache__`), so only the first
+run after installing (or after changing the kernel) pays the compile time;
+`python -m hgbp_sim.kernel.warmup` does it ahead. Prebuilt R410A (the default) and R134a
+property tables ship with the package (`hgbp_sim/data/`). Any other CoolProp fluid (`R404A`,
 `R32`, `R290`, `R1234yf`, ...) is tabulated on first use (needs CoolProp, takes a few
 seconds, cached in `~/.cache/hgbp_sim/`).
 
@@ -118,7 +122,7 @@ Examples (`examples/`):
 | `open_loop_step.py` | +10 % step on each valve from a steady point (shows MIMO coupling) |
 | `collect_dataset.py` | expert + exploration noise data from the batched env -> `.npz` |
 | `train_bc.py` | behaviour-cloning MLP (PyTorch) and closed-loop evaluation vs expert |
-| `benchmark.py` | throughput vs batch size |
+| `benchmark.py` | speed of the live stand, the batched environment vs batch size, the steady-state solver |
 
 ## Example runs
 
@@ -210,10 +214,10 @@ cd webui/frontend && npm install && npm run dev              # UI on http://loca
 ```
 
 The image builds natively on x86-64 (Intel/AMD) and arm64 hosts: both base images are
-multi-architecture and every Python dependency (numpy, CoolProp, FastAPI) ships wheels for
-both. To build an x86-64 image on an Apple Silicon machine for an Intel target, add
-`--platform linux/amd64` to `docker build` (or `platform: linux/amd64` to the compose
-service).
+multi-architecture and every Python dependency (numpy, numba, CoolProp, FastAPI) ships wheels
+for both. The image compiles the model at build time. To build an x86-64 image on an
+Apple Silicon machine for an Intel target, add `--platform linux/amd64` to `docker build`
+(or `platform: linux/amd64` to the compose service).
 
 The engine behind the UI is `hgbp_sim.live.LiveStand` (one plant, four PID loops with
 bumpless auto/manual transfer, the same start/stop interlock as the training
@@ -222,14 +226,55 @@ also be scripted directly. As on the real stand, the third loop controls the suc
 *temperature* (setpoint in degC; a warm start derives it from the test point's
 superheat), whereas the training environment's baseline expert works on superheat. The backend (`webui/backend/app.py`) exposes a small REST API
 (`/api/state`, `/api/loop/{name}` (mode, sp, out, P, I, D), `/api/compressor`, `/api/sim`, `/api/init`,
-`/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`) and streams one
-snapshot per control step on `/ws`.
+`/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`) and streams the latest
+snapshot with the new history rows on `/ws` (after every control step, at most ten
+messages per second: at high speed factors one message covers several steps).
+
+## Performance
+
+The model is compiled with [numba](https://numba.pydata.org) (`hgbp_sim/kernel/`): the
+right-hand side, the conservation projection, the step size control, the integrator and
+the steady-state solver are scalar code for one stand, and a batch of stands runs in
+parallel over the CPU cores, each stand with its own step size. `examples/benchmark.py`
+measures it; on an 8-core laptop (Xeon W-10885M, 16 threads):
+
+| | numpy model (before) | compiled |
+|---|---|---|
+| live stand (web UI engine, one stand with its PID loops) | 2-4 x real time | about 250 x real time |
+| training environment, 16 stands, baseline controller | 35 env-steps/s | about 4 700 env-steps/s |
+| training environment, 256 stands | 150 env-steps/s | about 16 000 env-steps/s (4 000 simulated s per s) |
+| training environment, 1024 stands | | about 21 000 env-steps/s |
+| creating and resetting 256 stands (steady-state solves) | about 5 min | under 2 s |
+| steady-state solve, one stand | 2.5-4.5 s | about 10-20 ms |
+| test suite | about 27 min | about 1 min |
+
+For training:
+* Run one `HGBPVecEnv` with many stands per process rather than many processes with
+  one stand each: the batch runs in parallel on numba's thread pool, whose size is
+  `NUMBA_NUM_THREADS` (all cores by default). With several training processes on one
+  machine, give each a share (e.g. `NUMBA_NUM_THREADS=4`), or the cores are oversubscribed.
+* `hgbp_sim` selects numba's `workqueue` threading layer unless `NUMBA_THREADING_LAYER`
+  is set: the OpenMP layer keeps idle workers spinning between launches, which slows
+  down the Python code in between (environment logic, the learner). The workqueue
+  layer must not be launched from several Python threads at once. A single stand
+  (`n = 1`, e.g. the live stand) runs serially without the thread pool;
+  `HGBPPlant(parallel=...)` overrides the choice.
+* Episode resets solve the steady state for warm starts and check the schedule's test
+  points for feasibility; with the compiled solver that costs tens of milliseconds per
+  stand.
+
+`tests/test_reference.py` checks the model against reference data
+(`tests/reference/reference.npz`): the right-hand side at a set of recorded states (to
+rounding), trajectories of six scenarios (cold start, test points, speed step, charge
+recovery, floodback, trip, a randomized batch) and steady-state solves. After an
+intentional change of the physics, regenerate it with
+`python tests/reference/make_reference.py`.
 
 ## Model
 
 ### Refrigerant properties (`properties.py`)
 CoolProp is far too slow inside an ODE right-hand side, so properties come from
-bilinear interpolation tables aligned with the saturation dome (superheated and
+(compiled) bilinear interpolation in tables aligned with the saturation dome (superheated and
 subcooled regions in `(log P, zeta)` coordinates, two-phase analytic). Accuracy vs
 CoolProp for R134a: temperature < 0.04 K, density < 0.1 %. The tables also provide the
 partial derivatives `drho/dP|h`, `drho/dh|P` needed by the volume balances, and the
@@ -305,7 +350,8 @@ volumes take at least four sub-steps. Mass and internal energy of every volume (
 suction side as one group) are integrated as conserved states, and after every sub-step
 (P, h) are projected back onto them: the total charge is conserved to machine
 precision, and overcharging until the condenser floods drives the pressure up until the
-discharge-pressure trip, as on a real stand.
+discharge-pressure trip, as on a real stand. Sub-stepping is decided per stand: in a
+batch, one stiff stand does not slow the others.
 
 ## Environment (`env.py`)
 
@@ -417,12 +463,15 @@ MIT, see `LICENSE`.
 
 ```
 hgbp_sim/
-  properties.py    tabulated refrigerant properties (build from CoolProp, cached)
+  properties.py    tabulated refrigerant properties (build from CoolProp, cached; compiled lookups)
   params.py        PlantParams dataclass, randomization, nominal charge
   geometry.py      volumes and heat capacities from the component and piping specification
-  components.py    valves, actuators, compressor map, control-volume balance
-  plant.py         HGBPPlant: batched ODE model, integrator, cold start, sensors, trips
-  steady_state.py  batched equilibrium solver (charge- or receiver-level-constrained)
+  components.py    valves, actuators, compressor map, flow resistances, control-volume balance
+  plant.py         HGBPPlant: batch of stands (states, parameters, inputs), cold start, sensors, trips
+  steady_state.py  equilibrium solver (charge- or receiver-level-constrained)
+  kernel/          the compiled model: props.py (property lookups), model.py (right-hand side,
+                   projection, step control, integrator), steady.py (equilibrium solver),
+                   layout.py (state, parameter and output layouts), warmup.py
   control.py       PID and 4-loop BaselineController
   scenarios.py     operating envelope, named points, schedules
   env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium)
@@ -439,5 +488,6 @@ docs/              STAND_MODEL.md: the stand model (receiver, mixing exchanger, 
                    PRESSURE_DROP.md: exchanger and line pressure drops and their estimate;
                    SUCTION_MIXER_ANALYSIS.md: review of the former suction tank model (superseded)
 examples/          closed-loop, open-loop, dataset, behaviour cloning, benchmark
-tests/             property accuracy, conservation, charge effects, steady state, controllers, env API
+tests/             property accuracy, conservation, charge effects, steady state, controllers, env API;
+                   reference/: reference trajectories and states the model is checked against
 ```

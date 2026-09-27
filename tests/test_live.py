@@ -1,7 +1,7 @@
 import numpy as np
 
 from hgbp_sim.interlock import ST_OFF, ST_RUNNING, ST_STARTING, ST_STOPPING, Interlock
-from hgbp_sim.live import LiveStand
+from hgbp_sim.live import HISTORY_CHANNELS, LiveStand
 
 
 def test_interlock_sequence():
@@ -137,3 +137,28 @@ def test_shipped_defaults_hold_their_setpoints():
         assert abs(s["loops"][k]["pv"] - L[k]["SP"]) < 0.05, k
     assert abs(s["loops"]["stv"]["pv"] - L["stv"]["SP"]) < 0.2
     assert s["meas"]["SC"] > 0.0 and s["meas"]["T_co"] >= s["meas"]["T_wi"] - 0.5
+
+
+def test_incremental_history_rows():
+    """The UI stream takes each history row exactly once, however far it falls behind,
+    and resumes after the last row a client holds; past the history length only the
+    rows still held come back."""
+    st = LiveStand(history_len=50)
+    st.cold_start()
+    count = st.rows_recorded
+    got = []
+    for burst in (1, 3, 7):
+        for _ in range(burst):
+            st.step()
+        rows, count = st.rows_after(count)
+        got += rows["t"]
+        assert set(rows) == set(HISTORY_CHANNELS) and all(len(v) == len(rows["t"]) for v in rows.values())
+    assert np.allclose(np.diff(got), st.dt_ctrl) and got[-1] == st.t
+    assert st.rows_after(count) == ({}, count)
+    t_mid = got[5]
+    rows, _ = st.rows_after(st.rows_through(t_mid))
+    assert rows["t"] == got[6:]
+    for _ in range(80):                        # beyond the history length
+        st.step()
+    rows, count = st.rows_after(count)
+    assert len(rows["t"]) == 50 and rows["t"][-1] == st.t

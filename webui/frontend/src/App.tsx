@@ -37,7 +37,7 @@ export default function App() {
             <span className="clock">{hms(snap.t)}</span>
             <label className="note">speed</label>
             <select value={snap.speed_factor} onChange={(e) => setSpeed(Number(e.target.value))}>
-              {[0.5, 1, 2, 5, 10, 20, 50].map((v) => (
+              {[0.5, 1, 2, 5, 10, 20, 50, 100].map((v) => (
                 <option key={v} value={v}>{v}x</option>
               ))}
             </select>

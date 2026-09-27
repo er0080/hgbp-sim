@@ -21,6 +21,7 @@ dist/
 datasets/
 *.npz
 !hgbp_sim/data/*.npz
+!tests/reference/*.npz
 *.pt
 *.pth
 *.log

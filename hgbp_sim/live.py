@@ -18,6 +18,7 @@ The engine is framework-agnostic (no web code here).  It owns
 from __future__ import annotations
 
 from collections import deque
+from itertools import islice
 
 import numpy as np
 
@@ -74,6 +75,7 @@ class LiveStand:
         self.dt_sim = float(dt_sim)
         self.rng = np.random.default_rng(seed)
         self.history_len = int(history_len)
+        self.rows_recorded = 0              # history rows recorded so far (keeps counting past history_len)
         self.noise = bool(sim["noise"])
         self.short_cycle_timers = bool(sim["short_cycle_timers"])
         self.speed_factor = float(sim["speed_factor"])
@@ -406,10 +408,29 @@ class LiveStand:
         )
         for k, v in row.items():
             self.history[k].append(float(v))
+        self.rows_recorded += 1
         self._last_row = row
 
     def last_row(self) -> dict:
         return dict(self._last_row)
+
+    def rows_after(self, count: int) -> tuple[dict, int]:
+        """History rows recorded after the first ``count`` rows (those still held),
+        and the new count.  Costs only the new rows, however long the history."""
+        k = min(self.rows_recorded - int(count), len(self.history["t"]))
+        if k <= 0:
+            return {}, self.rows_recorded
+        return {name: list(islice(reversed(dq), k))[::-1] for name, dq in self.history.items()}, self.rows_recorded
+
+    def rows_through(self, t0: float) -> int:
+        """Row count up to and including the last row with time <= ``t0`` (a
+        client that holds the history up to ``t0`` continues with :meth:`rows_after`)."""
+        newer = 0
+        for t in reversed(self.history["t"]):
+            if t <= t0:
+                break
+            newer += 1
+        return self.rows_recorded - newer
 
     def history_since(self, t0: float = -1.0, stride: int = 1, max_points: int | None = None) -> dict:
         """Rows with t > t0 (all rows if t0 < 0).  ``max_points`` picks a
@@ -424,6 +445,14 @@ class LiveStand:
             arr = np.fromiter(dq, float)[i0::stride]
             out[k] = arr.tolist()
         return out
+
+    def _nominal_charge(self) -> float:
+        """Nominal charge of the stand as built [kg] (follows the volumes: recomputed
+        when the plant's parameters are repacked, i.e. rebuilt or reassigned)."""
+        rec = self.plant.p.packed()
+        if getattr(self, "_nc_rec", None) is not rec:
+            self._nc_rec, self._nc = rec, float(self.plant.nominal_charge()[0])
+        return self._nc
 
     def snapshot(self, aux=None, meas=None, trips=None) -> dict:
         pl, p = self.plant, self.plant.p
@@ -489,7 +518,7 @@ class LiveStand:
                         high_P_d_warning=f(aux["P_d"]) > 0.9 * f(p.P_d_max)),
             limits=dict(P_d_max=f(p.P_d_max) / 1e5, P_s_min=f(p.P_s_min) / 1e5, P_s_max=f(p.P_s_max) / 1e5,
                         T_d_max=f(p.T_d_max) - C2K),
-            charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=f(pl.nominal_charge()),
+            charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=self._nominal_charge(),
                         pending_kg=self.charge_pending, rate_kg_s=self.charge_rate),
             pending_params=sorted(self.pending_params),
             events=list(self.events)[:30],

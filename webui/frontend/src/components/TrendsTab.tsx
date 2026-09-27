@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { History, Snapshot } from "../types";
 import UPlotChart, { SeriesDef } from "./UPlotChart";
 
@@ -35,10 +35,13 @@ export default function TrendsTab({ history, version, snap }: { history: React.M
   const [windowS, setWindowS] = useState(900);
   const [frozen, setFrozen] = useState(false);
   const [shown, setShown] = useState(0);
-  // throttle chart updates to ~5 Hz
+  const lastDraw = useRef(0);
+  // redraw the charts at most every 250 ms, always with the newest data (a throttle: new
+  // data keeps the pending redraw at its time instead of postponing it)
   useEffect(() => {
     if (frozen) return;
-    const id = window.setTimeout(() => setShown(version), 200);
+    const wait = Math.max(0, lastDraw.current + 250 - Date.now());
+    const id = window.setTimeout(() => { lastDraw.current = Date.now(); setShown(version); }, wait);
     return () => clearTimeout(id);
   }, [version, frozen]);
   return (

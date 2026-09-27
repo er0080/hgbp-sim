@@ -245,9 +245,42 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
 }
 
 
-def params_to_arrays(p: PlantParams, n: int) -> SimpleNamespace:
+class ParamSet(SimpleNamespace):
+    """Per-environment parameter namespace (arrays of shape (n,), plus the
+    derived volumes of :func:`hgbp_sim.geometry.derive`).
+
+    :meth:`packed` returns the values as one structured array, the form the
+    compiled model takes.  Packing rebinds the namespace's arrays to views
+    into that record, so in-place edits (``p.charge[idx] = ...``) reach the
+    model directly; assigning an attribute repacks at the next use."""
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("_"):
+            self.__dict__["_rec"] = None
+
+    def __reduce__(self):
+        # a copy packs its own record (views into this one would come back as copies)
+        return type(self), (), {k: v for k, v in self.__dict__.items() if k != "_rec"}
+
+    def packed(self) -> np.ndarray:
+        rec = self.__dict__.get("_rec")
+        if rec is None:
+            from .kernel.layout import CHAR_FIELDS, pack
+            rec = pack(self)
+            d = self.__dict__
+            for name in rec.dtype.names:
+                if name.startswith("V_line_"):
+                    d["V_lines"][name[7:]] = rec[name]
+                elif name not in CHAR_FIELDS.values():
+                    d[name] = rec[name]
+            d["_rec"] = rec
+        return rec
+
+
+def params_to_arrays(p: PlantParams, n: int) -> ParamSet:
     """Broadcast scalar parameters to arrays of shape (n,)."""
-    ns = SimpleNamespace()
+    ns = ParamSet()
     for f in fields(p):
         v = getattr(p, f.name)
         if isinstance(v, (str, bool)) or v is None:
@@ -258,7 +291,7 @@ def params_to_arrays(p: PlantParams, n: int) -> SimpleNamespace:
 
 
 def randomize_params(p: PlantParams, n: int, rng: np.random.Generator,
-                     spec: dict[str, float] | None = None) -> SimpleNamespace:
+                     spec: dict[str, float] | None = None) -> ParamSet:
     """Per-environment log-uniform perturbation of numeric parameters.
 
     ``spec`` maps field name -> relative half-width (e.g. 0.2 means the value
