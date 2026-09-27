@@ -226,8 +226,9 @@ also be scripted directly. As on the real stand, the third loop controls the suc
 *temperature* (setpoint in degC; a warm start derives it from the test point's
 superheat), whereas the training environment's baseline expert works on superheat. The backend (`webui/backend/app.py`) exposes a small REST API
 (`/api/state`, `/api/loop/{name}` (mode, sp, out, P, I, D), `/api/compressor`, `/api/sim`, `/api/init`,
-`/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`) and streams one
-snapshot per control step on `/ws`.
+`/api/params`, `/api/charge`, `/api/history`, `/api/export.csv`) and streams the latest
+snapshot with the new history rows on `/ws` (after every control step, at most ten
+messages per second: at high speed factors one message covers several steps).
 
 ## Performance
 

@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import uPlot from "uplot";
 import type { History } from "../types";
 
+const MAX_DRAW = 4000;
+
 export interface SeriesDef { key: string; label: string; color: string; dash?: number[]; width?: number }
 
 function fmtTime(v: number) {
@@ -25,8 +27,16 @@ export default function UPlotChart({ title, series, history, version, windowS, u
       i0 = t.findIndex((v) => v >= tmin);
       if (i0 < 0) i0 = 0;
     }
-    const xs = t.slice(i0);
-    const ys = series.map((s) => (h[s.key] ?? []).slice(i0).map((v) => (Number.isFinite(v) ? v : null)));
+    // draw at most about MAX_DRAW points per series (every k-th sample, always the newest)
+    const k = Math.max(1, Math.ceil((n - i0) / MAX_DRAW));
+    const idx: number[] = [];
+    for (let i = n - 1; i >= i0; i -= k) idx.push(i);
+    idx.reverse();
+    const xs = idx.map((i) => t[i]);
+    const ys = series.map((s) => {
+      const a = h[s.key] ?? [];
+      return idx.map((i) => (Number.isFinite(a[i]) ? a[i] : null));
+    });
     return [xs, ...ys] as uPlot.AlignedData;
   };
 

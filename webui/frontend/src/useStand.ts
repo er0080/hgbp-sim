@@ -3,6 +3,7 @@ import { api } from "./api";
 import type { History, Snapshot } from "./types";
 
 const MAX_POINTS = 60000;
+const TRIM_SLACK = 5000;       // trim the buffer in chunks, not on every message
 
 export function useStand() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -20,8 +21,11 @@ export function useStand() {
         history.current = h;
         setHistVersion((v) => v + 1);
       } catch { /* backend not ready yet */ }
+      // the stream continues after the last row we hold (no gap, no overlap)
+      const tHeld = history.current.t ?? [];
+      const since = tHeld.length ? `?since=${tHeld[tHeld.length - 1]}` : "";
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws = new WebSocket(`${proto}://${location.host}/ws${since}`);
       ws.onopen = () => setConnected(true);
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
@@ -38,7 +42,7 @@ export function useStand() {
             if (!h[k]) h[k] = [];
             const arr = h[k];
             for (const v of rows[k]) arr.push(v);
-            if (arr.length > MAX_POINTS) arr.splice(0, arr.length - MAX_POINTS);
+            if (arr.length > MAX_POINTS + TRIM_SLACK) arr.splice(0, arr.length - MAX_POINTS);
           }
           setHistVersion((v) => v + 1);
         }

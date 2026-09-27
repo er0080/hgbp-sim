@@ -2,8 +2,8 @@
 
 Runs one :class:`hgbp_sim.live.LiveStand` in a background thread at
 ``dt_ctrl / speed_factor`` wall-clock intervals, exposes a small REST API for
-operator actions and settings, streams a snapshot per control step over a
-WebSocket, and serves the built React frontend.
+operator actions and settings, streams snapshots and history rows over a
+WebSocket (at most 10 messages per second), and serves the built React frontend.
 
     uvicorn webui.backend.app:app --host 0.0.0.0 --port 8000
 
@@ -23,7 +23,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -37,6 +37,8 @@ STATIC_DIR = os.environ.get(
 
 class Runner(threading.Thread):
     """Steps the stand in real time (scaled by ``speed_factor``)."""
+    HOLD_MAX = 0.02          # longest the runner holds the lock at a time [s]
+    YIELD = 0.002            # shortest pause between two holds, for requests and the stream [s]
 
     def __init__(self, stand: LiveStand):
         super().__init__(daemon=True)
@@ -44,28 +46,36 @@ class Runner(threading.Thread):
         self.lock = threading.Lock()
         self.stop_flag = False
         self.snapshot = stand.snapshot()
-        self.row = stand.last_row() if hasattr(stand, "_last_row") else None
 
     def run(self) -> None:
         next_t = time.monotonic()
+        t_prev = next_t
         while not self.stop_flag:
             st = self.stand
             if st.paused:
                 time.sleep(0.05)
-                next_t = time.monotonic()
+                next_t = t_prev = time.monotonic()
                 continue
-            t0 = time.monotonic()
+            # steps due by now (at least one), several per hold when the schedule runs
+            # ahead of the stand; the lock is released every HOLD_MAX so that operator
+            # requests and the stream are served at any speed
+            steps = 0
             with self.lock:
-                self.snapshot = st.step()
-                self.row = st.last_row()
-            next_t += st.dt_ctrl / st.speed_factor
-            delay = next_t - time.monotonic()
-            if delay <= 0:
-                next_t = time.monotonic()      # cannot keep up: run flat out ...
-            # ... but always yield, so that requests get the lock and the GIL
-            time.sleep(max(delay, 0.002))
+                t_hold = time.monotonic()
+                while True:
+                    self.snapshot = st.step()
+                    steps += 1
+                    next_t += st.dt_ctrl / st.speed_factor
+                    now = time.monotonic()
+                    if next_t > now or now - t_hold > self.HOLD_MAX or st.paused:
+                        break
+            if next_t < now - 0.5:
+                next_t = now                   # far behind: the stand runs flat out, drop the backlog
+            time.sleep(max(next_t - time.monotonic(), self.YIELD))
             # achieved simulation speed (simulated seconds per wall second), smoothed
-            rate = st.dt_ctrl / max(time.monotonic() - t0, 1e-6)
+            now = time.monotonic()
+            rate = steps * st.dt_ctrl / max(now - t_prev, 1e-6)
+            t_prev = now
             st.achieved_speed = 0.9 * st.achieved_speed + 0.1 * rate if st.achieved_speed else rate
 
 
@@ -207,7 +217,8 @@ def post_charge(cmd: ChargeCmd):
 @app.get("/api/history")
 def get_history(since: float = -1.0, stride: int = 1, max_points: int = 15000):
     with runner.lock:
-        return stand.history_since(since, max(1, stride), max_points=max(100, max_points))
+        h = stand.history_since(since, max(1, stride), max_points=max(100, max_points))
+    return JSONResponse(h)          # plain lists of floats: no need for FastAPI's generic encoder
 
 
 @app.get("/api/export.csv")
@@ -224,23 +235,31 @@ def export_csv():
                              headers={"Content-Disposition": "attachment; filename=hgbp_stand.csv"})
 
 
+WS_INTERVAL = 0.1        # shortest interval between two messages to a client [s]
+
+
 @app.websocket("/ws")
-async def ws(websocket: WebSocket):
-    """One message per control step when the client keeps up; otherwise the
-    message carries every history row produced since the last message so the
-    client's trend buffer stays complete at high speed factors."""
+async def ws(websocket: WebSocket, since: float | None = None):
+    """The latest snapshot after every control step, at most every
+    ``WS_INTERVAL`` (at high speed factors one message covers several steps),
+    with every history row recorded since the previous message.  ``since``: the
+    time of the last history row the client already holds (from /api/history);
+    without it the stream starts with the rows recorded from now on."""
     await websocket.accept()
-    last_step, last_t = -1, -1.0
+    with runner.lock:
+        count = stand.rows_recorded if since is None else stand.rows_through(since)
+    last_step = -1
     try:
         while True:
             snap = runner.snapshot
-            if snap["step"] != last_step:
-                with runner.lock:
-                    rows = stand.history_since(last_t) if last_t >= 0 else stand.history_since(snap["t"] - 1e-9)
-                last_step, last_t = snap["step"], snap["t"]
-                await websocket.send_json({"type": "step", "data": snap, "rows": rows})
-            else:
+            if snap["step"] == last_step:
                 await asyncio.sleep(0.02)
+                continue
+            with runner.lock:                  # costs only the new rows
+                rows, count = stand.rows_after(count)
+            last_step = snap["step"]
+            await websocket.send_json({"type": "step", "data": snap, "rows": rows})
+            await asyncio.sleep(WS_INTERVAL)
     except WebSocketDisconnect:
         pass
 
