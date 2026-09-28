@@ -142,7 +142,7 @@ class PlantParams:
     # a valve: dP = (mdot / (Kv / 36000))^2 / rho_m, plates and ports together, with the
     # side's mean density rho_m (two-phase: homogeneous).  The evaporating quench side is
     # computed from the plate geometry below.  Estimated from the ACH-70X geometry
-    # (docs/PRESSURE_DROP.md).  The refrigerant sides add the static head of
+    # (docs/pressure-drop.md).  The refrigerant sides add the static head of
     # their column over the port height; the cooling water circuit is closed, so its
     # static heads cancel.
     cond_Kv_r: float = 10.5     # condenser refrigerant side (header -> drain) flow coefficient [m^3/h]

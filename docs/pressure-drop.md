@@ -1,16 +1,18 @@
 # Pressure drops: plate heat exchangers and refrigerant lines
 
-2026-09-24, refrigerant lines added 2026-09-27. How the model treats the four sides of the two brazed plate
-heat exchangers (condenser and mixing exchanger, both Alfa Laval ACH-70X-78M-F) and the refrigerant lines
-as flow resistances, where the default coefficients come from, and what they change.
+How the model treats the four sides of the two brazed plate heat exchangers (condenser and
+mixing exchanger, both Alfa Laval ACH-70X-78M-F) and the refrigerant lines as flow
+resistances, where the default coefficients come from, and what they change.
 
 ## 1. Model
 
 Each side is a quasi-steady resistance sized like a valve, for plates and ports together:
 
-    dP_friction = (mdot / C)^2 / rho_m,        C = Kv / 36000
+```math
+\Delta P_\mathrm{friction} = \frac{1}{\rho_m} \left( \frac{\dot m}{C} \right)^2, \qquad C = \frac{K_v}{36000}
+```
 
-`rho_m` is the side's mean density. For two-phase sides it is the homogeneous mixture density,
+$`\rho_m`$ is the side's mean density. For two-phase sides it is the homogeneous mixture density,
 averaged over the specific volume along the side. Refrigerant sides also carry the static head of
 their column over the port height `H` (`cond_H`, `mx_H`, 0.466 m). The cooling water circuit is
 closed, so its static heads cancel and are not modelled.
@@ -21,13 +23,19 @@ is unchanged.
 
 | Side | Flow | Treatment |
 |---|---|---|
-| Condenser, refrigerant (header -> drain, downward) | condensing flow `Q_r / (h_d - h_l)` | The liquid pressure `P_i` is measured after the receiver, ahead of valve 3, and taken as the condenser outlet pressure. The hot gas header (valve 1 outlet, valve 2 inlet) sits at `P_h = P_i + friction - g H rho_col`. `rho_col` weights liquid (flooded area), the homogeneous column mean (condensing area) and vapor (the rest). Friction acts on the non-flooded share. |
-| Condenser, water | `mdot_w` | Plant loop at 1.5 barg supply and 0.35 barg return (`P_w_sup`, `P_w_ret`). The 1.15 bar difference drives the water through valve 4, the condenser and the piping (`Kv_wpipe`) in series: `1/C^2 = 1/C_valve^2 + 1/C_hx^2 + 1/C_pipe^2`. |
+| Condenser, refrigerant (header -> drain, downward) | condensing flow `Q_r / (h_d - h_l)` | The liquid pressure `P_i` is measured after the receiver, ahead of valve 3, and taken as the condenser outlet pressure. The hot gas header (valve 1 outlet, valve 2 inlet) sits at $`P_h = P_i + \Delta P_\mathrm{friction} - g H \rho_\mathrm{col}`$. `rho_col` weights liquid (flooded area), the homogeneous column mean (condensing area) and vapor (the rest). Friction acts on the non-flooded share. |
+| Condenser, water | `mdot_w` | Plant loop at 1.5 barg supply and 0.35 barg return (`P_w_sup`, `P_w_ret`). The 1.15 bar difference drives the water through valve 4, the condenser and the piping (`Kv_wpipe`) in series: $`1/C^2 = 1/C_\mathrm{valve}^2 + 1/C_\mathrm{hx}^2 + 1/C_\mathrm{pipe}^2`$. |
 | Mixing exchanger, gas (S1 bottom -> S2 top, upward) | `mdot_2` | Valve 2 discharges into the gas side in series (below). S1 sits above S2 by the friction drop plus the head of the rising gas column. Gas density is the mean of the bypass gas at `P_s` and saturated vapor. |
-| Mixing exchanger, quench (S3 top -> S4 bottom, downward) | `mdot_3` | Computed from the plate geometry, not a Kv (section 2b). In flow order: distributor, S3 connection and port; then each of the five cells with its own friction (two-phase or single-phase by its quality), acceleration and static head; then the S4 port and connection. Each cell boils at its own pressure: its saturation temperature is shifted by `dT/dP` (Clausius-Clapeyron at `P_s`) times its offset. The distributor and inlet port are ahead of the channels and do not raise the boiling pressure. The cells' mass and energy stay at `P_s`, so conservation is unchanged. |
+| Mixing exchanger, quench (S3 top -> S4 bottom, downward) | `mdot_3` | Computed from the plate geometry, not a Kv (section 3). In flow order: distributor, S3 connection and port; then each of the five cells with its own friction (two-phase or single-phase by its quality), acceleration and static head; then the S4 port and connection. Each cell boils at its own pressure: its saturation temperature is shifted by `dT/dP` (Clausius-Clapeyron at `P_s`) times its offset. The distributor and inlet port are ahead of the channels and do not raise the boiling pressure. The cells' mass and energy stay at `P_s`, so conservation is unchanged. |
 
-**Valves in series with a side (and with their lines, section 2c).** The pair shares the pressure difference in the ratio of
-their resistances. The valve takes the share `1 / (1 + (C_valve / C_hx)^2 rho_up / rho_hx)`. It chokes
+**Valves in series with a side (and with their lines, section 4).** The pair shares the pressure difference in the ratio of
+their resistances. The valve takes the share
+
+```math
+\frac{1}{1 + \left( C_\mathrm{valve} / C_\mathrm{hx} \right)^2 \rho_\mathrm{up} / \rho_\mathrm{hx}}
+```
+
+of the difference. It chokes
 on its own share, so a choked valve passes the same flow with or without the exchanger behind it. For
 valve 2 the expansion factor `Y` is evaluated at the valve's own share of the pressure ratio (two fixed-point
 passes). Closed-form, no iteration over the plant state. The quench side's drop is not quadratic
@@ -49,7 +57,7 @@ At the rating point the drops are:
 | Mixing exchanger, gas | 0.52 kg/s | 20 kPa |
 | Mixing exchanger, quench | 0.13 kg/s | 10.9 kPa: distributor 6.7, ports and connections 2.4 (S3 0.2, S4 2.2), channels 1.8 net of 0.25 static gain |
 
-Together with the suction line and the outlet leg (section 2c), the quench cells sit 13.6-15.1 kPa above
+Together with the suction line and the outlet leg (section 4), the quench cells sit 13.6-15.1 kPa above
 the compressor suction port, where `P_s` is measured. They boil about 0.5 K warmer than the suction
 saturation temperature the stand displays.
 
@@ -60,10 +68,9 @@ is rated about 18 TR (63 kW), and the condenser runs at 31 kW. The cooling water
 The gas side is the exception: 0.52 kg/s of vapor at 10 bar reaches about 21 m/s in the ports. On the
 quench side most of the drop is in the distributor and the 7/8 in connections, not in the channels.
 
-The water valve's rating-point position rises from 49 % to 53 %. The largest water flow, valve 4 fully
-open, falls from about 4.1 kg/s (valve alone at 1.5 bar) to about 2.3 kg/s (1.15 bar across valve,
-condenser and piping). This is mostly the piping placeholder and the valve itself. Retune the water
-loop if needed.
+At the rating point the water valve sits at about 53 %. Fully open it passes about 2.3 kg/s: the
+1.15 bar loop difference across valve, condenser and piping, mostly taken by the piping placeholder
+(`Kv_wpipe`) and the valve itself.
 
 ## 2. Default coefficients: estimate from the geometry
 
@@ -94,8 +101,8 @@ about 1.5 velocity heads at the 7/8 in connection bore. These are split between 
 water-side drops per channel for CB76 plates: M channels give 2.14 / 9.75 / 34.7 / 129 kPa at
 203.5 / 500 / 1000 / 2000 kg/h per channel. Scaled to the AC70X, whose channel is narrower (about 1.8
 times the mass flux) and slightly shorter, that gives 0.5 / 3.6 / 5.5 kPa at 0.6 / 1.75 / 2.2 kg/s. Martin
-at 45 deg gives 0.7 / 4.2 / 6.3 kPa, a good match. The first estimate at 60 deg (H-channel behaviour)
-gave 1.6 / 9.4 / 14 kPa, about twice too high.
+at 45 deg gives 0.7 / 4.2 / 6.3 kPa, a good match (60 deg, H-channel behaviour, would give about twice as
+much).
 
 **Condensing refrigerant.** At about 19 kg/(m2 s) the channel friction is small, even with a two-phase
 correlation (Yan, Lio & Lin 1999 gives less than the homogeneous estimate). The side is dominated by the
@@ -109,9 +116,9 @@ under 0.1 bar at condensing.
 | Mixing exchanger, gas | 0.52 kg/s vapor, 10 bar, 40 degC | 20 kPa (9 channels + 11 ports) | 23.6 | `mx_Kv_g` = 23.5 |
 
 A Kv implies a drop that rises with the square of the flow, which holds well for these three sides. The
-quench side is modelled from the geometry instead (below).
+quench side is modelled from the geometry instead (section 3).
 
-## 2b. Quench side: model from the plate geometry
+## 3. Quench side: model from the plate geometry
 
 The quench side cannot be measured on the stand, so it is computed from the geometry with the
 best-validated published methods. A single Kv cannot capture it. Its drop depends on how far the quench
@@ -119,10 +126,17 @@ evaporates in each cell (dry-out moves with the operating point), its flow depen
 and only the part inside the channels shifts the boiling temperature.
 
 **Channels, evaporating: Amalfi, Vakili-Farahani & Thome (2016).**
-* The local two-phase Fanning friction factor is `f = C * 15.698 * We_m^-0.475 * Bd^0.255 * (rho_l / rho_v)^-0.571`,
-  with `C = 2.125 (beta / 70 deg)^9.993 + 0.955`.
-* The groups are the homogeneous Weber number `We_m = G^2 d_h / (rho_m sigma)` and the Bond number
-  `Bd = (rho_l - rho_v) g d_h^2 / sigma`, with `dP = 2 f dz G^2 / (d_h rho_m)`.
+* The local two-phase Fanning friction factor and the pressure drop over a length $`dz`$ are
+
+```math
+f = C \cdot 15.698 \, \mathrm{We}_m^{-0.475} \, \mathrm{Bd}^{0.255} \left( \frac{\rho_l}{\rho_v} \right)^{-0.571},
+\qquad C = 2.125 \left( \frac{\beta}{70^\circ} \right)^{9.993} + 0.955,
+\qquad dP = \frac{2 f \, G^2}{d_h \, \rho_m} \, dz
+```
+
+  with the homogeneous Weber number $`\mathrm{We}_m = G^2 d_h / (\rho_m \sigma)`$, the Bond number
+  $`\mathrm{Bd} = (\rho_l - \rho_v) g d_h^2 / \sigma`$, mass flux $`G`$, hydraulic diameter $`d_h`$ and
+  corrugation angle $`\beta`$.
 * It was fitted to 1513 frictional pressure drop points from 13 independent studies of plate exchangers,
   covering many fluids (including ammonia) and plate designs. The R410A data of Hsieh & Lin are among the
   studies it draws on. It predicts 74 % of the points within +-30 % and 91 % within +-50 %, and it worked
@@ -172,9 +186,7 @@ the whole table.
 **Other correlations.** For the same conditions, Hsieh & Lin (2002, R410A, one 60 deg plate) gives about
 3 times Amalfi's channel friction, and Yan & Lin (1999, R134a) about 10 times. Each was fitted to a single
 plate. Amalfi's comparison found that most such correlations should not be used outside their original
-test conditions. The first
-version of this model used Hsieh & Lin through a fixed Kv, so it overstated the channel drop and the
-boiling shift (0.55 K).
+test conditions.
 
 **Downward evaporation.** All of these methods come from upward flow. Alfa Laval notes that downward
 evaporation in BPHEs has been little studied, and that it needs a comparably high channel drop and a low
@@ -187,7 +199,7 @@ It takes about 0.03 bar at the rating water flow and 0.45 bar at 2.2 kg/s.
 The Kv values do not follow `cond_n_plates` / `mx_n_plates` automatically. Changing the plate count
 means re-estimating them.
 
-## 2c. Refrigerant lines
+## 4. Refrigerant lines
 
 Every copper line from the piping specification (`D_*`, `t_*`, `L_*`) is a quasi-steady resistance, like the
 exchanger sides: no pressure states, and the drop is taken by the flow the line actually carries.
@@ -241,16 +253,16 @@ bar, so the valve positions barely change. The measurable consequences are these
 A filter-drier, sight glass or solenoid valve in the liquid line would add to `K_liq`, typically
 0.1-0.3 bar for a filter-drier.
 
-## 3. Calibrating against the real stand
+## 5. Calibrating against the real stand
 
 * **Condenser water side.** Measure the water flow and the pressure difference across the condenser water
-  connections. `cond_Kv_w = 3.6 * mdot [kg/s] / sqrt(rho * dP [bar] / 1000)` in the model's convention
-  (`Kv = Q [m3/h] / sqrt(dP [bar])` for water). Measure the supply-to-return difference at full valve
+  connections. $`K_v = 3.6 \, \dot m / \sqrt{\rho \, \Delta P / 1000}`$ (flow in kg/s, drop in bar) gives `cond_Kv_w` in
+  the model's convention ($`K_v = Q / \sqrt{\Delta P}`$ for water, Q in m³/h). Measure the supply-to-return difference at full valve
   opening to fit `Kv_wpipe`.
 * **Mixing exchanger gas side.** Measure the pressure at the valve 2 outlet (S1) against suction
   pressure, at a known bypass flow (from the suction mass flow and the quench flow).
 * **Mixing exchanger quench side.** Not measurable on the stand. The model computes it from the geometry
-  (section 2b). If an Alfa Laval selection or the meaning of "N60" becomes available, set `mx_Kv_dist`
+  (section 3). If an Alfa Laval selection or the meaning of "N60" becomes available, set `mx_Kv_dist`
   from the distributor's rated drop. A pressure tap at S3, if one is ever added, would check the total.
 * **Condenser refrigerant side.** Its drop is small next to the sensors' noise (6 kPa standard deviation on
   the intermediate pressure). Only a differential transmitter between the header and the liquid line
@@ -260,7 +272,7 @@ Selection printouts from Alfa Laval (CAS / Hexact) for these two units would giv
 at a design point directly. Divide the flow by the square root of the drop and density ratio to get the
 Kv.
 
-## 4. Limitations
+## 6. Limitations
 
 * No maldistribution between channels. On the refrigerant sides two-phase friction enters only through
   the Kv, except on the quench side, which uses the geometry model.
