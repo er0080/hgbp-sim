@@ -19,8 +19,9 @@ Aligning the grids with the saturation dome means bilinear interpolation never
 straddles a phase boundary, which keeps density and its partial derivatives
 smooth (the ODE formulation uses drho/dP|h and drho/dh|P).
 
-Tables are cached as compressed ``.npz`` files.  The package ships a prebuilt
-R134a table; other CoolProp fluids are built on first use (needs CoolProp).
+Tables are cached as compressed ``.npz`` files.  The package ships prebuilt
+R410A, R454B, R454C and R134a tables; other CoolProp fluids are built on first use
+(needs CoolProp).  R454B and R454C are CoolProp predefined mixtures (``COOLPROP_NAMES``).
 """
 from __future__ import annotations
 
@@ -49,6 +50,9 @@ _RI = {k: i for i, k in enumerate(REG_FIELDS)}
 
 PHASE_LIQUID, PHASE_TWOPHASE, PHASE_VAPOR = 0, 1, 2
 
+# Fluids CoolProp knows only as predefined mixtures (HEOS): name used here -> CoolProp name
+COOLPROP_NAMES = {"R454B": "R454B.mix", "R454C": "R454C.mix"}
+
 _PKG_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 _USER_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "hgbp_sim")
 
@@ -67,6 +71,26 @@ class PhState:
     def __repr__(self) -> str:  # pragma: no cover - convenience only
         return (f"PhState(P={self.P}, h={self.h}, T={self.T}, rho={self.rho}, "
                 f"x={self.x}, phase={self.phase})")
+
+
+def _pq_update(AS, CP, p, q, last: dict) -> None:
+    """Saturation flash of ``AS`` at pressure ``p``, quality ``q``.  A mixture's solver can
+    fail near the critical point; it is then retried from the solution at the previous
+    pressure of the march (``last[q]``, kept up to date here)."""
+    try:
+        AS.update(CP.PQ_INPUTS, p, q)
+    except ValueError:
+        if q not in last:
+            raise
+        g = CP.PyGuessesStructure()
+        g.T, g.rhomolar_liq, g.rhomolar_vap, g.x, g.y = last[q]
+        AS.update_with_guesses(CP.PQ_INPUTS, p, q, g)
+        if abs(AS.p() / p - 1.0) > 1e-6 or AS.T() == last[q][0]:
+            raise ValueError(f"saturation at {p:.0f} Pa: the retry did not converge")
+    if len(AS.fluid_names()) > 1:
+        last[q] = (AS.T(), AS.saturated_liquid_keyed_output(CP.iDmolar),
+                   AS.saturated_vapor_keyed_output(CP.iDmolar),
+                   list(AS.mole_fractions_liquid()), list(AS.mole_fractions_vapor()))
 
 
 class RefrigerantTables:
@@ -120,10 +144,18 @@ class RefrigerantTables:
                 f"No cached property table for {self.fluid!r}; building one "
                 "requires CoolProp (pip install CoolProp)") from exc
 
-        AS = CP.AbstractState(self.backend, self.fluid)
-        Tc, Pc = AS.T_critical(), AS.p_critical()
+        AS = CP.AbstractState(self.backend, COOLPROP_NAMES.get(self.fluid, self.fluid))
+        try:
+            Tc, Pc = AS.T_critical(), AS.p_critical()
+        except ValueError:
+            # a mixture can have several mathematical critical points; take the stable one
+            crit = [c for c in AS.all_critical_points() if c.stable and c.p > 0.0]
+            if not crit:
+                raise
+            Tc, Pc = crit[0].T, crit[0].p
         Tmax_eos, Ttr = AS.Tmax(), AS.Ttriple()
-        p_max = p_max if p_max is not None else 0.92 * Pc
+        # a mixture's phase equilibrium solver gets unreliable close to the critical point
+        p_max = p_max if p_max is not None else (0.85 if len(AS.fluid_names()) > 1 else 0.92) * Pc
         t_max = t_max if t_max is not None else min(Tmax_eos, Tc + 160.0)
         t_min = t_min if t_min is not None else max(Ttr + 5.0, 200.0)
         AS.update(CP.QT_INPUTS, 0.0, t_min + 3.0)
@@ -144,9 +176,15 @@ class RefrigerantTables:
         vap = np.zeros((len(REG_FIELDS), n_p, n_z))
         liq = np.zeros((len(REG_FIELDS), n_p, n_z))
 
-        def region_point(h, p):
+        # A mixture's flash tests phase stability at every call, which is slow; the region
+        # tables are single-phase by construction, so their phase is given instead.
+        mixture = len(AS.fluid_names()) > 1
+
+        def region_point(h, p, phase):
             """Return the REG_FIELDS values at (h, p); NaN on failure."""
             try:
+                if mixture:
+                    AS.specify_phase(phase)
                 AS.update(CP.HmassP_INPUTS, h, p)
                 return (AS.T(), AS.rhomass(), AS.smass(),
                         AS.first_partial_deriv(CP.iDmass, CP.iP, CP.iHmass),
@@ -154,33 +192,42 @@ class RefrigerantTables:
                         AS.cpmass())
             except Exception:  # noqa: BLE001 - CoolProp raises generic errors
                 return (np.nan,) * len(REG_FIELDS)
+            finally:
+                if mixture:
+                    AS.unspecify_phase()
 
+        def h_at(p, T, phase):
+            if mixture:
+                AS.specify_phase(phase)
+            try:
+                AS.update(CP.PT_INPUTS, p, T)
+                return AS.hmass()
+            finally:
+                if mixture:
+                    AS.unspecify_phase()
+
+        last = {}                                  # previous saturation solutions (mixtures)
         for i, p in enumerate(P):
-            AS.update(CP.PQ_INPUTS, p, 0.0)
-            sat[_SI["T_l"], i] = AS.T()
-            sat[_SI["h_l"], i] = AS.hmass()
-            sat[_SI["rho_l"], i] = AS.rhomass()
-            sat[_SI["s_l"], i] = AS.smass()
-            sat[_SI["cp_l"], i] = AS.cpmass() if np.isfinite(AS.cpmass()) else np.nan
-            AS.update(CP.PQ_INPUTS, p, 1.0)
-            sat[_SI["T_v"], i] = AS.T()
-            sat[_SI["h_v"], i] = AS.hmass()
-            sat[_SI["rho_v"], i] = AS.rhomass()
-            sat[_SI["s_v"], i] = AS.smass()
-            sat[_SI["cp_v"], i] = AS.cpmass() if np.isfinite(AS.cpmass()) else np.nan
-            AS.update(CP.PT_INPUTS, p, t_max)
-            h_hi = AS.hmass()
-            AS.update(CP.PT_INPUTS, p, t_min)
-            h_lo = AS.hmass()
-            dh_v = h_hi - sat[_SI["h_v"], i]
-            dh_l = sat[_SI["h_l"], i] - h_lo
-            sat[_SI["dhmax_v"], i] = dh_v
-            sat[_SI["dhmax_l"], i] = dh_l
+            try:
+                self._saturation_point(AS, CP, p, i, sat, h_at, t_min, t_max, last)
+            except ValueError:
+                # a mixture's saturation solver can fail at single pressures near the critical
+                # point: filled from the neighbouring pressures below
+                sat[:, i] = vap[:, i, :] = liq[:, i, :] = np.nan
+                continue
+            dh_v, dh_l = sat[_SI["dhmax_v"], i], sat[_SI["dhmax_l"], i]
             for j, z in enumerate(zeta):
                 zz = max(z, 2e-4)  # stay strictly single-phase at the dome
-                vap[:, i, j] = region_point(sat[_SI["h_v"], i] + zz * dh_v, p)
-                liq[:, i, j] = region_point(sat[_SI["h_l"], i] - zz * dh_l, p)
-
+                vap[:, i, j] = region_point(sat[_SI["h_v"], i] + zz * dh_v, p, CP.iphase_gas)
+                liq[:, i, j] = region_point(sat[_SI["h_l"], i] - zz * dh_l, p, CP.iphase_liquid)
+        bad = ~np.isfinite(sat[_SI["T_l"]])
+        if bad.sum() > 0.05 * n_p:
+            raise ValueError(f"{self.fluid}: saturation failed at {int(bad.sum())} of {n_p} pressures")
+        for k in range(sat.shape[0]):
+            row = sat[k]
+            m = np.isfinite(row)
+            if not m.all() and m.any():
+                row[~m] = np.interp(lp[~m], lp[m], row[m])
         # Fill failed points by nearest valid neighbour along zeta, then along P
         for tab in (vap, liq):
             for k in range(tab.shape[0]):
@@ -217,6 +264,24 @@ class RefrigerantTables:
         self._liq = liq
         self._tr = self._transport_rows(P)
 
+    def _saturation_point(self, AS, CP, p, i, sat, h_at, t_min, t_max, last) -> None:
+        """Saturation rows of pressure grid point ``i``, and the enthalpy spans of the
+        single-phase tables (to t_max above the dew line, to t_min below the bubble line)."""
+        _pq_update(AS, CP, p, 0.0, last)
+        sat[_SI["T_l"], i] = AS.T()
+        sat[_SI["h_l"], i] = AS.hmass()
+        sat[_SI["rho_l"], i] = AS.rhomass()
+        sat[_SI["s_l"], i] = AS.smass()
+        sat[_SI["cp_l"], i] = AS.cpmass() if np.isfinite(AS.cpmass()) else np.nan
+        _pq_update(AS, CP, p, 1.0, last)
+        sat[_SI["T_v"], i] = AS.T()
+        sat[_SI["h_v"], i] = AS.hmass()
+        sat[_SI["rho_v"], i] = AS.rhomass()
+        sat[_SI["s_v"], i] = AS.smass()
+        sat[_SI["cp_v"], i] = AS.cpmass() if np.isfinite(AS.cpmass()) else np.nan
+        sat[_SI["dhmax_v"], i] = h_at(p, t_max, CP.iphase_gas) - sat[_SI["h_v"], i]
+        sat[_SI["dhmax_l"], i] = sat[_SI["h_l"], i] - h_at(p, t_min, CP.iphase_liquid)
+
     # -------------------------------------------------------------- persistence
     def save(self, path: str) -> None:
         np.savez_compressed(
@@ -233,13 +298,57 @@ class RefrigerantTables:
         except ImportError as exc:  # pragma: no cover
             raise ImportError("this property table has no transport properties; adding them "
                               "requires CoolProp (pip install CoolProp)") from exc
-        AS = CP.AbstractState(self.backend, fluid or self.fluid)
+        name = fluid or self.fluid
+        AS = CP.AbstractState(self.backend, COOLPROP_NAMES.get(name, name))
+        # CoolProp has no surface tension for mixtures (and its mixture liquid viscosity has
+        # gaps): component values at the bubble point temperature, mixed by mole fraction
+        comps = AS.fluid_names()
+        if len(comps) > 1:
+            pure = [CP.AbstractState(self.backend, c) for c in comps]
+            x = AS.get_mole_fractions()
+
+        def liquid_viscosity(T):
+            """CoolProp's mixture viscosity model has gaps (NaN): there, the log-mean of the
+            components' saturated liquid viscosities at T."""
+            mu = AS.viscosity()
+            if np.isfinite(mu) or len(comps) == 1:
+                return mu
+            ln_mu = 0.0
+            for xk, pk in zip(x, pure):
+                pk.update(CP.QT_INPUTS, 0.0, T)
+                ln_mu += xk * np.log(pk.viscosity())
+            return float(np.exp(ln_mu))
+
+        def sigma(T):
+            if len(comps) == 1:
+                return AS.surface_tension()
+            s = 0.0
+            for xk, pk in zip(x, pure):
+                try:
+                    pk.update(CP.QT_INPUTS, 0.0, T)
+                    s += xk * pk.surface_tension()
+                except ValueError:
+                    pass          # at or above its critical point a component's surface tension is ~0
+            return s
+
         tr = np.zeros((len(TR_FIELDS), len(P)))
+        last = {}
         for i, p in enumerate(P):
-            AS.update(CP.PQ_INPUTS, float(p), 0.0)
-            tr[_TI["mu_l"], i], tr[_TI["sigma"], i] = AS.viscosity(), AS.surface_tension()
-            AS.update(CP.PQ_INPUTS, float(p), 1.0)
-            tr[_TI["mu_v"], i] = AS.viscosity()
+            try:
+                _pq_update(AS, CP, float(p), 0.0, last)
+                T = AS.T()
+                tr[_TI["mu_l"], i], tr[_TI["sigma"], i] = liquid_viscosity(T), sigma(T)
+                _pq_update(AS, CP, float(p), 1.0, last)
+                tr[_TI["mu_v"], i] = AS.viscosity()
+            except ValueError:
+                tr[:, i] = np.nan          # as for the saturation rows: filled from the neighbours
+        lp = np.log(np.asarray(P, float))
+        ok = np.isfinite(tr).all(axis=0)
+        if (~ok).sum() > 0.05 * len(P):
+            raise ValueError(f"{name}: transport properties failed at {int((~ok).sum())} of {len(P)} pressures")
+        for row in tr:
+            if not ok.all():
+                row[~ok] = np.interp(lp[~ok], lp[ok], row[ok])
         return tr
 
     def _load(self, path: str) -> None:
