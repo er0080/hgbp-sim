@@ -1,9 +1,11 @@
-# Nominal refrigerant charge: how it is calculated and what it means
+# Refrigerant charge
 
-2026-09-24 (updated for the receiver). Reference note on `nominal_charge()`
-(`hgbp_sim/params.py`).
+`PlantParams.charge` is the stand's total refrigerant mass [kg]. Left empty (`None`), the
+stand is charged with the **nominal charge**, `nominal_charge()` in `hgbp_sim/params.py`.
+The charge is conserved exactly while the stand runs; charging and recovery (web UI) change
+it at a set rate.
 
-## 1. What it is
+## 1. The nominal charge
 
 The simulator does not compute an *optimal* charge. It computes a **nominal reference
 charge**: the refrigerant mass the stand holds at one fixed, typical operating condition
@@ -30,8 +32,13 @@ The mass in each volume is added up at a fixed reference condition:
 | Discharge (compressor inside, discharge line) | vapor at the intermediate pressure + 2.5 bar, 75 degC |
 | Intermediate section | saturated at 40 degC: liquid line full, receiver filled to `level` (40 %), the rest (condenser, drain, header, receiver vapor space) vapor |
 
-    charge = rho_s V_s + rho_d V_d + V_liquid rho_liquid + (V_i - V_liquid) rho_vapor
-    V_liquid = level * V_receiver + V_liquid_line
+```math
+m = \rho_s V_s + \rho_d V_d + \rho_l V_\mathrm{liq} + \rho_v \left( V_i - V_\mathrm{liq} \right),
+\qquad V_\mathrm{liq} = \ell \, V_\mathrm{receiver} + V_\mathrm{liquid\,line}
+```
+
+with $`\ell`$ the receiver level (`level`) and $`\rho_l`$, $`\rho_v`$ the saturated liquid and
+vapor densities in the intermediate section.
 
 All densities come from the refrigerant property tables, so the result follows the
 refrigerant, the piping and the receiver. With the defaults (R410A, 26.5 L receiver) it
@@ -70,9 +77,16 @@ With the defaults at the rating point:
 
 The exact limits depend on the operating point, because the vapor inventory does.
 
-## 5. Options if "nominal" should mean "correct for this stand"
+## 5. Cold start
 
-* Enter the known real charge in `charge` (defaults file or Settings tab). This is the most
-  direct way to represent the real stand.
-* Compute the nominal charge at the stand's rating point instead of the fixed reference
-  condition, or change the reference `level`.
+At a cold start (compressor off, stand equalized at ambient) the liquid sits in the
+receiver. A share `cold_liquid_in_suction` can be placed on the suction side instead
+(compressor first, then suction line and mixing exchanger), as after refrigerant migration
+during a long off cycle. A charge too small to reach saturation at ambient leaves the whole
+stand with superheated vapor at a lower pressure.
+
+## 6. Representing the real stand
+
+Enter the stand's known charge in `charge` (defaults file or Settings tab). To make
+"nominal" mean something else, change the reference condition of `nominal_charge()`
+(section 2).

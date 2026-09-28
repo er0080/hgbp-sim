@@ -1,8 +1,8 @@
-# Neural-network controller for the HGBP compressor test stand: specification
+# Neural-network controller: specification
 
-Version 0.1, 2026-09-17. Companion to the `hgbp-sim` simulator (v0.2). This
-document is written so that the controller can be developed and trained in a
-separate repository, using the simulator only through its environment interface.
+A specification for a learned controller of the stand, to be developed and trained in a
+separate repository using the simulator only through its environment interface
+([training.md](training.md)).
 
 ## 1. Purpose and scope
 
@@ -36,8 +36,8 @@ The stand has four manipulated valves and four controlled variables:
 | intermediate (condensing) pressure | 4, cooling water valve | moves every other variable |
 
 Open-loop step responses from the medium-temperature point (`examples/open_loop_step.py`):
-a 10 % opening of valve 2 changes suction pressure by +0.6 bar, discharge pressure by
-+1.8 bar and superheat by +11 K. The plant is therefore a strongly coupled, nonlinear
+a 10 % opening of valve 2 raises suction pressure by about 3 bar, discharge pressure by
+about 5 bar and superheat by about 40 K within 10 minutes. The plant is therefore a strongly coupled, nonlinear
 4x4 system; single-loop PID (the baseline) works but produces large superheat excursions
 at every setpoint change and needs several minutes to settle.
 
@@ -47,7 +47,7 @@ Properties that shape the network design:
   up and the plate temperatures in the mixing exchanger, the compressor shell temperature
   and the condenser wall temperature are not measured but determine the plant gains and
   the time constants (about a minute for the suction temperature response to valve 3, up
-  to ~20 min for the shell). The charge is also hidden.[^sensors]
+  to ~20 min for the shell). The charge is also hidden.
 * **Wide operating range.** Valve gains vary by more than an order of magnitude over
   their stroke; gas valves choke; the liquid valve flashes.
 * **Integral action needed.** Sensor bias, model mismatch and slow drifts require
@@ -97,7 +97,7 @@ policy's output a rate that the PLC can clamp.
 
 ### 3.4 Episode structure and labels
 
-* 1..3 test points from the envelope (evaporating -30..12 degC, condensing 30..65 degC,
+* 1..3 test points from the envelope (evaporating -30..12 degC, condensing 30..57 degC,
   superheat 3..25 K, intermediate temperature between water inlet and condensing,
   50..140 % speed, estimated discharge temperature below the trip), each checked
   against the equilibrium solver at nominal charge (every valve below 95 % at steady
@@ -150,7 +150,7 @@ observation (51) --> [feature MLP 2 x 128, ELU] --> [GRU 128] --> hidden h_t
 privileged states (training only) + h_t --> [value MLP 2 x 128] --> V(s)
 ```
 
-About 120 k parameters. Inference cost is negligible at 1 Hz.
+About 120 k parameters. Inference cost is negligible at the 4 Hz control rate.
 
 ### 4.2 Design decisions and rationale
 
@@ -174,7 +174,7 @@ About 120 k parameters. Inference cost is negligible at 1 Hz.
 * **Output smoothing.** Add a penalty on the change of the valve output between steps
   during training (already part of the reward) and optionally a small low-pass on the
   action at deployment.
-* **Feed-forward from the equilibrium map.**[^feedforward] Apply the steady-state valve
+* **Feed-forward from the equilibrium map.** Apply the steady-state valve
   positions for the new test point (from `solve_steady_state`, tabulated per compressor
   and refrigerant) as the first move at a setpoint change and let the network correct
   around them.
@@ -189,7 +189,7 @@ About 120 k parameters. Inference cost is negligible at 1 Hz.
 
 ## 5. Training plan
 
-1. **Data and baseline.**[^sysid] Collect 5..10 M steps with `examples/collect_dataset.py`
+1. **Data and baseline.** Collect 5..10 M steps with `examples/collect_dataset.py`
    (expert + Gaussian exploration noise, sigma 0.3) across all start modes, charges and
    several refrigerants. Record the expert action, `charge_factor`, `steady`.
 2. **Behaviour cloning.** Train the policy (valve and run heads) on the expert actions
@@ -205,7 +205,7 @@ About 120 k parameters. Inference cost is negligible at 1 Hz.
 4. **Curriculum.** Nominal charge, warm starts, single points first; then multiple
    points, cold starts, wider charge range, start/stop action, then multiple
    refrigerants and the full compressor size range.
-5. **Evaluation**[^acceptance] on held-out seeds and refrigerants, 1000 episodes each: trips per 1000
+5. **Evaluation** on held-out seeds and refrigerants, 1000 episodes each: trips per 1000
    episodes (target 0), fraction of points completed by dwell, mean time to tolerance
    after a setpoint change, superheat undershoot events (inlet quality < 1), valve travel
    per point, charge estimate error (target +-10 % once steady), and the same metrics for
@@ -219,7 +219,7 @@ floodback margin is not acceptable.
 
 ### 6.1 Action shield (PLC / supervisory layer)
 
-Applied to every network output before it reaches the actuators:[^staged]
+Applied to every network output before it reaches the actuators:
 
 * clamp increments to the actuator rate limits and positions to [0, 1];
 * valve 1 never below 10 % while the compressor runs (no dead-heading);
@@ -314,34 +314,3 @@ Add on the real stand: mass flow and power readings within +-1 % of their traili
    Section 6.1 be added there?
 5. Can charge be measured (scale on the charging cylinder) to validate the advisory?
 
-## Notes
-
-[^sysid]: **Identify the real stand before training for deployment.** Run the step
-    protocol of `examples/open_loop_step.py` on the hardware (each valve stepped +-10 %
-    from two or three test points, plus a logged cold start) and fit the simulator's
-    volumes, valve coefficients, condenser conductance, shell thermal mass and sensor lags
-    to the recorded responses. Train with the fitted values at the center of the
-    randomization ranges and keep the ranges, so the policy tolerates the residual
-    mismatch that identification never removes.
-
-[^staged]: **Stage the authority.** Deploy in four steps: shadow mode (network actions
-    logged, PID in control), reduced authority (network increments applied at a quarter
-    of the rate limit with the PID able to override), full valve authority behind the
-    action shield, and only then the start/stop request and the charge advisory. Keep the
-    PID baseline as a one-button fallback at every stage.
-
-[^sensors]: **Two cheap sensors pay for themselves.** A receiver level transmitter turns
-    the charge, which the receiver otherwise absorbs silently, into a measurement; a
-    temperature at the mixing exchanger's quench outlet (S4) shows the quench side
-    running wet a few seconds before liquid reaches the compressor. Both reduce what the
-    network has to infer from history.
-
-[^feedforward]: **Use a feed-forward table.** The equilibrium valve positions for a test
-    point are cheap to compute and easy to audit. Applying them first at each setpoint
-    change cuts the transition time on its own and leaves the learned part with a
-    smaller, correction-only job, which also simplifies certification.
-
-[^acceptance]: **Define acceptance before deployment.** No trips and no floodback events
-    over 100 consecutive test points, cycle time at least 20 % below the manual or PID
-    reference on the same schedule, and correct charge advisories on deliberate +-20 %
-    charge changes measured with a scale on the charging cylinder.
