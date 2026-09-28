@@ -135,8 +135,10 @@ warm-up seen on real stands.
 CoolProp is far too slow inside the model, so properties come from bilinear interpolation
 in tables aligned with the saturation dome (superheated and subcooled regions in
 `(log P, zeta)` coordinates, two-phase analytic). Accuracy against CoolProp for R134a:
-temperature < 0.04 K, density < 0.1 %. R410A (default) and R134a tables ship with the
-package; other CoolProp fluids are tabulated on first use.
+temperature < 0.04 K, density < 0.1 %. Tables for R410A (default), R454B, R454C and R134a
+ship with the package; other CoolProp fluids are tabulated on first use. R454B and R454C
+are CoolProp mixtures of R32 and R1234yf; their surface tension (not available from
+CoolProp for mixtures) is the mole-fraction average of the components'.
 
 ## Numerics
 

@@ -26,7 +26,7 @@ from types import SimpleNamespace
 import numpy as np
 
 # Refrigerants offered by the UI (any CoolProp fluid works in the library)
-FLUIDS = ("R134a", "R1234yf", "R1234ze(E)", "R404A", "R407C", "R410A", "R32", "R22", "R290", "R600a")
+FLUIDS = ("R134a", "R1234yf", "R1234ze(E)", "R404A", "R407C", "R410A", "R454B", "R454C", "R32", "R22", "R290", "R600a")
 
 
 @dataclass

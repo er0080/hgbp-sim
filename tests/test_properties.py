@@ -82,3 +82,23 @@ def test_two_phase_derivatives_consistent(tab):
     fd_h = (tab.state(P, h + dh).rho - tab.state(P, h - dh).rho) / (2 * dh)
     assert np.allclose(st.drho_dP, fd_P, rtol=2e-2)
     assert np.allclose(st.drho_dh, fd_h, rtol=2e-2)
+
+
+@pytest.mark.parametrize("fluid", ["R454B", "R454C"])
+def test_blend_tables_against_coolprop(fluid):
+    """R454B / R454C (CoolProp predefined mixtures of R32 and R1234yf): saturation on the
+    bubble and dew lines, single-phase states and transport properties."""
+    CP = pytest.importorskip("CoolProp.CoolProp")
+    from hgbp_sim.properties import COOLPROP_NAMES
+    tab = get_tables(fluid)
+    name = "HEOS::" + COOLPROP_NAMES[fluid]
+    for T in (253.15, 283.15, 313.15):
+        P_b, P_d = (CP.PropsSI("P", "T", T, "Q", q, name) for q in (0, 1))
+        assert abs(tab.sat(P_b)["T_l"] - T) < 0.05 and abs(tab.sat(P_d)["T_v"] - T) < 0.05
+    for P, dh, ref in ((10e5, 30e3, "h_v"), (20e5, -20e3, "h_l")):     # superheated vapor, subcooled liquid
+        h = tab.sat(np.array([P]))[ref][0] + dh
+        s = tab.state(np.array([P]), np.array([h]))
+        assert abs(s.T[0] - CP.PropsSI("T", "P", P, "Hmass", h, name)) < 0.1
+        assert np.isclose(s.rho[0], CP.PropsSI("Dmass", "P", P, "Hmass", h, name), rtol=2e-3)
+    tr = tab.transport(np.array([10e5]))
+    assert 1e-4 < tr["mu_l"][0] < 1e-3 and 5e-6 < tr["mu_v"][0] < 3e-5 and 1e-3 < tr["sigma"][0] < 2e-2

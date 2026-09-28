@@ -338,3 +338,17 @@ def test_pipe_pressure_drops():
     x[:, HGBPPlant.N_] = 0.0
     _, b = pl.rhs(x, res["u"], np.zeros(1), pl.T_amb, pl.T_wi, want_aux=True)
     assert np.allclose(b["dP_suc"], 0.0) and np.allclose(b["P_tee"], b["P_s"])
+
+
+@pytest.mark.parametrize("fluid", ["R454B", "R454C"])
+def test_stand_runs_on_r454_blends(fluid):
+    """The stand reaches equilibrium at a test point on R454B / R454C and stays there."""
+    pl = HGBPPlant(PlantParams(fluid=fluid), n=1)
+    pl.set_inputs(T_amb=298.15, T_wi=293.15)
+    pt = _point(pl, "MT_standard", 3550.0)
+    res = solve_steady_state(pl, pt["P_s"], pt["P_d"], pt["SH"], pt["N"], P_i=pt["P_i"])
+    assert res["converged"][0]
+    pl.set_state(0, res["x"])
+    for _ in range(60):
+        a = pl.step(1.0, u_cmd=res["u"], N_cmd=pt["N"])
+    assert abs(a["P_s"][0] - pt["P_s"]) < 0.05e5 and abs(a["P_d"][0] - pt["P_d"]) < 0.2e5

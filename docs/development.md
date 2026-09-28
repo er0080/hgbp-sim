@@ -53,7 +53,7 @@ steady-state solver. On an 8-core laptop (Xeon W-10885M):
 
 ## Property tables
 
-R410A and R134a tables ship in `hgbp_sim/data/`. Any other CoolProp fluid is tabulated on
+R410A, R454B, R454C and R134a tables ship in `hgbp_sim/data/`. Any other CoolProp fluid is tabulated on
 first use (needs CoolProp, a few seconds) and cached in `~/.cache/hgbp_sim/`.
 
 ## Layout
