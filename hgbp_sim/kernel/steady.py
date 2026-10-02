@@ -13,19 +13,19 @@ from . import batch_variants
 from . import props as kp
 from .layout import (A_M_g, A_M_s, A_Q_sg, A_T_co, A_T_d, A_T_s, A_W_el, A_h_2f, A_h_3f, A_h_g, A_mdot_2,
                      A_mdot_3, A_mdot_c, A_x_l1, A_y_liq, MX, NX, X_H_D, X_H_I, X_HG, X_HQ, X_MM, X_N,
-                     X_P_D, X_P_I, X_P_S, X_T_CW, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_TM_CO, X_TM_D, X_TM_S,
+                     X_P_D, X_P_I, X_P_S, X_TCW, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_TM_CO, X_TM_D, X_TM_S,
                      X_TMW, X_U1, X_WM)
 from .model import NS, rhs
 
-NZ = 10               # outer unknowns: u1..u4, h_d, T_sw, T_dw, T_cw, T_sh, T_rw
-ZSCALE = np.array([1.0, 1.0, 1.0, 1.0, 2e4, 10.0, 10.0, 10.0, 10.0, 10.0])
+NZ = 9 + MX           # outer unknowns: u1..u4, h_d, T_sw, T_dw, T_sh, T_rw, condenser walls T_cw0..
+ZSCALE = np.array([1.0, 1.0, 1.0, 1.0, 2e4] + [10.0] * (NZ - 5))
 # residuals: suction side mass [kg/s] and energy [W] balance, dT_sw, dP_d, dh_d, dT_dw,
-# dP_i, dh_i, dT_cw, dT_rw, dT_sh
-RSCALE = np.array([1e-3, 100.0, 0.1, 1e3, 1e2, 0.1, 1e3, 1e2, 0.1, 0.1, 0.1])
-NR = 11
-RES_IDX = (X_T_SW, X_P_D, X_H_D, X_T_DW, X_P_I, X_H_I, X_T_CW, X_T_RW, X_T_SH)
-ZLO = np.array([1e-3] * 4 + [-np.inf] + [150.0] * 5)
-ZHI = np.array([1.0] * 4 + [np.inf] + [600.0] * 5)
+# dP_i, dh_i, dT_rw, dT_sh, dT_cw0..
+RSCALE = np.array([1e-3, 100.0, 0.1, 1e3, 1e2, 0.1, 1e3, 1e2, 0.1, 0.1] + [0.1] * MX)
+NR = 10 + MX
+RES_IDX = (X_T_SW, X_P_D, X_H_D, X_T_DW, X_P_I, X_H_I, X_T_RW, X_T_SH) + tuple(X_TCW + j for j in range(MX))
+ZLO = np.array([1e-3] * 4 + [-np.inf] + [150.0] * (NZ - 5))
+ZHI = np.array([1.0] * 4 + [np.inf] + [600.0] * (NZ - 5))
 NP = 2 * MX           # exchanger profile: quench cell enthalpies, wall temperatures
 
 
@@ -111,9 +111,11 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
     z[1] = invert_characteristic(mdot_2 / max(g2 * kv_to_C(p.Kv_spv), 1e-12), p.spv_code, p.spv_R)
     l3 = liquid_valve_flow_s(1.0, P_i, P_s, sati.rho_l, S.rho, p.f_choke_liq, p.eps_valve, 0.0, 1.0)
     z[2] = invert_characteristic(mdot_3 / max(l3 * kv_to_C(p.Kv_stv), 1e-12), p.stv_code, p.stv_R)
-    # condenser duty and water flow (bisection on the effectiveness relation)
+    # condenser duty and water flow (bisection on the effectiveness relation; the
+    # refrigerant condensing at the saturation temperature, plate resistances in series)
     Q = mdot_3 * (h_d - h_l)
-    T_cw = sati.T_l - Q / (0.6 * p.alpha_r_2ph * p.cond_A)
+    UA_r = p.alpha_r_2ph * p.cond_A
+    UA_w, Cw = 1.0, 1.0
     lo, hi = 1e-4, 1.0
     for _ in range(40):
         mid = 0.5 * (lo + hi)                                 # installed flow fraction f(u4)
@@ -121,20 +123,27 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
                                   p.P_w_sup - p.P_w_ret, p.rho_w)
         Cw = mdot_w * p.cp_w
         UA_w = p.alpha_w0 * p.cond_A * (mdot_w / p.mdot_w_ref) ** 0.8
-        Qw = (1.0 - math.exp(-UA_w / Cw)) * Cw * (T_cw - T_wi)
+        Qw = (1.0 - math.exp(-UA_w * UA_r / (UA_w + UA_r) / Cw)) * Cw * (sati.T_l - T_wi)
         if Qw > Q:
             hi = mid
         else:
             lo = mid
     z[3] = invert_characteristic(0.5 * (lo + hi), p.w_code, p.w_R)
+    # wall cells (top -> bottom) between the condensing refrigerant and the water rising
+    # from the bottom
+    T_wat = T_wi
+    for j in range(n - 1, -1, -1):
+        dTw = (1.0 - math.exp(-UA_w * UA_r / (UA_w + UA_r) / n / Cw)) * (sati.T_l - T_wat)
+        T_m = T_wat + 0.5 * dTw
+        z[9 + j] = T_m + (sati.T_l - T_m) * UA_r / (UA_w + UA_r)
+        T_wat += dTw
     z[4] = h_d
     z[5] = (p.UA_sa * T_amb + p.UA_sg * S.T) / (p.UA_sa + p.UA_sg)
     z[6] = (p.UA_da * T_amb + p.UA_dg * D.T) / (p.UA_da + p.UA_dg)
-    z[7] = T_cw
     C_g = mdot_c * p.cp_gas
     eps_g = 1.0 - math.exp(-p.UA_gs / max(C_g, 1e-9))
-    z[8] = T_amb + (eps_g * C_g * (T2_ad - T_amb) + (1.0 - p.f_motor_gas) * Q_motor) / (p.UA_sha + eps_g * C_g)
-    z[9] = (p.rec_UA_a * T_amb + p.rec_UA_r * sati.T_l) / (p.rec_UA_a + p.rec_UA_r)
+    z[7] = T_amb + (eps_g * C_g * (T2_ad - T_amb) + (1.0 - p.f_motor_gas) * Q_motor) / (p.UA_sha + eps_g * C_g)
+    z[8] = (p.rec_UA_a * T_amb + p.rec_UA_r * sati.T_l) / (p.rec_UA_a + p.rec_UA_r)
     # mixing exchanger: quench side from the valve 3 outlet to the suction state, gas side
     # from the bypass inlet (bottom) to the suction state (top); walls in between
     T_2 = kp.T_vapor(tab, P_s, h_d)
@@ -157,8 +166,9 @@ def build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill,
         x[X_TMW + j] = prof[n + j]
     x[X_HQ + n] = h_s
     x[X_HQ + n + 1] = h_s
-    x[X_T_SW], x[X_T_DW], x[X_T_CW] = z[5], z[6], z[7]
-    x[X_T_SH], x[X_T_RW] = z[8], z[9]
+    x[X_T_SW], x[X_T_DW], x[X_T_SH], x[X_T_RW] = z[5], z[6], z[7], z[8]
+    for j in range(n):
+        x[X_TCW + j] = z[9 + j]
     x[X_P_D], x[X_H_D] = P_d, z[4]
     x[X_P_I] = P_i
     x[X_N] = N
@@ -188,7 +198,7 @@ def residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, f
         Q_amb += (p.mx_UA_a / n) * (T_amb - x[X_TMW + j])
     r[0] = (a[A_mdot_2] + a[A_mdot_3] - a[A_mdot_c]) / RSCALE[0]
     r[1] = (a[A_mdot_2] * a[A_h_2f] + a[A_mdot_3] * a[A_h_3f] + a[A_Q_sg] + Q_amb - a[A_mdot_c] * h_s) / RSCALE[1]
-    for k in range(9):
+    for k in range(NR - 2):
         r[2 + k] = dx[RES_IDX[k]] / RSCALE[2 + k]
 
 

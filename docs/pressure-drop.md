@@ -23,7 +23,7 @@ is unchanged.
 
 | Side | Flow | Treatment |
 |---|---|---|
-| Condenser, refrigerant (header -> drain, downward) | condensing flow `Q_r / (h_d - h_l)` | The liquid pressure `P_i` is measured after the receiver, ahead of valve 3, and taken as the condenser outlet pressure. The hot gas header (valve 1 outlet, valve 2 inlet) sits at $`P_h = P_i + \Delta P_\mathrm{friction} - g H \rho_\mathrm{col}`$. `rho_col` weights liquid (flooded area), the homogeneous column mean (condensing area) and vapor (the rest). Friction acts on the non-flooded share. |
+| Condenser, refrigerant (header -> drain, downward) | condensing flow: condensing duty of the plates over the latent heat | The liquid pressure `P_i` is measured after the receiver, ahead of valve 3, and taken as the condenser outlet pressure. The hot gas header (valve 1 outlet, valve 2 inlet) sits at $`P_h = P_i + \Delta P_\mathrm{friction} - g H \rho_\mathrm{col}`$. `rho_col` weights liquid (flooded area), the homogeneous column mean (condensing area) and vapor (the rest). Friction acts on the non-flooded share. |
 | Condenser, water | `mdot_w` | Plant loop at 1.5 barg supply and 0.35 barg return (`P_w_sup`, `P_w_ret`). The 1.15 bar difference drives the water through valve 4, the condenser and the piping (`Kv_wpipe`) in series: $`1/C^2 = 1/C_\mathrm{valve}^2 + 1/C_\mathrm{hx}^2 + 1/C_\mathrm{pipe}^2`$. |
 | Mixing exchanger, gas (S1 bottom -> S2 top, upward) | `mdot_2` | Valve 2 discharges into the gas side in series (below). S1 sits above S2 by the friction drop plus the head of the rising gas column. Gas density is the mean of the bypass gas at `P_s` and saturated vapor. |
 | Mixing exchanger, quench (S3 top -> S4 bottom, downward) | `mdot_3` | Computed from the plate geometry, not a Kv (section 3). In flow order: distributor, S3 connection and port; then each of the five cells with its own friction (two-phase or single-phase by its quality), acceleration and static head; then the S4 port and connection. Each cell boils at its own pressure: its saturation temperature is shifted by `dT/dP` (Clausius-Clapeyron at `P_s`) times its offset. The distributor and inlet port are ahead of the channels and do not raise the boiling pressure. The cells' mass and energy stay at `P_s`, so conservation is unchanged. |
@@ -52,8 +52,8 @@ At the rating point the drops are:
 
 | Side | Rating flow | Drop |
 |---|---|---|
-| Condenser, refrigerant | 0.13 kg/s | +0.5 kPa net (about 2 kPa friction less 1.4 kPa head) |
-| Condenser, water | 0.60 kg/s | 1.1 kPa |
+| Condenser, refrigerant | 0.13 kg/s | +0.6 kPa net (1.5 kPa friction less 0.95 kPa head) |
+| Condenser, water | 0.52 kg/s | 0.8 kPa |
 | Mixing exchanger, gas | 0.52 kg/s | 20 kPa |
 | Mixing exchanger, quench | 0.13 kg/s | 10.9 kPa: distributor 6.7, ports and connections 2.4 (S3 0.2, S4 2.2), channels 1.8 net of 0.25 static gain |
 
@@ -62,13 +62,13 @@ the compressor suction port, where `P_s` is measured. They boil about 0.5 K warm
 saturation temperature the stand displays.
 
 **Why some of these are small.** Both exchangers are large for the flows they carry. The ACH-70X-78
-is rated about 18 TR (63 kW), and the condenser runs at 31 kW. The cooling water is 0.6 kg/s, with a
-12.5 K rise, over 39 channels: about 55 kg/h per channel. Alfa Laval's design examples run at
+is rated about 18 TR (63 kW), and the condenser runs at 31 kW. The cooling water is 0.52 kg/s, with a
+14.4 K rise, over 39 channels: about 48 kg/h per channel. Alfa Laval's design examples run at
 200-2000 kg/h per channel (section 2). Condensing R410A reaches only about 19 kg/(m2 s) in the channels.
 The gas side is the exception: 0.52 kg/s of vapor at 10 bar reaches about 21 m/s in the ports. On the
 quench side most of the drop is in the distributor and the 7/8 in connections, not in the channels.
 
-At the rating point the water valve sits at about 53 %. Fully open it passes about 2.3 kg/s: the
+At the rating point the water valve sits at about 49 %. Fully open it passes about 2.3 kg/s: the
 1.15 bar loop difference across valve, condenser and piping, mostly taken by the piping placeholder
 (`Kv_wpipe`) and the valve itself.
 

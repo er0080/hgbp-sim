@@ -44,7 +44,7 @@ tab):
 | intermediate section | header, condenser, drain, receiver, liquid line | 33.3 L |
 
 Heat capacities follow from the same data: condenser plates plus water content
-23.6 kJ/K, exchanger plates 8.1 kJ/K (split over the cells), suction and discharge line
+23.6 kJ/K, exchanger plates 8.1 kJ/K (both split over their cells), suction and discharge line
 copper 3.1 and 1.5 kJ/K, receiver shell 12 kJ/K (25 kg of steel, estimate).
 
 ## Model structure
@@ -74,6 +74,28 @@ the drain, the condenser plates, the header. So:
   area at the water inlet end, which sets the subcooling seen at valve 3;
 * a receiver shell temperature exchanges heat with the refrigerant and ambient; the level
   is reported as a sight glass reading (`rec_level`).
+
+### Condenser
+The same five-cell layout as the mixing exchanger, top (S3) to bottom (S4), each cell with
+its own plate wall temperature (plates plus water content). The refrigerant in it belongs
+to the intermediate section (its mass, pressure `P_i` and the flooding above); the flow
+through it is quasi-steady:
+* **refrigerant side** (S3 -> S4), marched down the cells: hot gas from the header enters
+  at S3 and leaves the last cell above the liquid at the bubble point, so the flow is
+  what the plates condense ($`\dot m (h_\mathrm{in} - h_l) = \sum \dot Q`$; it equals the
+  quench flow in steady state). A wall below the condensing temperature is wet: vapor
+  condenses on it (`alpha_r_2ph`, driven by the condensing temperature, which follows the
+  glide of a blend), and superheated vapor gives up its superheat to the condensate
+  (`alpha_r_1ph`, wet-wall desuperheating). A wall above it stays dry and only exchanges
+  sensible heat with the vapor. Every cell reports its quality (`x_c`) and temperature;
+* **flooded cells**: liquid backing up from a full receiver fills the cells from the
+  bottom and joins the subcooled zone (below);
+* **water side** (S1 -> S2, counterflow): the water first subcools the leaving liquid
+  (the subcooled zone at its inlet end), then rises through the wall cells
+  (effectiveness-NTU per cell, `alpha_w0` scaling with flow^0.8).
+
+At the rating point the hot gas enters at 77 °C, 49 K superheated; the top wall runs above
+the saturation temperature (dry desuperheating), the cells below condense.
 
 ### Suction side
 One common pressure `P_s`, taken at the compressor suction port. The cells are five
@@ -111,7 +133,7 @@ suction gas, discharge gas to shell heat exchange, shell thermal mass and losses
 ambient, VFD speed ramp and lag. The discharge temperature therefore shows the slow
 warm-up seen on real stands.
 
-### Valves, condenser, actuators
+### Valves, actuators
 * Valves 1 and 2: ISA-style compressible flow with choking. Valve 3: incompressible,
   flashing orifice. Valve 4: water valve.
 * Every valve is sized by its `Kv` (m³/h of water at 1 bar), as the hardware is
@@ -119,8 +141,6 @@ warm-up seen on real stands.
   equal-percentage or quick-opening characteristic $`f(u)`$.
 * Valve 4 is in series with the condenser water side and the plant piping, driven by the
   water loop's supply-to-return difference (1.5 barg / 0.35 barg).
-* Condenser: wall thermal mass, regime- and fill-dependent refrigerant-side UA,
-  effectiveness-NTU water side.
 * Actuators: first-order lag and slew-rate limit.
 
 ### Sensors and trips
@@ -182,8 +202,10 @@ superheat), 10 °C water, nominal charge 14.2 kg:
 | quench quality, cells top -> bottom | 0.22, 0.43, 0.96, 1.15, 1.23 (dries out in the middle cell) |
 | gas outlet S2 / quench outlet S4 | 10 °C / 54 °C, mixing to 18.3 °C at the tee |
 | liquid held in the exchanger | 0.14 kg |
+| condenser quality, cells top -> bottom | 1.22, 1.01, 0.80, 0.54, 0.19 (hot gas enters 49 K superheated) |
+| cooling water | 0.52 kg/s, 10 -> 24.4 °C (valve 4 at 49 %) |
 | receiver level | 38 % |
-| subcooling at valve 3 | 3.1 K |
+| subcooling at valve 3 | 2.9 K |
 
 * A +10 % step on valve 3 lowers the suction temperature over about a minute: the plate
   mass dominates the response.
@@ -224,7 +246,9 @@ variable-speed 355 cm³/rev semi-hermetic compressor on R410A.
 ## Limitations
 
 * The condenser, receiver and lines are one equilibrium volume (no stratified, subcooled
-  receiver pool); the mixing exchanger has five cells per side.
+  receiver pool). The mixing exchanger and the condenser have five cells per side; the
+  condenser's refrigerant side is quasi-steady, and the liquid in its condensing film is
+  not counted in the charge distribution (the condenser holds liquid only when flooded).
 * No oil and no suction-gas heater. Pressure drops are quasi-steady, with estimated
   coefficients and fittings; lines have no static heads.
 * The compressor map is generic; replace `components.compressor_s` for a measured map.

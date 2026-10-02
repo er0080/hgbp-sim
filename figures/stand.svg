@@ -21,24 +21,24 @@
       <rect x="104" y="112" width="12" height="26" fill="black" />
       <rect x="364" y="112" width="12" height="26" fill="black" />
       <rect x="597" y="154" width="26" height="12" fill="black" />
-      <rect x="924" y="307" width="12" height="26" fill="black" />
+      <rect x="969" y="357" width="12" height="26" fill="black" />
     </mask>
-    <clipPath id="recClip"><rect x="747" y="232" width="56" height="156" rx="28" ry="16" /></clipPath>
+    <clipPath id="recClip"><rect x="740" y="282" width="56" height="136" rx="28" ry="16" /></clipPath>
   </defs>
   <rect width="1050" height="540" rx="12" fill="#171d24" />
   <g transform="translate(50,0)">
 
   <g mask="url(#cut)">
-    <!-- discharge: compressor -> valve 1 -> hot gas header -> condenser -->
-    <polyline class="pipe hot" points="110,212 110,60 775,60 775,95" />
-    <!-- cooling water -->
-    <polyline class="pipe water" points="930,470 930,157 860,157" />
-    <polyline class="pipe water" points="860,113 930,113 930,80" />
-    <!-- condensate drain; liquid line: receiver -> valve 3 -> mixing exchanger S3 -->
-    <line class="pipe liq" x1="775" y1="175" x2="775" y2="238" />
-    <polyline class="pipe liq" points="755,376 660,376 660,160 532,160 532,205" />
+    <!-- discharge: compressor -> valve 1 -> hot gas header -> condenser S3 -->
+    <polyline class="pipe hot" points="110,212 110,40 768,40 768,72" />
+    <!-- cooling water: valve 4 -> condenser S1 -> S2 -> return -->
+    <polyline class="pipe water" points="975,470 975,275 842,275 842,247" />
+    <polyline class="pipe water" points="842,72 842,52 975,52 975,14" />
+    <!-- condensate drain S4 -> receiver; liquid line: receiver -> valve 3 -> mixing exchanger S3 -->
+    <line class="pipe liq" x1="768" y1="247" x2="768" y2="288" />
+    <polyline class="pipe liq" points="748,406 660,406 660,160 532,160 532,205" />
     <!-- bypass: header -> valve 2 -> mixing exchanger S1 -->
-    <polyline class="pipe hot" points="370,60 370,410 458,410 458,380" />
+    <polyline class="pipe hot" points="370,40 370,410 458,410 458,380" />
     <!-- exchanger outlets -> tee -> suction line -> compressor -->
     <path class="pipe suc" d="M 458,205 V 180 H 377 A 7 7 0 0 0 363,180 H 280 V 440" />
     <polyline class="pipe suc" points="532,380 532,440 280,440" />
@@ -59,26 +59,36 @@
   <text x="596" y="192" text-anchor="middle">3</text><text class="lbl" x="596" y="207" text-anchor="middle">suction</text>
   <text class="lbl" x="596" y="221" text-anchor="middle">temperature</text>
   <!-- valve 4 -->
-  <polygon class="valve" points="917,307 943,307 917,333 943,333" />
-  <line class="stem" x1="930" y1="320" x2="908" y2="320" /><rect class="act" x="900" y="311" width="8" height="18" />
-  <text x="892" y="317" text-anchor="end">4</text><text class="lbl" x="892" y="332" text-anchor="end">cooling water</text>
+  <polygon class="valve" points="962,357 988,357 962,383 988,383" />
+  <line class="stem" x1="975" y1="370" x2="953" y2="370" /><rect class="act" x="945" y="361" width="8" height="18" />
+  <text x="937" y="367" text-anchor="end">4</text><text class="lbl" x="937" y="382" text-anchor="end">cooling water</text>
 
-  <text class="lbl" x="560" y="48" text-anchor="middle">hot gas header</text>
+  <text class="lbl" x="560" y="28" text-anchor="middle">hot gas header</text>
 
-  <!-- condenser -->
-  <rect class="vessel" x="690" y="95" width="170" height="80" rx="6" />
-  <text x="775" y="131" text-anchor="middle">condenser</text>
-  <text class="lbl" x="775" y="148" text-anchor="middle">brazed plate</text>
-  <text class="lbl" x="942" y="468">water in</text>
-  <text class="lbl" x="930" y="72" text-anchor="middle">water out</text>
+  <!-- condenser (drawn mirrored): refrigerant column (S3 top -> S4 bottom), water column (S1 bottom -> S2 top) -->
+  <rect class="vessel" x="750" y="72" width="110" height="175" rx="6" />
+  <rect class="liquid" x="752" y="143" width="52" height="33" style="opacity:0.25" />
+  <rect class="liquid" x="752" y="178" width="52" height="33" style="opacity:0.5" />
+  <rect class="liquid" x="752" y="213" width="52" height="33" style="opacity:0.7" />
+  <line x1="805" y1="76" x2="805" y2="243" stroke="#90a4ae" stroke-width="1" />
+  <text class="lbl" x="778" y="117" text-anchor="middle">refrig.</text>
+  <text class="lbl" x="833" y="164" text-anchor="middle">water</text>
+  <text class="port" x="758" y="66" text-anchor="end">S3</text>
+  <text class="port" x="760" y="260" text-anchor="end">S4</text>
+  <text class="port" x="852" y="66">S2</text>
+  <text class="port" x="850" y="260">S1</text>
+  <text x="872" y="150">condenser</text>
+  <text class="lbl" x="872" y="166">counterflow</text>
+  <text class="lbl" x="967" y="468" text-anchor="end">water in</text>
+  <text class="lbl" x="967" y="34" text-anchor="end">water out</text>
 
   <!-- receiver -->
-  <rect class="vessel" x="745" y="230" width="60" height="160" rx="30" ry="18" />
-  <rect class="liquid" x="745" y="324" width="60" height="64" clip-path="url(#recClip)" />
-  <text x="815" y="252">receiver</text>
+  <rect class="vessel" x="738" y="280" width="60" height="140" rx="30" ry="18" />
+  <rect class="liquid" x="738" y="362" width="60" height="56" clip-path="url(#recClip)" />
+  <text x="806" y="302">receiver</text>
   <!-- liquid pressure transmitter -->
-  <circle class="probe" cx="722" cy="376" r="6" />
-  <text class="lbl" x="722" y="400" text-anchor="middle">liquid pressure</text>
+  <circle class="probe" cx="720" cy="406" r="6" />
+  <text class="lbl" x="720" y="430" text-anchor="middle">liquid pressure</text>
 
   <!-- mixing exchanger: gas column (S1 bottom -> S2 top), quench column (S3 top -> S4 bottom) -->
   <rect class="vessel" x="440" y="205" width="110" height="175" rx="6" />
