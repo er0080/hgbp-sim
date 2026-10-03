@@ -134,7 +134,7 @@
     "alpha_r_2ph": 1594.0,
     "alpha_r_1ph": 133.0,
     "alpha_sc": 607.0,
-    "cond_sc_film": 0.02,
+    "cond_sc_film": 0.09,
     "alpha_w0": 1594.0,
     "mdot_w_ref": 1.75,
     "cp_w": 4180.0,

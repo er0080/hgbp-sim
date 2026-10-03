@@ -111,7 +111,9 @@ class HGBPPlant:
     T_mw0..             mixing exchanger plate walls (top -> bottom)
     T_sw                suction line wall
     P_d, h_d, T_dw      discharge volume and discharge line wall
-    P_i, h_i            intermediate section
+    P_i, h_i            intermediate section, condensing zone (header, condenser, drain,
+                        receiver vapor space)
+    h_L                 receiver liquid pool (with its mass M_L below)
     T_cw0..             condenser plate walls + water content (top -> bottom)
     T_rw                receiver shell
     T_sh, N             compressor shell temperature, speed [rpm]
@@ -120,6 +122,7 @@ class HGBPPlant:
     mm, Wm              lagged mass-flow and power sensors
     M_s, M_d, M_i       refrigerant mass of the suction side, discharge, intermediate section
     U_s, U_d, U_i       their internal energy
+    M_L                 refrigerant mass of the receiver pool (part of M_i)
     h_g0..h_g{MX-1}     bypass gas side enthalpies (algebraic, kept for the mass accounting)
     """
     MX = MX
@@ -134,6 +137,7 @@ class HGBPPlant:
     T_SW = L.X_T_SW
     P_D, H_D, T_DW = L.X_P_D, L.X_H_D, L.X_T_DW
     P_I, H_I, T_RW = L.X_P_I, L.X_H_I, L.X_T_RW
+    H_L, M_L = L.X_H_L, L.X_M_L                     # receiver liquid pool
     TCW = slice(L.X_TCW, L.X_TCW + MX)
     T_SH, N_ = L.X_T_SH, L.X_N
     U1, U2, U3, U4 = L.X_U1, L.X_U1 + 1, L.X_U1 + 2, L.X_U1 + 3
@@ -433,6 +437,10 @@ class HGBPPlant:
         x[:, self.TCW] = T_amb[:, None]
         x[:, self.P_D], x[:, self.H_D] = P, h_d
         x[:, self.P_I], x[:, self.H_I] = P, h_i
+        # the intermediate section's liquid sits in the receiver pool (what it cannot hold
+        # stays in the condensing zone, flooding the condenser)
+        M_pool = np.where(wet, np.minimum(M_li, 0.98 * rho_l * (p.rec_V + p.V_lines["liq"])), 0.0)
+        x[:, self.M_L], x[:, self.H_L] = M_pool, sat["h_l"]
         for i in (self.T_SW, self.T_DW, self.T_RW, self.T_SH, self.TM_S, self.TM_D, self.TM_CO):
             x[:, i] = T_amb
         u_pos = np.zeros((m, self.NU)) if u_pos is None else np.broadcast_to(np.asarray(u_pos, float), (m, self.NU))
@@ -440,7 +448,7 @@ class HGBPPlant:
         self._sync_mass(x, idx)
         # the vapor above is taken slightly superheated: give the intermediate section
         # exactly the remaining mass so that the stand holds the requested charge
-        rho_i = (charge - x[:, self.M_S] - x[:, self.M_D]) / p.V_i
+        rho_i = (charge - x[:, self.M_S] - x[:, self.M_D] - M_pool) / (p.V_i - M_pool / rho_l)
         x[:, self.H_I] = pr.h_from_P_rho(x[:, self.P_I], rho_i)
         self._sync_mass(x, idx)
         self.x[idx] = x

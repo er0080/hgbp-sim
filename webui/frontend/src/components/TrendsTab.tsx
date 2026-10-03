@@ -15,7 +15,8 @@ const CHART_DEFS: { title: string; series: Def[] }[] = [
     { key: "P_i", label: "intermediate", color: C.orange, qty: "P" }, { key: "sp_P_i", label: "intermediate SP", color: C.orange, qty: "P", ...SP },
     { key: "P_s", label: "suction", color: C.blue, qty: "P" }, { key: "sp_P_s", label: "suction SP", color: C.blue, qty: "P", ...SP } ] },
   { title: "Superheat and subcooling", series: [
-    { key: "SH", label: "superheat", color: C.green, qty: "dT" }, { key: "SC", label: "subcooling", color: C.cyan, qty: "dT" } ] },
+    { key: "SH", label: "superheat", color: C.green, qty: "dT" }, { key: "SC", label: "subcooling", color: C.cyan, qty: "dT" },
+    { key: "SC_L", label: "receiver liquid subcooling", color: C.purple, qty: "dT", dash: [2, 3] } ] },
   { title: "Valve positions", series: [
     { key: "u1", label: "1 discharge pressure", color: C.red, unit: "-" }, { key: "u2", label: "2 suction pressure", color: C.blue, unit: "-" },
     { key: "u3", label: "3 suction temperature", color: C.green, unit: "-" }, { key: "u4", label: "4 cooling water", color: C.cyan, unit: "-" } ] },
@@ -23,7 +24,8 @@ const CHART_DEFS: { title: string; series: Def[] }[] = [
     { key: "T_d", label: "discharge", color: C.red, qty: "T" }, { key: "T_s", label: "suction", color: C.blue, qty: "T" },
     { key: "sp_T_s", label: "suction SP", color: C.blue, qty: "T", ...SP },
     { key: "T_co", label: "liquid to valve 3", color: C.cyan, qty: "T" }, { key: "T_sh", label: "shell", color: C.orange, qty: "T" },
-    { key: "T_cw", label: "condenser wall", color: C.purple, qty: "T" }, { key: "T_wo", label: "water out", color: C.grey, qty: "T" } ] },
+    { key: "T_cw", label: "condenser wall", color: C.purple, qty: "T" }, { key: "T_wo", label: "water out", color: C.grey, qty: "T" },
+    { key: "T_L", label: "receiver liquid", color: C.pink, qty: "T" } ] },
   { title: "Mixing exchanger", series: [
     { key: "T_go", label: "gas outlet S2", color: C.red, qty: "T" }, { key: "T_qo", label: "quench outlet S4", color: C.cyan, qty: "T" },
     { key: "T_s", label: "suction probe", color: C.blue, qty: "T" }, { key: "Q_mx", label: "duty", color: C.orange, qty: "heatk" } ] },
@@ -32,7 +34,8 @@ const CHART_DEFS: { title: string; series: Def[] }[] = [
     { key: "N", label: "speed", color: C.green, unit: "rpm" }, { key: "mdot_w", label: "water", color: C.cyan, qty: "flow_w" } ] },
   { title: "Inventory and charge", series: [
     { key: "rec_level", label: "receiver level", color: C.cyan, unit: "-" }, { key: "cond_flood", label: "condenser flooded", color: C.purple, unit: "-" },
-    { key: "M_q_liq", label: "liquid in mixing exch.", color: C.blue, qty: "mass" }, { key: "y_liq", label: "liquid share at compressor", color: C.red, unit: "-" },
+    { key: "M_q_liq", label: "liquid in mixing exch.", color: C.blue, qty: "mass" },
+    { key: "M_cl", label: "liquid in condenser", color: C.pink, qty: "mass" }, { key: "y_liq", label: "liquid share at compressor", color: C.red, unit: "-" },
     { key: "charge", label: "charge", color: C.yellow, qty: "mass" } ] },
 ];
 

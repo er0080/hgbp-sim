@@ -108,20 +108,24 @@ class PlantParams:
     alpha_r_2ph: float = 1594.0  # refrigerant -> plate heat transfer coefficient while condensing [W/m^2/K]
     alpha_r_1ph: float = 133.0  # refrigerant -> plate heat transfer coefficient for vapor (desuperheating) [W/m^2/K]
     alpha_sc: float = 607.0     # liquid -> plate heat transfer coefficient in the subcooled (flooded) zone [W/m^2/K]
-    cond_sc_film: float = 0.02  # share of the plate area that subcools the draining condensate while the condenser is not flooded
+    cond_sc_film: float = 0.09  # share of the plate area (at the bottom) over which the draining condensate subcools against the wall while the condenser is not flooded
     alpha_w0: float = 1594.0    # plate -> water heat transfer coefficient at the reference water flow; scales with flow^0.8 [W/m^2/K]
     mdot_w_ref: float = 1.75    # water flow at which alpha_w0 applies [kg/s]
     cp_w: float = 4180.0        # water specific heat [J/kg/K]
     rho_w: float = 1000.0       # cooling water density [kg/m^3]
     UA_ca: float = 5.0          # condenser -> ambient conductance [W/K]
+    cond_tau_drain: float = 1.0  # condensate drain time constant: liquid beyond the condensing film's hold-up drains to the receiver at this rate (estimate) [s]
 
     # ------------------------------------------------------ liquid receiver
     # Standard Refrigeration UR66 (MP): 61 lb R22 pumpdown capacity; vertical, dip tube outlet
     rec_V: float = 26.5e-3      # receiver internal volume (from the pumpdown rating at 90 % full, 90 degF) [m^3]
     rec_dip: float = 0.04       # dip tube inlet height as a share of the receiver volume; below it vapor enters the liquid line
     rec_mass: float = 25.0      # receiver shell weight (estimate) [kg]
-    rec_UA_r: float = 150.0     # receiver shell -> refrigerant conductance [W/K]
+    rec_UA_r: float = 150.0     # receiver shell -> liquid conductance, full receiver (scales with the level) [W/K]
+    rec_UA_rv: float = 15.0     # receiver shell -> vapor conductance, empty receiver (scales with the vapor space) [W/K]
     rec_UA_a: float = 3.0       # receiver shell -> ambient conductance [W/K]
+    rec_UA_lv: float = 20.0     # vapor -> subcooled liquid surface conductance in the receiver: vapor condenses on a subcooled pool at this rate (estimate) [W/K]
+    rec_tau_flash: float = 1.0  # flashing time constant of a superheated receiver pool (after a pressure drop) [s]
 
     # ------------------------------------------ mixing exchanger (brazed plate)
     # Alfa Laval ACH-70X-78M-F, S2/S3 up: quench liquid S3 (top) -> S4, bypass gas S1 (bottom) -> S2
@@ -234,6 +238,7 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
     "V_comp_suc": 0.2, "V_comp_dis": 0.3,
     "L_dis": 0.25, "L_hdr": 0.25, "L_bp": 0.5, "L_q": 0.5, "L_mo": 0.5, "L_suc": 0.25,
     "L_drn": 0.5, "L_liq": 0.25, "rec_V": 0.1, "rec_dip": 0.3, "rec_mass": 0.2, "rec_UA_r": 0.3,
+    "rec_UA_rv": 0.3, "rec_UA_lv": 0.5, "rec_tau_flash": 0.5, "cond_tau_drain": 0.5,
     "UA_sg": 0.3, "UA_sa": 0.3, "UA_dg": 0.3, "UA_da": 0.3,
     "alpha_r_2ph": 0.25, "alpha_r_1ph": 0.25, "alpha_w0": 0.25, "UA_ca": 0.3,
     "alpha_sc": 0.25, "cond_sc_film": 0.3,
@@ -372,6 +377,7 @@ _RANGES: dict[str, tuple[float, float]] = {
     "cond_n_plates": (4.0, 124.0), "mx_n_plates": (4.0, 124.0), "rec_dip": (0.0, 0.5),
     "cond_sc_film": (0.0, 0.5), "y_flood": (1e-4, 0.5), "tee_tau_evap": (0.01, 10.0), "comp_x_min": (0.0, 1.0),
     "V_comp_suc": (0.0, 0.1), "V_comp_dis": (0.0, 0.1), "rec_V": (1e-3, 1.0),
+    "cond_tau_drain": (0.05, 60.0), "rec_tau_flash": (0.05, 60.0),
     **{f"{a}_{k}": (0.0, 0.2 if a != "L" else 50.0) for a in ("D", "t", "L")
        for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")},
     **{f"K_{k}": (0.0, 100.0) for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")},

@@ -40,6 +40,7 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
   const u = useUnits();
   const running = snap.compressor.running;
   const rec = clamp01(t.rec_level), flood = clamp01(t.cond_flood);
+  const flashing = t.mdot_lv < -1.0;                    // the receiver pool flashes [g/s]
   const xq: number[] = t.x_q ?? [], Tq: number[] = t.T_q ?? [], Tg: number[] = t.T_g ?? [];
   const xc: number[] = t.x_c ?? [], Tc: number[] = t.T_c ?? [], Twc: number[] = t.T_wc ?? [];
   // refrigerant cell: quality while two-phase, temperature as vapor or liquid
@@ -139,9 +140,10 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <text x={CD.x + CD.w + 8} y={CD.y + 84}>SC {u.fmtU("dT", m.SC)}</text>
         <text x={CD.x + CD.w + 8} y={CD.y + 98} style={{ fill: flood > 0.05 ? "var(--warn)" : undefined }}>flooded {fmt(flood * 100, 0)} %</text>
         <text x={CD.x + CD.w + 8} y={CD.y + 112}>ΔP {u.fmtU("dP", t.dP_cr)}</text>
-        <text x={CD.x + CD.w + 8} y={CD.y + 134} className="lbl">water (S1 → S2)</text>
-        <text x={CD.x + CD.w + 8} y={CD.y + 148}>{u.fmtU("flow_w", t.mdot_w)}</text>
-        <text x={CD.x + CD.w + 8} y={CD.y + 162}>ΔP {u.fmtU("dP", t.dP_cw)}</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 126} className="lbl">liquid {u.fmtU("mass", t.M_cl)}</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 146} className="lbl">water (S1 → S2)</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 160}>{u.fmtU("flow_w", t.mdot_w)}</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 174}>ΔP {u.fmtU("dP", t.dP_cw)}</text>
         <Valve {...V.v4} open={m.u4} label="4 cooling water" side="left" />
         <text x={WX - 8} y={462} textAnchor="end" className="lbl">water in</text>
         <text x={WX - 8} y={476} textAnchor="end" className="lbl">{u.fmtU("T", m.T_wi)}</text>
@@ -153,7 +155,10 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <rect x={REC.x} y={REC.y + REC.h - 2 - (REC.h - 4) * rec} width={REC.w} height={(REC.h - 4) * rec + 2} className="liquid" clipPath="url(#recClip)" />
         <text x={REC.x + REC.w + 8} y={REC.y + 18} className="lbl">receiver</text>
         <text x={REC.x + REC.w + 8} y={REC.y + 34}>level {fmt(rec * 100, 0)} %</text>
-        <text x={REC.x + REC.w + 8} y={REC.y + 48} className="lbl">{t.ll_fill < 1 ? "vapor in liquid line" : "liquid seal"}</text>
+        <text x={REC.x + REC.w + 8} y={REC.y + 48}>{u.fmtU("T", t.T_L)}</text>
+        <text x={REC.x + REC.w + 8} y={REC.y + 62} className="lbl" style={{ fill: flashing ? "var(--warn)" : undefined }}>
+          {flashing ? "flashing" : `subcooled ${u.fmtU("dT", t.SC_L)}`}</text>
+        <text x={REC.x + REC.w + 8} y={REC.y + 76} className="lbl">{t.ll_fill < 1 ? "vapor in liquid line" : "liquid seal"}</text>
 
         <Valve {...V.v3} open={m.u3} label="3 suction temp." />
         <text x={LX + 8} y={liquidY - 36} className="lbl">quench</text>
