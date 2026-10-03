@@ -97,6 +97,40 @@ through it is quasi-steady:
 At the rating point the hot gas enters at 77 °C, 49 K superheated; the top wall runs above
 the saturation temperature (dry desuperheating), the cells below condense.
 
+**Compared with the mixing exchanger's quench side.** Both have five cells with their own
+plate walls and a counterflow stream on the other side, but the quench cells are dynamic
+finite volumes while the condenser's refrigerant side is quasi-steady, like the mixer's
+gas side:
+
+| | quench side | condenser, refrigerant side |
+|---|---|---|
+| cell states | enthalpy per cell, integrated | none: the profile follows the walls at every evaluation |
+| mass and energy | per cell, in the suction side's conserved group | the intermediate section's single equilibrium volume |
+| liquid hold-up | per cell, counted in the charge | only when flooded; the condensing film is not counted |
+| flow | valve 3 and the pressure solve (can reverse between cells) | what the plates condense |
+| transport delay | yes (part of the valve 3 -> suction temperature response) | none; the dynamics come from the wall mass only |
+| pressure | each cell at its own pressure (static head, friction from the plate geometry) | all cells at `P_i`; lumped `cond_Kv_r` drop |
+| regime change | dry-out share of the cell's area, blended over 15 kJ/kg | wet / dry wall, a sharp switch |
+| coefficients | scale with flow (`mx_alpha_e` ^0.5, `mx_alpha_v0` ^0.8) | constant (`alpha_r_2ph`, `alpha_r_1ph`); water side ^0.8 |
+| steady-state solver | own inner solve (`march_mixer`, `newton_mixer`) | wall temperatures as outer unknowns |
+| displayed per cell | the cell's state (= its outlet) | the cell's mean above the liquid |
+
+This keeps the intermediate section's inventory, flooding and subcooling (`cond_sc_film`)
+unchanged. The cost is the refrigerant-side lag inside the condenser, which matters less
+for the condensing pressure than the quench side's lag does for the suction temperature:
+the plates and their water (23.6 kJ/K) dominate the condenser's response.
+
+**Possible improvements** (in increasing effort):
+* scale `alpha_r_2ph` and `alpha_r_1ph` with the condensing flow, as on the quench side;
+* count the condensing film's liquid in the charge distribution (void fraction per cell),
+  ahead of the receiver in the liquid placement;
+* smooth the wet / dry wall switch over a small band, like the quench side's dry-out;
+* per-cell condensing pressure from the column's static head and friction;
+* dynamic refrigerant cells (enthalpy states with their own hold-up), which would split
+  the intermediate section into a common-pressure group with a conserved-state
+  projection like the suction side's, and rework the receiver and flooding placement
+  around it.
+
 ### Suction side
 One common pressure `P_s`, taken at the compressor suction port. The cells are five
 quench-side cells of the mixing exchanger (enthalpy states, top to bottom), each against
