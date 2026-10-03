@@ -511,6 +511,7 @@ def solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T
     it_total = 0
     M_suc = np.inf
     rn = np.inf
+    rn_prev, stalled = np.inf, 0
     for rnd in range(rounds):
         rn, its = lm(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, zlo, zhi, prof, M_g, charge, fill, use_fill,
                      max_iter, tol, x, dx, a, hg, NZL + 1 if pool_lm else NZL)
@@ -534,6 +535,11 @@ def solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T
                  pool_lm)
         rn = _norm(r)
         if rn <= tol and rm < POOL_TOL_M and rh < POOL_TOL_H and (use_fill or dM < 1e-4):
+            break
+        # no equilibrium (an infeasible point): the residual stays put from round to round
+        stalled = stalled + 1 if abs(rn - rn_prev) < 0.02 * rn_prev else 0
+        rn_prev = rn
+        if stalled >= 2:
             break
 
     build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill, x)
