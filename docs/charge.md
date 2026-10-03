@@ -30,7 +30,7 @@ The mass in each volume is added up at a fixed reference condition:
 |---|---|
 | Suction side (mixing exchanger, lines, compressor inside) | vapor at the saturation pressure of -10 degC, 10 K superheat |
 | Discharge (compressor inside, discharge line) | vapor at the intermediate pressure + 2.5 bar, 75 degC |
-| Intermediate section | saturated at 40 degC: liquid line full, receiver filled to `level` (40 %), the rest (condenser, drain, header, receiver vapor space) vapor |
+| Intermediate section | saturated at 40 degC: liquid line full, receiver filled to `level` (40 %), the rest (condenser, drain, header, receiver vapor space) vapor; the condenser's running hold-up is not included |
 
 ```math
 m = \rho_s V_s + \rho_d V_d + \rho_l V_\mathrm{liq} + \rho_v \left( V_i - V_\mathrm{liq} \right),
@@ -51,36 +51,43 @@ The reference condition is set by the function's keyword arguments (`T_evap=263.
 ## 3. Relation to the stand's own operating point
 
 The reference condition is not tied to the stand's rating point (7 degC evaporating,
-28 degC intermediate). With the receiver this barely matters: at the rating point the
-nominal charge gives a receiver level of about 38 % instead of 40 %.
+28 degC intermediate). At the rating point the nominal charge gives a receiver level of
+about 35 % instead of 40 %. The difference is mostly the condenser's own liquid, about
+0.6 kg: the condensing film and the condensate draining to the receiver.
 
-The actual liquid inventory at any operating point follows from mass conservation:
-whatever the suction side, the discharge volume and the vapor space do not hold ends up
-as liquid in the receiver, and in the condenser once the receiver is full. Different
-operating points with the same charge therefore show different receiver levels. The
-condensing area and the subcooling stay the same as long as the receiver neither
-overflows nor drops below its dip tube.
+The actual liquid inventory at any operating point follows from mass conservation. Whatever
+the suction side, the discharge volume, the vapor space and the condenser's hold-up do not
+hold ends up as liquid in the receiver, and in the condenser once the receiver is full.
+Different operating points with the same charge therefore show different receiver levels.
+
+The receiver pool keeps its own temperature, so its density, and with it the level, also
+follows the subcooling: a subcooled pool is denser and holds more. The condensing area and
+the steady subcooling stay the same as long as the receiver neither overflows nor drops
+below its dip tube.
 
 ## 4. Charge window
 
 With the defaults at the rating point:
 
-* **Undercharge:** at about 0.4 times the nominal charge the receiver level reaches the
-  dip tube inlet. Vapor enters the liquid line, valve 3 passes flashing two-phase
+* **Undercharge:** below about 0.42 times the nominal charge the receiver level reaches
+  the dip tube inlet. Vapor enters the liquid line, valve 3 passes flashing two-phase
   fluid, and the suction temperature loop loses authority.
-* **Normal range:** between about 0.4 and 2.1 times nominal only the receiver level
-  changes (5 % to 99 %).
-* **Overcharge:** above about 2.1 times the nominal charge the receiver is full (about
-  27.6 kg of liquid). Liquid backs up into the condenser, removes condensing area and
-  subcools the liquid. The water valve then opens further to hold the intermediate
-  pressure, and eventually the discharge pressure trips.
+* **Normal range:** between about 0.45 and 2.2 times nominal only the receiver level
+  changes (5 % to 100 %). The subcooling stays at about 3 K.
+* **Overcharge:** above about 2.2 times the nominal charge the receiver is full (about
+  29 kg of liquid). The drain backs up and liquid floods the condenser from the bottom,
+  removing condensing area. The water valve opens further to hold the intermediate
+  pressure. The condensate draining through the flooded plates subcools strongly: at 2.25,
+  2.3 and 2.4 times nominal, 6, 13 and 30 % of the plates are flooded, with 4, 7 and 13 K
+  of subcooling. The colder, denser pool then takes back some of the liquid. Further up,
+  the water valve saturates and the discharge pressure trips.
 
 The exact limits depend on the operating point, because the vapor inventory does.
 
 ## 5. Cold start
 
 At a cold start (compressor off, stand equalized at ambient) the liquid sits in the
-receiver. A share `cold_liquid_in_suction` can be placed on the suction side instead
+receiver; what it cannot hold stays in the condenser. A share `cold_liquid_in_suction` can be placed on the suction side instead
 (compressor first, then suction line and mixing exchanger), as after refrigerant migration
 during a long off cycle. A charge too small to reach saturation at ambient leaves the whole
 stand with superheated vapor at a lower pressure.

@@ -53,7 +53,7 @@ At the rating point the drops are:
 | Side | Rating flow | Drop |
 |---|---|---|
 | Condenser, refrigerant | 0.13 kg/s | +0.6 kPa net (1.5 kPa friction less 0.95 kPa head) |
-| Condenser, water | 0.52 kg/s | 0.8 kPa |
+| Condenser, water | 0.53 kg/s | 0.8 kPa |
 | Mixing exchanger, gas | 0.52 kg/s | 20 kPa |
 | Mixing exchanger, quench | 0.13 kg/s | 10.9 kPa: distributor 6.7, ports and connections 2.4 (S3 0.2, S4 2.2), channels 1.8 net of 0.25 static gain |
 
@@ -62,8 +62,8 @@ the compressor suction port, where `P_s` is measured. They boil about 0.5 K warm
 saturation temperature the stand displays.
 
 **Why some of these are small.** Both exchangers are large for the flows they carry. The ACH-70X-78
-is rated about 18 TR (63 kW), and the condenser runs at 31 kW. The cooling water is 0.52 kg/s, with a
-14.4 K rise, over 39 channels: about 48 kg/h per channel. Alfa Laval's design examples run at
+is rated about 18 TR (63 kW), and the condenser runs at 31 kW. The cooling water is 0.53 kg/s, with a
+14.3 K rise, over 39 channels: about 49 kg/h per channel. Alfa Laval's design examples run at
 200-2000 kg/h per channel (section 2). Condensing R410A reaches only about 19 kg/(m2 s) in the channels.
 The gas side is the exception: 0.52 kg/s of vapor at 10 bar reaches about 21 m/s in the ports. On the
 quench side most of the drop is in the distributor and the 7/8 in connections, not in the channels.

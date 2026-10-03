@@ -63,7 +63,7 @@ class Interlock:
         off_ok = (st == ST_OFF) & (self.t_state >= self.min_off_time)
         blocked = (st == ST_OFF) & run_req & ~(perm & off_ok)
         start = (st == ST_OFF) & run_req & perm & off_ok
-        stop = np.isin(st, (ST_STARTING, ST_RUNNING)) & ~run_req & (self.t_state >= self.min_run_time)
+        stop = ((st == ST_STARTING) | (st == ST_RUNNING)) & ~run_req & (self.t_state >= self.min_run_time)
         up = (st == ST_STARTING) & (N >= 0.9 * N_sp)
         down = (st == ST_STOPPING) & (N < 0.5 * N_min)
         new = st.copy()
@@ -78,7 +78,7 @@ class Interlock:
         switched = new != st
         self.state = new
         self.t_state = np.where(switched, 0.0, self.t_state + dt)
-        N_cmd = np.where(np.isin(new, (ST_STARTING, ST_RUNNING)), N_sp, 0.0)
+        N_cmd = np.where((new == ST_STARTING) | (new == ST_RUNNING), N_sp, 0.0)
         return dict(N_cmd=N_cmd, blocked=blocked, switched=switched, start=start, stop=stop)
 
     def acknowledge(self, idx=None) -> None:

@@ -56,7 +56,7 @@ HISTORY_CHANNELS = (
     "SH", "SC", "mdot", "W", "N", "u1", "u2", "u3", "u4",
     "sp_P_d", "sp_P_s", "sp_T_s", "sp_P_i", "sp_N",
     "x_out", "y_liq", "x_qo", "rec_level", "cond_flood", "M_q_liq", "T_qo", "T_go", "charge", "T_sh", "T_cw",
-    "mdot_w", "state", "Q_w", "Q_mx",
+    "mdot_w", "state", "Q_w", "Q_mx", "T_L", "SC_L", "M_cl",
 )
 
 
@@ -368,19 +368,23 @@ class LiveStand:
         consistent at the next sub-step."""
         pl, pr = self.plant, self.props
         x = pl.x[0]
-        if dm > 0:
+        M_L, h_L = float(x[HGBPPlant.M_L]), float(x[HGBPPlant.H_L])
+        if dm > 0:                          # into the receiver pool
             h_in = float(pr.sat(pr.P_sat(np.array([self.T_amb])))["h_l"][0])
-        else:
-            a = pl.outputs()
-            seal = float(a["ll_fill"][0]) >= 1.0
-            h_i = float(x[HGBPPlant.H_I])
-            h_in = float(pr.sat(np.array([x[HGBPPlant.P_I]]))["h_l"][0]) if seal else h_i
+            x[HGBPPlant.H_L] = (M_L * h_L + dm * h_in) / (M_L + dm)
+            x[HGBPPlant.M_L] = M_L + dm
+        elif float(pl.outputs()["ll_fill"][0]) >= 1.0:     # pool liquid through the liquid line
+            h_in = h_L
+            x[HGBPPlant.M_L] = max(M_L + dm, 0.0)
+        else:                               # vapor from the condensing zone
+            h_in = max(float(x[HGBPPlant.H_I]), float(pr.sat(np.array([x[HGBPPlant.P_I]]))["h_v"][0]))
         x[HGBPPlant.M_I] += dm
         x[HGBPPlant.U_I] += dm * h_in       # (P, h) follow through the conservation projection
         pl.aux = None
 
-    def step(self) -> dict:
-        """One control interval.  Returns the snapshot."""
+    def step(self, snapshot: bool = True) -> dict | None:
+        """One control interval.  Returns the snapshot (None without ``snapshot``:
+        the web UI shows at most ten a second, however fast the stand runs)."""
         pl, p, dt = self.plant, self.plant.p, self.dt_ctrl
         meas = pl.measure(noise=self.noise)
         u = np.zeros(4)
@@ -418,7 +422,13 @@ class LiveStand:
         self.t += dt
         self.step_count += 1
         self._record(aux, meas)
-        return self.snapshot(aux, meas, trips)
+        self._last = (aux, meas, trips)
+        return self.snapshot(aux, meas, trips) if snapshot else None
+
+    def last_snapshot(self) -> dict:
+        """Snapshot of the last control step (from its outputs, no recomputation)."""
+        last = getattr(self, "_last", None)
+        return self.snapshot(*last) if last is not None else self.snapshot()
 
     # --------------------------------------------------------------- output
     def _record(self, aux, meas) -> None:
@@ -436,7 +446,7 @@ class LiveStand:
             T_qo=aux["T_qo"][0] - C2K, T_go=aux["T_go"][0] - C2K,
             charge=self.plant.conserved_mass()[0], T_sh=aux["T_sh"][0] - C2K, T_cw=aux["T_cw"][0] - C2K,
             mdot_w=aux["mdot_w"][0] * 60.0, state=int(self.interlock.state[0]), Q_w=aux["Q_w"][0],
-            Q_mx=aux["Q_mx"][0] / 1000.0,
+            Q_mx=aux["Q_mx"][0] / 1000.0, T_L=aux["T_L"][0] - C2K, SC_L=aux["SC_L"][0], M_cl=aux["M_cl"][0],
         )
         for k, v in row.items():
             self.history[k].append(float(v))
@@ -531,6 +541,8 @@ class LiveStand:
                       M_q_liq=f(aux["M_q_liq"]), Q_mx=f(aux["Q_mx"]),
                       x_q=[float(v) for v in aux["x_q"][0]], T_q=[float(v) - C2K for v in aux["T_q"][0]],
                       T_g=[float(v) - C2K for v in aux["T_g"][0]], T_mw=[float(v) - C2K for v in aux["T_mw"][0]],
+                      T_L=f(aux["T_L"]) - C2K, SC_L=f(aux["SC_L"]), M_L=f(aux["M_L"]), M_cl=f(aux["M_cl"]),
+                      M_film=f(aux["M_film"]), mdot_drn=f(aux["mdot_drn"]) * 1e3, mdot_lv=f(aux["mdot_lv"]) * 1e3,
                       x_c=[float(v) for v in aux["x_c"][0]], T_c=[float(v) - C2K for v in aux["T_c"][0]],
                       T_wc=[float(v) - C2K for v in aux["T_wc"][0]], T_cwc=[float(v) - C2K for v in aux["T_cwc"][0]],
                       T_sh=f(aux["T_sh"]) - C2K, T_cw=f(aux["T_cw"]) - C2K, T_rw=f(aux["T_rw"]) - C2K,

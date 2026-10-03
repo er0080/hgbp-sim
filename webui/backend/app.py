@@ -63,12 +63,13 @@ class Runner(threading.Thread):
             with self.lock:
                 t_hold = time.monotonic()
                 while True:
-                    self.snapshot = st.step()
+                    st.step(snapshot=False)
                     steps += 1
                     next_t += st.dt_ctrl / st.speed_factor
                     now = time.monotonic()
                     if next_t > now or now - t_hold > self.HOLD_MAX or st.paused:
                         break
+                self.snapshot = st.last_snapshot()        # one per hold: the stream sends at most 10/s
             if next_t < now - 0.5:
                 next_t = now                   # far behind: the stand runs flat out, drop the backlog
             time.sleep(max(next_t - time.monotonic(), self.YIELD))

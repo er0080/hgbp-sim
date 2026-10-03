@@ -43,11 +43,15 @@ at every setpoint change and needs several minutes to settle.
 
 Properties that shape the network design:
 
-* **Hidden state.** The receiver level (visible only on a sight glass), the liquid held
-  up and the plate temperatures in the mixing exchanger, the compressor shell temperature
-  and the condenser wall temperature are not measured but determine the plant gains and
-  the time constants (about a minute for the suction temperature response to valve 3, up
-  to ~20 min for the shell). The charge is also hidden.
+* **Hidden state.** Several quantities are not measured but set the plant gains and time
+  constants: the receiver level (visible only on a sight glass), the receiver liquid's
+  temperature, the liquid held up and the plate temperatures in the mixing exchanger, the
+  liquid in the condenser, the compressor shell temperature and the condenser wall
+  temperatures. The time constants range from about a minute for the suction temperature
+  response to valve 3 to about 20 minutes for the shell. The charge is also hidden.
+* **The receiver lags the pressure.** A rise in the intermediate pressure leaves the
+  receiver liquid subcooled for minutes. A fall makes it flash: valve 3 then receives flash
+  gas and passes less liquid for a given opening, just when the quench loop needs it.
 * **Wide operating range.** Valve gains vary by more than an order of magnitude over
   their stroke; gas valves choke; the liquid valve flashes.
 * **Integral action needed.** Sensor bias, model mismatch and slow drifts require
@@ -248,7 +252,9 @@ closed, valve 4 to 30 % (the expert's rest positions).
 * Supporting physical indicators that must agree before the advisory is shown (both are
   visible to an operator and make the estimate auditable): undercharge = valve 3 near
   fully open with superheat above setpoint and subcooling near 0 K; overcharge =
-  subcooling above 8 K with valve 4 unusually open for the condensing temperature.
+  subcooling above 8 K with valve 4 unusually open for the condensing temperature. Use
+  the steady subcooling only: after an intermediate pressure change the receiver takes
+  minutes to settle, and the subcooling swings by several kelvin either way.
 
 ### 6.4 Steady-state (measurement valid) predicate
 

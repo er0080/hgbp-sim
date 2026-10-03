@@ -43,12 +43,16 @@ water inlet temperature.  Total refrigerant charge is a parameter.
 
 Model structure
 ---------------
-* Discharge volume (compressor -> valve 1) and intermediate section (header,
-  condenser, drain, receiver, liquid line) are lumped (P, h) volumes.  In the
-  intermediate section liquid collects in the order receiver (below the dip
-  tube), liquid line, receiver, drain, condenser, header: the condenser keeps
-  its full condensing area until the receiver is full, and the liquid seal at
-  valve 3 is lost once the receiver level drops below the dip tube.
+* The discharge volume (compressor -> valve 1) is a lumped (P, h) volume.  The
+  intermediate section has two zones at one pressure P_i: the condensing zone
+  (header, condenser, drain, receiver vapor space; (P, h) in equilibrium, with
+  the condenser's film and draining condensate) and the receiver's liquid pool
+  (receiver and liquid line; its own mass and temperature).  The pool lags the
+  pressure: subcooled after a rise (vapor condenses on it slowly), flashing
+  after a drop (valve 3 then gets flash gas).  The pool fills the receiver up
+  to the dip tube, the liquid line, then the rest of the receiver; below the
+  dip tube valve 3 loses its liquid seal, and a full receiver blocks the drain
+  so that liquid floods the condenser.
 * The condenser has ``MX`` plate wall cells (top -> bottom), like the mixing
   exchanger.  Its refrigerant side is quasi-steady: the hot gas is marched from
   S3 down the cells to the liquid (wet-wall desuperheating, condensation along
@@ -76,10 +80,11 @@ valve 3 each discharge through their exchanger side in series, and the quench
 cells boil at their own pressure along the S3 -> S4 column.
 
 Mass and internal energy of every volume (the suction side as one group) are
-integrated as conserved states; after every sub-step (P, h) are projected
-back onto them (a bracketed density-energy flash for the discharge and
-intermediate volumes, a Newton correction of the common pressure and a
-uniform enthalpy shift for the suction side).  Volumes that are (nearly)
+integrated as conserved states (with the receiver pool's mass and enthalpy);
+after every sub-step (P, h) are projected back onto them (a bracketed
+density-energy flash for the discharge volume and for the condensing zone in
+the volume the pool leaves free, a Newton correction of the common pressure
+and a uniform enthalpy shift for the suction side).  Volumes that are (nearly)
 liquid-full are integrated with a finer sub-step because their pressure
 dynamics are stiff.
 
@@ -102,6 +107,48 @@ MX = L.MX       # finite-volume cells per side of the mixing exchanger and of th
 G = km.G        # gravity [m/s^2]
 
 
+class Outputs(dict):
+    """Auxiliary outputs by name (layout.AUX_FIELDS) over their array: each is a
+    view into it, taken on first access (a step reads a few dozen of them)."""
+    __slots__ = ("_arr",)
+
+    def __init__(self, arr, **extra):
+        super().__init__(**extra)
+        self._arr = arr
+
+    def __missing__(self, k):
+        o, w = L.AUX_SLICES[k]
+        v = self._arr[:, o] if w == 1 else self._arr[:, o:o + w]
+        self[k] = v
+        return v
+
+    def _all(self):
+        for k in L.AUX_SLICES:
+            self[k]
+        return self
+
+    def __contains__(self, k):
+        return dict.__contains__(self, k) or k in L.AUX_SLICES
+
+    def get(self, k, default=None):
+        return self[k] if k in self else default
+
+    def keys(self):
+        return dict.keys(self._all())
+
+    def values(self):
+        return dict.values(self._all())
+
+    def items(self):
+        return dict.items(self._all())
+
+    def __iter__(self):
+        return dict.__iter__(self._all())
+
+    def __len__(self):
+        return dict.__len__(self._all())
+
+
 class HGBPPlant:
     """Batched stand model.  State vector (per environment, ``STATE_NAMES``):
 
@@ -111,7 +158,9 @@ class HGBPPlant:
     T_mw0..             mixing exchanger plate walls (top -> bottom)
     T_sw                suction line wall
     P_d, h_d, T_dw      discharge volume and discharge line wall
-    P_i, h_i            intermediate section
+    P_i, h_i            intermediate section, condensing zone (header, condenser, drain,
+                        receiver vapor space)
+    h_L                 receiver liquid pool (with its mass M_L below)
     T_cw0..             condenser plate walls + water content (top -> bottom)
     T_rw                receiver shell
     T_sh, N             compressor shell temperature, speed [rpm]
@@ -120,6 +169,7 @@ class HGBPPlant:
     mm, Wm              lagged mass-flow and power sensors
     M_s, M_d, M_i       refrigerant mass of the suction side, discharge, intermediate section
     U_s, U_d, U_i       their internal energy
+    M_L                 refrigerant mass of the receiver pool (part of M_i)
     h_g0..h_g{MX-1}     bypass gas side enthalpies (algebraic, kept for the mass accounting)
     """
     MX = MX
@@ -134,6 +184,7 @@ class HGBPPlant:
     T_SW = L.X_T_SW
     P_D, H_D, T_DW = L.X_P_D, L.X_H_D, L.X_T_DW
     P_I, H_I, T_RW = L.X_P_I, L.X_H_I, L.X_T_RW
+    H_L, M_L = L.X_H_L, L.X_M_L                     # receiver liquid pool
     TCW = slice(L.X_TCW, L.X_TCW + MX)
     T_SH, N_ = L.X_T_SH, L.X_N
     U1, U2, U3, U4 = L.X_U1, L.X_U1 + 1, L.X_U1 + 2, L.X_U1 + 3
@@ -274,10 +325,7 @@ class HGBPPlant:
 
     def _aux_dict(self, aux, charge) -> dict:
         """Auxiliary outputs by name from their array (layout.AUX_FIELDS)."""
-        out = {k: (aux[:, o] if w == 1 else aux[:, o:o + w]) for k, (o, w) in L.AUX_SLICES.items()}
-        out["t"] = self.t
-        out["charge"] = charge
-        return out
+        return Outputs(aux, t=self.t, charge=charge)
 
     # ------------------------------------------------------------ integrate
     def _sync_mass(self, x, idx=None) -> None:
@@ -433,6 +481,10 @@ class HGBPPlant:
         x[:, self.TCW] = T_amb[:, None]
         x[:, self.P_D], x[:, self.H_D] = P, h_d
         x[:, self.P_I], x[:, self.H_I] = P, h_i
+        # the intermediate section's liquid sits in the receiver pool (what it cannot hold
+        # stays in the condensing zone, flooding the condenser)
+        M_pool = np.where(wet, np.minimum(M_li, 0.98 * rho_l * (p.rec_V + p.V_lines["liq"])), 0.0)
+        x[:, self.M_L], x[:, self.H_L] = M_pool, sat["h_l"]
         for i in (self.T_SW, self.T_DW, self.T_RW, self.T_SH, self.TM_S, self.TM_D, self.TM_CO):
             x[:, i] = T_amb
         u_pos = np.zeros((m, self.NU)) if u_pos is None else np.broadcast_to(np.asarray(u_pos, float), (m, self.NU))
@@ -440,7 +492,7 @@ class HGBPPlant:
         self._sync_mass(x, idx)
         # the vapor above is taken slightly superheated: give the intermediate section
         # exactly the remaining mass so that the stand holds the requested charge
-        rho_i = (charge - x[:, self.M_S] - x[:, self.M_D]) / p.V_i
+        rho_i = (charge - x[:, self.M_S] - x[:, self.M_D] - M_pool) / (p.V_i - M_pool / rho_l)
         x[:, self.H_I] = pr.h_from_P_rho(x[:, self.P_I], rho_i)
         self._sync_mass(x, idx)
         self.x[idx] = x

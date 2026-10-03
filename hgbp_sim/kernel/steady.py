@@ -7,25 +7,34 @@ import math
 import numpy as np
 from numba import njit, prange
 
-from ..components import (compressor_s, gas_valve_flow_s, kv_to_C, liquid_valve_flow_s, series_C3,
+from ..components import (compressor_s, gas_valve_flow_s, kv_to_C, liquid_valve_flow_s, series_C3, smoothstep,
                           water_valve_flow)
 from . import batch_variants
 from . import props as kp
-from .layout import (A_M_g, A_M_s, A_Q_sg, A_T_co, A_T_d, A_T_s, A_W_el, A_h_2f, A_h_3f, A_h_g, A_mdot_2,
-                     A_mdot_3, A_mdot_c, A_x_l1, A_y_liq, MX, NX, X_H_D, X_H_I, X_HG, X_HQ, X_MM, X_N,
-                     X_P_D, X_P_I, X_P_S, X_TCW, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_TM_CO, X_TM_D, X_TM_S,
-                     X_TMW, X_U1, X_WM)
-from .model import NS, rhs
+from .layout import (A_M_cl, A_M_film, A_M_g, A_M_s, A_Q_sg, A_T_co, A_T_d, A_T_s, A_W_el, A_h_2f, A_h_3f, A_h_g,
+                     A_ll_fill, A_mdot_2, A_mdot_3, A_mdot_c, A_mdot_drn, A_mdot_lv, A_rec_level, A_x_l1, A_y_liq, MX,
+                     NX, X_HG, X_HQ, X_H_D, X_H_I, X_H_L, X_MM, X_M_I, X_M_L, X_N, X_P_D, X_P_I, X_P_S, X_TCW, X_TMW,
+                     X_TM_CO, X_TM_D, X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_U1, X_U_I, X_WM)
+from .model import NS, _softplus, pool_density, rhs
 
-NZ = 9 + MX           # outer unknowns: u1..u4, h_d, T_sw, T_dw, T_sh, T_rw, condenser walls T_cw0..
-ZSCALE = np.array([1.0, 1.0, 1.0, 1.0, 2e4] + [10.0] * (NZ - 5))
-# residuals: suction side mass [kg/s] and energy [W] balance, dT_sw, dP_d, dh_d, dT_dw,
-# dP_i, dh_i, dT_rw, dT_sh, dT_cw0..
-RSCALE = np.array([1e-3, 100.0, 0.1, 1e3, 1e2, 0.1, 1e3, 1e2, 0.1, 0.1] + [0.1] * MX)
+# outer unknowns (Levenberg-Marquardt): u1..u4, h_d, T_sw, T_dw, T_sh, T_rw, condenser walls
+# T_cw0..; then the receiver pool's enthalpy h_L (brought to rest at every evaluation, see
+# residual) and the condensing zone's mass, settled between the rounds (settle_pool); the
+# pool holds the rest of the charge up to a full receiver (or fills it to the given level)
+NZL = 9 + MX
+NZ = NZL + 2
+IZ_HL, IZ_M = NZL, NZL + 1
+ZSCALE = np.array([1.0, 1.0, 1.0, 1.0, 2e4] + [10.0] * (4 + MX) + [2e4, 1.0])
+# residuals: suction side mass [kg/s] and energy [W] balance, dT_sw, dP_d, dh_d, dT_dw, the
+# intermediate section's mass [kg/s] and energy [W] balance (as a whole: the drain between
+# its zones is the pool's business), dT_rw, dT_sh, dT_cw0..
+RSCALE = np.array([1e-3, 100.0, 0.1, 1e3, 1e2, 0.1, 1e-3, 100.0, 0.1, 0.1] + [0.1] * MX)
 NR = 10 + MX
-RES_IDX = (X_T_SW, X_P_D, X_H_D, X_T_DW, X_P_I, X_H_I, X_T_RW, X_T_SH) + tuple(X_TCW + j for j in range(MX))
-ZLO = np.array([1e-3] * 4 + [-np.inf] + [150.0] * (NZ - 5))
-ZHI = np.array([1.0] * 4 + [np.inf] + [600.0] * (NZ - 5))
+RES_IDX = (X_T_SW, X_P_D, X_H_D, X_T_DW, X_M_I, X_U_I, X_T_RW, X_T_SH) + tuple(X_TCW + j for j in range(MX))
+ZLO = np.array([1e-3] * 4 + [-np.inf] + [150.0] * (4 + MX) + [-np.inf, 1e-6])
+ZHI = np.array([1.0] * 4 + [np.inf] + [600.0] * (4 + MX) + [np.inf, 1e4])
+SETTLE_RELAX = 0.3     # relaxation of the pool enthalpy in settle_pool (pool enthalpy eliminated)
+POOL_TOL_M, POOL_TOL_H = 1e-5, 1.0     # receiver pool at rest: |dM_L/dt| [kg/s], |dh_L/dt| [J/kg/s]
 NP = 2 * MX           # exchanger profile: quench cell enthalpies, wall temperatures
 
 
@@ -68,16 +77,6 @@ def invert_characteristic(f, code, R):
     if code == 1:
         return math.log1p(f * (R - 1.0)) / math.log(R)
     return f * f
-
-
-@njit(cache=True)
-def fill_enthalpy(tab, P, V, fill):
-    """Mean enthalpy of a volume V at pressure P holding liquid fill fraction ``fill``."""
-    s = kp.sat(tab, P)
-    M_l = s.rho_l * V * fill
-    M_v = s.rho_v * V * (1.0 - fill)
-    xq = M_v / (M_l + M_v)
-    return s.h_l + xq * (s.h_v - s.h_l)
 
 
 @njit(cache=True)
@@ -144,6 +143,7 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
     eps_g = 1.0 - math.exp(-p.UA_gs / max(C_g, 1e-9))
     z[7] = T_amb + (eps_g * C_g * (T2_ad - T_amb) + (1.0 - p.f_motor_gas) * Q_motor) / (p.UA_sha + eps_g * C_g)
     z[8] = (p.rec_UA_a * T_amb + p.rec_UA_r * sati.T_l) / (p.rec_UA_a + p.rec_UA_r)
+    z[IZ_HL], z[IZ_M] = h_l, 1.0                              # set by solve_one
     # mixing exchanger: quench side from the valve 3 outlet to the suction state, gas side
     # from the bypass inlet (bottom) to the suction state (top); walls in between
     T_2 = kp.T_vapor(tab, P_s, h_d)
@@ -152,6 +152,15 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
         T_q = kp.state(tab, P_s, prof[j]).T
         T_gp = S.T + (T_2 - S.T) * (j + 0.5) / n
         prof[n + j] = 0.5 * (T_q + T_gp)
+
+
+@njit(cache=True)
+def suction_mass(p, tab, P_s, x):
+    """Refrigerant in the dynamic suction side cells of state ``x``."""
+    M = 0.0
+    for j in range(NS):
+        M += kp.state(tab, P_s, x[X_HQ + j]).rho * p.V_sc[j]
+    return M
 
 
 @njit(cache=True)
@@ -174,25 +183,58 @@ def build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill,
     x[X_N] = N
     for k in range(4):
         x[X_U1 + k] = z[k]
+    # receiver pool and condensing zone
+    x[X_H_L] = z[IZ_HL]
+    rho_L = pool_density(tab, P_i, z[IZ_HL])
     if use_fill:
-        V_L = liquid_volume_for_level(p, fill)
-        x[X_H_I] = fill_enthalpy(tab, P_i, p.V_i, V_L / p.V_i)
+        V_pool = liquid_volume_for_level(p, fill)
+        M_L = rho_L * V_pool
+        M_C = z[IZ_M]
     else:
-        rho_d = kp.state(tab, P_d, z[4]).rho
-        M_c = 0.0
-        for j in range(NS):
-            M_c += kp.state(tab, P_s, x[X_HQ + j]).rho * p.V_sc[j]
-        M_i = charge - M_c - M_g - rho_d * p.V_d
-        x[X_H_I] = kp.h_from_P_rho(tab, P_i, max(M_i, 1e-6) / p.V_i)
+        # a full receiver (the drain blocked) leaves the rest in the condensing zone: flooding
+        M_rest = charge - suction_mass(p, tab, P_s, x) - M_g - kp.state(tab, P_d, z[4]).rho * p.V_d
+        cap = rho_L * (p.rec_V + p.V_line_liq)
+        M_u = max(M_rest - z[IZ_M], 1e-6)
+        M_L = M_u - _softplus(M_u - cap, 2e-3 * cap)
+        M_C = M_rest - M_L
+        V_pool = M_L / rho_L
+    x[X_M_L] = M_L
+    x[X_H_I] = kp.h_from_P_rho(tab, P_i, max(M_C, 1e-6) / max(p.V_i - V_pool, 1e-3 * p.V_i))
 
 
 @njit(cache=True)
-def residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, fill, use_fill, r, x, dx, a, hg):
+def pool_newton(p, tab, P_i, h_L, x, dx, a):
+    """Receiver pool enthalpy after a Newton step on its energy balance at the
+    evaluated state (``dx``, aux ``a``): its inflows and conductances, bounded to
+    lie between the water inlet side and slightly above the bubble point."""
+    si = kp.sat(tab, P_i)
+    cp_l = kp.state(tab, P_i, si.h_l).cp_l
+    m3L = smoothstep(a[A_ll_fill]) * a[A_mdot_3]
+    G = (max(a[A_mdot_drn], 0.0) + abs(a[A_mdot_lv]) + max(m3L, 1e-3)
+         + (p.rec_UA_r * a[A_rec_level] + p.rec_UA_lv) / cp_l)
+    d_h = min(max(dx[X_H_L] * max(x[X_M_L], 1e-3) / G, -2e4), 2e4)
+    return min(max(h_L + d_h, si.h_l - 60.0 * cp_l), si.h_l + 5.0 * cp_l)
+
+
+@njit(cache=True)
+def residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, fill, use_fill, r, x, dx, a, hg,
+             pool_lm):
     """Scaled steady-state residuals of the stand at ``z`` (exchanger profile fixed):
-    the suction side's overall mass and energy balance and the rates of the other states."""
+    the suction side's overall mass and energy balance and the rates of the other
+    states; with ``pool_lm`` the receiver pool's enthalpy is an unknown (its rate the
+    last residual), otherwise it is brought to rest at every evaluation."""
     n = MX
     build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill, x)
     rhs(x, z[:4], N, T_amb, T_wi, p, tab, False, dx, True, a, hg)
+    # the receiver pool at rest for this point: a Newton step on its energy balance (nearly
+    # linear in its enthalpy), from the value the rounds have settled
+    h_L = z[IZ_HL] if pool_lm else pool_newton(p, tab, P_i, z[IZ_HL], x, dx, a)
+    if h_L != z[IZ_HL]:
+        z_hl = z[IZ_HL]
+        z[IZ_HL] = h_L
+        build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill, x)
+        rhs(x, z[:4], N, T_amb, T_wi, p, tab, False, dx, True, a, hg)
+        z[IZ_HL] = z_hl
     Q_amb = 0.0
     for j in range(n):
         Q_amb += (p.mx_UA_a / n) * (T_amb - x[X_TMW + j])
@@ -200,6 +242,7 @@ def residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, f
     r[1] = (a[A_mdot_2] * a[A_h_2f] + a[A_mdot_3] * a[A_h_3f] + a[A_Q_sg] + Q_amb - a[A_mdot_c] * h_s) / RSCALE[1]
     for k in range(NR - 2):
         r[2 + k] = dx[RES_IDX[k]] / RSCALE[2 + k]
+    r[NR] = dx[X_H_L] / 10.0 if pool_lm else 0.0
 
 
 @njit(cache=True)
@@ -211,58 +254,63 @@ def _norm(r):
 
 
 @njit(cache=True)
-def lm(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, fill, use_fill, max_iter, tol,
-       x, dx, a, hg):
-    """Levenberg-Marquardt iteration on the outer unknowns (finite-difference
-    Jacobian); returns the final residual norm and the iterations taken."""
-    r = np.empty(NR)
-    r_new = np.empty(NR)
-    Rk = np.empty(NR)
-    J = np.empty((NR, NZ))
-    JtJ = np.empty((NZ, NZ))
-    Jtr = np.empty(NZ)
-    A = np.empty((NZ, NZ))
-    b = np.empty(NZ)
-    step = np.empty(NZ)
+def lm(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, zlo, zhi, prof, M_g, charge, fill, use_fill, max_iter, tol,
+       x, dx, a, hg, nz):
+    """Levenberg-Marquardt iteration on the first ``nz`` outer unknowns
+    (finite-difference Jacobian); returns the final residual norm and the
+    iterations taken.  ``nz`` = NZL + 1 makes the pool's enthalpy an unknown."""
+    pool_lm = nz > NZL
+    nr = NR + 1
+    r = np.empty(nr)
+    r_new = np.empty(nr)
+    Rk = np.empty(nr)
+    J = np.empty((nr, nz))
+    JtJ = np.empty((nz, nz))
+    Jtr = np.empty(nz)
+    A = np.empty((nz, nz))
+    b = np.empty(nz)
+    step = np.empty(nz)
     zp = np.empty(NZ)
     z_new = np.empty(NZ)
     lam = 1e-2
-    residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, fill, use_fill, r, x, dx, a, hg)
+    residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, fill, use_fill, r, x, dx, a, hg,
+             pool_lm)
     rn = _norm(r)
     h = 1e-4
     it = 0
     for it in range(max_iter):
         if not rn > tol:
             break
-        for k in range(NZ):
+        for k in range(nz):
             zp[:] = z
             zp[k] += h * ZSCALE[k]
             residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, zp, prof, M_g, charge, fill, use_fill, Rk,
-                     x, dx, a, hg)
-            for i in range(NR):
+                     x, dx, a, hg, pool_lm)
+            for i in range(nr):
                 J[i, k] = (Rk[i] - r[i]) / h
-        for i in range(NZ):
+        for i in range(nz):
             s = 0.0
-            for m in range(NR):
+            for m in range(nr):
                 s += J[m, i] * r[m]
             Jtr[i] = s
-            for j in range(NZ):
+            for j in range(nz):
                 s = 0.0
-                for m in range(NR):
+                for m in range(nr):
                     s += J[m, i] * J[m, j]
                 JtJ[i, j] = s
         for _ in range(8):
-            for i in range(NZ):
-                for j in range(NZ):
+            for i in range(nz):
+                for j in range(nz):
                     A[i, j] = JtJ[i, j]
                 A[i, i] += lam * (JtJ[i, i] + 1e-9)
                 b[i] = -Jtr[i]
             if not _solve_linear(A, b, step):
                 step[:] = 0.0
-            for k in range(NZ):
-                z_new[k] = min(max(z[k] + step[k] * ZSCALE[k], ZLO[k]), ZHI[k])
+            z_new[:] = z
+            for k in range(nz):
+                z_new[k] = min(max(z[k] + step[k] * ZSCALE[k], zlo[k]), zhi[k])
             residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z_new, prof, M_g, charge, fill, use_fill, r_new,
-                     x, dx, a, hg)
+                     x, dx, a, hg, pool_lm)
             rn_new = _norm(r_new)
             if rn_new < rn:
                 z[:] = z_new
@@ -368,6 +416,32 @@ def newton_mixer(p, tab, x, u, N, T_amb, T_wi, plo, phi, dx, a, hg, iters=6):
 
 
 @njit(cache=True)
+def settle_pool(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, zlo, zhi, prof, M_g, charge, fill, use_fill, x, dx,
+                a, hg, iters, relax):
+    """Receiver pool at rest for the current outer unknowns (fixed point): the
+    condensing zone holds the film's hold-up plus the condensate on its way down
+    the drain (which passes what valve 3 takes from the pool), the rest of the
+    section's liquid sits in the pool, and the pool's enthalpy balances its energy.
+    Returns the remaining pool rates |dM_L/dt| [kg/s] and |dh_L/dt| [J/kg/s]."""
+    rm, rh = np.inf, np.inf
+    for _ in range(iters):
+        build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill, x)
+        rhs(x, z[:4], N, T_amb, T_wi, p, tab, False, dx, True, a, hg)
+        rm, rh = abs(dx[X_M_L]), abs(dx[X_H_L])
+        if rm < 1e-7 and rh < 0.01:
+            break
+        m3L = smoothstep(a[A_ll_fill]) * a[A_mdot_3]
+        d_liq = a[A_M_cl] - (a[A_M_film] + p.cond_tau_drain * max(m3L - a[A_mdot_lv], 0.0))
+        d_liq = min(max(d_liq, -0.5 * max(a[A_M_cl], 0.1)), 0.5 * max(x[X_M_L], 0.1))
+        z[IZ_M] = max(z[IZ_M] - d_liq, 1e-6)
+        # (damped: with a full receiver the pool's temperature sets its density and so the
+        # flooding, which feeds back on its subcooling with a gain above one)
+        h_new = pool_newton(p, tab, P_i, z[IZ_HL], x, dx, a)
+        z[IZ_HL] = min(max(z[IZ_HL] + relax * (h_new - z[IZ_HL]), zlo[IZ_HL]), zhi[IZ_HL])
+    return rm, rh
+
+
+@njit(cache=True)
 def solve_one(p, tab, P_s, P_d, SH, N, P_i, charge, fill, use_fill, T_amb, T_wi, max_iter, tol, rounds,
               x, a, info):
     """Equilibrium of one environment; fills the state ``x`` (sensor states at their
@@ -396,20 +470,58 @@ def solve_one(p, tab, P_s, P_d, SH, N, P_i, charge, fill, use_fill, T_amb, T_wi,
     for j in range(n):
         V_g += p.V_gc[j]
     M_g = V_g * kp.vapor_props(tab, P_s, 0.5 * (h_s + z[4]))[1]
+    # receiver pool slightly subcooled; the condensing zone saturated vapor
+    si = kp.sat(tab, P_i)
+    z[IZ_HL] = si.h_l - 2.0 * kp.state(tab, P_i, si.h_l).cp_l
+    z[IZ_M] = si.rho_v * (p.V_i - p.rec_V) + 0.1 * si.rho_l * p.V_cond
+    # the pool lies between the water inlet temperature and slightly above its bubble point
+    zlo, zhi = ZLO.copy(), ZHI.copy()
+    zlo[IZ_HL] = kp.h_PT(tab, P_i, min(T_wi, si.T_l) - 0.5)
+    zhi[IZ_HL] = si.h_l + 5.0 * kp.state(tab, P_i, si.h_l).cp_l
+    z[IZ_HL] = min(max(z[IZ_HL], zlo[IZ_HL]), zhi[IZ_HL])
 
     dx = np.empty(NX)
     hg = np.empty(MX)
-    r = np.empty(NR)
+    z0, prof0 = z.copy(), prof.copy()
+    ok, rn, it_total = solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T_wi, max_iter, tol,
+                                    rounds, z, zlo, zhi, prof, plo, phi, M_g, False, x, dx, a, hg)
+    if not ok and a[A_rec_level] > 0.95:
+        # a full receiver: its temperature sets how much floods the condenser, which feeds
+        # back on its subcooling; solve with the pool's enthalpy among the unknowns
+        z[:], prof[:] = z0, prof0
+        ok, rn, its = solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T_wi, 2 * max_iter,
+                                   tol, rounds, z, zlo, zhi, prof, plo, phi, M_g, True, x, dx, a, hg)
+        it_total += its
+    info[0] = 1.0 if ok else 0.0
+    info[1] = rn
+    info[2] = it_total
+
+
+@njit(cache=True)
+def solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T_wi, max_iter, tol, rounds,
+                 z, zlo, zhi, prof, plo, phi, M_g, pool_lm, x, dx, a, hg):
+    """The rounds of solve_one from the starting point ``z``, ``prof``: the stand
+    (Levenberg-Marquardt), the exchanger profile, the receiver pool.  Fills ``x``,
+    ``a``; returns (converged, residual norm, iterations)."""
+    n = MX
+    r = np.empty(NR + 1)
+    relax = 1.0 if pool_lm else SETTLE_RELAX
+    rm, rh = settle_pool(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, zlo, zhi, prof, M_g, charge, fill, use_fill,
+                         x, dx, a, hg, 30, relax)
     it_total = 0
     M_suc = np.inf
     rn = np.inf
+    rn_prev, stalled = np.inf, 0
     for rnd in range(rounds):
-        rn, its = lm(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, fill, use_fill,
-                     max_iter, tol, x, dx, a, hg)
+        rn, its = lm(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, zlo, zhi, prof, M_g, charge, fill, use_fill,
+                     max_iter, tol, x, dx, a, hg, NZL + 1 if pool_lm else NZL)
         it_total += its
-        # exchanger profile for these flows, then its hold-up in the charge balance
+        # the receiver pool (it feeds the quench), then the exchanger profile for these flows
+        # and its hold-up in the charge balance
+        rm, rh = settle_pool(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, zlo, zhi, prof, M_g, charge, fill,
+                             use_fill, x, dx, a, hg, 30, relax)
         build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill, x)
-        march_mixer(p, tab, x, z[:4], N, T_amb, T_wi, plo, phi, 400 if rnd == 0 else 250, dx, a, hg)
+        march_mixer(p, tab, x, z[:4], N, T_amb, T_wi, plo, phi, 150 if rnd == 0 else 60, dx, a, hg)
         newton_mixer(p, tab, x, z[:4], N, T_amb, T_wi, plo, phi, dx, a, hg)
         for j in range(n):
             prof[j], prof[n + j] = x[X_HQ + j], x[X_TMW + j]
@@ -418,9 +530,16 @@ def solve_one(p, tab, P_s, P_d, SH, N, P_i, charge, fill, use_fill, T_amb, T_wi,
         M_g = a[A_M_g]
         dM = abs(a[A_M_s] - M_suc)
         M_suc = a[A_M_s]
-        residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, fill, use_fill, r, x, dx, a, hg)
+        rm, rh = abs(dx[X_M_L]), abs(dx[X_H_L])
+        residual(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof, M_g, charge, fill, use_fill, r, x, dx, a, hg,
+                 pool_lm)
         rn = _norm(r)
-        if rn <= tol and (use_fill or dM < 1e-4):
+        if rn <= tol and rm < POOL_TOL_M and rh < POOL_TOL_H and (use_fill or dM < 1e-4):
+            break
+        # no equilibrium (an infeasible point): the residual stays put from round to round
+        stalled = stalled + 1 if abs(rn - rn_prev) < 0.02 * rn_prev else 0
+        rn_prev = rn
+        if stalled >= 2:
             break
 
     build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill, x)
@@ -435,12 +554,10 @@ def solve_one(p, tab, P_s, P_d, SH, N, P_i, charge, fill, use_fill, T_amb, T_wi,
             mix_ok = False
     # physical plausibility: superheated suction stream without liquid at the compressor,
     # valves inside their range
-    ok = rn <= tol and mix_ok and a[A_x_l1] > 1.0 and a[A_y_liq] <= p.y_flood
+    ok = rn <= tol and rm < POOL_TOL_M and rh < POOL_TOL_H and mix_ok and a[A_x_l1] > 1.0 and a[A_y_liq] <= p.y_flood
     for k in range(4):
         ok = ok and 1.5e-3 < z[k] < 0.999
-    info[0] = 1.0 if ok else 0.0
-    info[1] = rn
-    info[2] = it_total
+    return ok, rn, it_total
 
 
 def _solve_batch(P, tab, P_s, P_d, SH, N, P_i, charge, fill, use_fill, T_amb, T_wi, max_iter, tol, rounds,

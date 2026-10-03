@@ -46,6 +46,8 @@ class PID:
         self.u[idx] = self.I[idx]
 
     def update(self, sp, y, dt: float, active=None):
+        if self.n == 1 and active is None and np.ndim(sp) == 0 and np.ndim(y) == 0:
+            return self._update_one(float(sp), float(y), dt)
         sp = np.broadcast_to(np.asarray(sp, float), (self.n,))
         y = np.broadcast_to(np.asarray(y, float), (self.n,))
         active = np.ones(self.n, bool) if active is None else np.asarray(active, bool)
@@ -63,6 +65,27 @@ class PID:
         self.I = np.where(integrate, self.I + self.Ki * e * dt, self.I)
         self.u = np.where(active, np.clip(self.Kp * e + self.I + self.d, self.u_min, self.u_max), self.u)
         return self.u.copy()
+
+    def _update_one(self, sp: float, y: float, dt: float):
+        """``update`` for a single active loop in plain floats (the live stand's
+        loops; the same arithmetic without the array overhead)."""
+        Kp, Ki, Kd = self.Kp.item(), self.Ki.item(), self.Kd.item()
+        I, d, y_f = self.I.item(), self.d.item(), self.y_f.item()
+        e = sp - y
+        if y_f != y_f:                  # first call
+            y_f = y
+        if Kd != 0.0:
+            a = dt / (self.tau_d + dt)
+            y_new = y_f + a * (y - y_f)
+            d = -Kd * (y_new - y_f) / dt
+            y_f = y_new
+        u_unsat = Kp * e + I + d
+        pushing = (u_unsat > self.u_max and Ki * e > 0) or (u_unsat < self.u_min and Ki * e < 0)
+        if not pushing:
+            I = I + Ki * e * dt
+        u = min(max(Kp * e + I + d, self.u_min), self.u_max)
+        self.I[0], self.d[0], self.y_f[0], self.u[0] = I, d, y_f, u
+        return np.array([u])
 
 
 # Tuned by batched gain sweeps over a 4-point schedule (see README); the superheat loop

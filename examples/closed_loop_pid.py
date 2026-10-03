@@ -2,7 +2,7 @@
 
 Usage:  python examples/closed_loop_pid.py [--cold] [--charge 1.0] [--out plot.png]
   --charge  factor on the nominal refrigerant charge (0.3 = badly undercharged,
-            1.8 = badly overcharged)
+            2.4 = overcharged: the receiver is full and the condenser floods)
 """
 from __future__ import annotations
 
