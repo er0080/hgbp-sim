@@ -49,10 +49,21 @@ steady-state solver. On an 8-core laptop (Xeon W-10885M):
 
 | | |
 |---|---|
-| live stand (one stand with its PID loops) | about 250 × real time |
-| training environment, 256 stands | about 16 000 environment steps / s |
-| creating and resetting 256 stands | under 2 s |
-| steady-state solve, one stand | 10-20 ms |
+| live stand (one stand with its PID loops) | about 350 × real time |
+| training environment, 256 / 1024 stands | about 14 500 / 19 500 environment steps / s |
+| creating or resetting 256 stands | about 2-2.5 s each |
+| steady-state solve, one stand | 25-30 ms |
+
+Where the time goes:
+* **Live stand.** About 0.55 ms per 0.2 s control step: a third in the model, the rest
+  in the Python around it (loops, interlock, measurement, history). The web backend builds
+  a snapshot only when it sends one (`LiveStand.step(snapshot=False)`).
+* **Batches.** The model itself. A right-hand side evaluation costs about 9 µs on one
+  core; RK4 takes four per sub-step, usually one sub-step per 0.05 s.
+* **Steady-state solves.** The Levenberg-Marquardt Jacobian (finite differences, two
+  model evaluations per column for the receiver pool) and the mixing exchanger's
+  pseudo-time march. A point without an equilibrium is given up once its residual stops
+  moving.
 
 ## Property tables
 

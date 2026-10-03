@@ -21,13 +21,17 @@ compressor speed.
 ## Features
 
 * **Physics-based model** of the stand as built: brazed-plate condenser and mixing
-  exchanger, liquid receiver, specified piping, pressure drops, real-fluid refrigerant
-  properties (any CoolProp fluid; R410A by default).
+  exchanger (five cells each, vapor quality through both), liquid receiver, specified
+  piping, pressure drops, real-fluid refrigerant properties (any CoolProp fluid; R410A by
+  default).
+* **Two-phase liquid section:** the receiver's liquid keeps its own temperature. It
+  subcools after a pressure rise and flashes after a drop, sending flash gas to the quench
+  valve. The condenser holds its condensing film, and a full receiver floods it.
 * **Refrigerant charge as a parameter:** under- and overcharged stands behave as they
   should (receiver level, loss of the liquid seal, condenser flooding, floodback).
-* **Fast:** compiled with numba. The live stand runs about 250 times faster than real
-  time; a batch of stands trains at about 16 000 environment steps per second on an
-  8-core laptop.
+* **Fast:** compiled with numba. On an 8-core laptop the live stand runs about 350 times
+  faster than real time, and a batch of stands trains at 15 000-19 000 environment steps
+  per second.
 * **Training environment:** batched and `gymnasium` versions, refrigerant-agnostic
   observations, a baseline PID expert, domain randomization and charge labels.
 * **Web UI:** operator panel with the stand's UT35A controller settings, trends, metric or

@@ -31,12 +31,19 @@ meas = plant.measure()                                           # noisy, lagged
 
 Four test points (MT standard -> high lift at 1750 rpm -> HT standard at 1200 rpm -> LT
 standard), nominal charge, warm start. Grey traces are the noisy sensor readings, dashed
-lines the setpoints (`python examples/closed_loop_pid.py`):
+lines the setpoints (`python examples/closed_loop_pid.py`).
+
+The subcooling at valve 3 follows the receiver. At 10 min the intermediate pressure rises
+and leaves the receiver liquid subcooled: about 7 K, decaying over ten minutes. At 30 min
+it falls, and the liquid flashes: no subcooling until the receiver has cooled to the new
+saturation temperature.
 
 ![closed loop, nominal charge](../figures/closed_loop_charge_1.0.png)
 
 The same schedule from a cold, equalized stand, compressor started at 10 s. The shell and
-discharge temperatures take tens of minutes to settle (`--cold`):
+discharge temperatures take tens of minutes to settle. As the intermediate pressure builds
+over the receiver's liquid, which is still at ambient temperature, the subcooling jumps to
+about 11 K and relaxes over ten minutes (`--cold`):
 
 ![closed loop, cold start](../figures/closed_loop_cold_start.png)
 
@@ -47,13 +54,13 @@ the bypass gas, so superheat runs high and the suction pressure loop loses the p
 
 ![closed loop, undercharged](../figures/closed_loop_charge_0.3.png)
 
-Overcharged (210 % of nominal): the receiver is full and liquid floods part of the
-condenser from the start. At the high-lift point the water loop cycles; after about
-6 minutes there the condenser is liquid-logged, the water valve saturates and the
-intermediate and discharge pressures run past the 41.4 bar trip (the example does not
-enforce trips). The same happens at the last point (`--charge 2.1`):
+Overcharged (240 % of nominal). There is no steady state at the first point with this
+charge, so the run starts cold. The receiver is full, and the blocked drain floods 60-85 %
+of the condenser. The condensate draining through the flooded plates subcools by 13-22 K.
+The water loop cycles at the high-lift and LT points but holds every point: the colder,
+denser receiver liquid takes back part of the charge (`--charge 2.4`):
 
-![closed loop, overcharged](../figures/closed_loop_charge_2.1.png)
+![closed loop, overcharged](../figures/closed_loop_charge_2.4.png)
 
 ## Open-loop steps
 

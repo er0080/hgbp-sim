@@ -43,12 +43,16 @@ water inlet temperature.  Total refrigerant charge is a parameter.
 
 Model structure
 ---------------
-* Discharge volume (compressor -> valve 1) and intermediate section (header,
-  condenser, drain, receiver, liquid line) are lumped (P, h) volumes.  In the
-  intermediate section liquid collects in the order receiver (below the dip
-  tube), liquid line, receiver, drain, condenser, header: the condenser keeps
-  its full condensing area until the receiver is full, and the liquid seal at
-  valve 3 is lost once the receiver level drops below the dip tube.
+* The discharge volume (compressor -> valve 1) is a lumped (P, h) volume.  The
+  intermediate section has two zones at one pressure P_i: the condensing zone
+  (header, condenser, drain, receiver vapor space; (P, h) in equilibrium, with
+  the condenser's film and draining condensate) and the receiver's liquid pool
+  (receiver and liquid line; its own mass and temperature).  The pool lags the
+  pressure: subcooled after a rise (vapor condenses on it slowly), flashing
+  after a drop (valve 3 then gets flash gas).  The pool fills the receiver up
+  to the dip tube, the liquid line, then the rest of the receiver; below the
+  dip tube valve 3 loses its liquid seal, and a full receiver blocks the drain
+  so that liquid floods the condenser.
 * The condenser has ``MX`` plate wall cells (top -> bottom), like the mixing
   exchanger.  Its refrigerant side is quasi-steady: the hot gas is marched from
   S3 down the cells to the liquid (wet-wall desuperheating, condensation along
@@ -76,10 +80,11 @@ valve 3 each discharge through their exchanger side in series, and the quench
 cells boil at their own pressure along the S3 -> S4 column.
 
 Mass and internal energy of every volume (the suction side as one group) are
-integrated as conserved states; after every sub-step (P, h) are projected
-back onto them (a bracketed density-energy flash for the discharge and
-intermediate volumes, a Newton correction of the common pressure and a
-uniform enthalpy shift for the suction side).  Volumes that are (nearly)
+integrated as conserved states (with the receiver pool's mass and enthalpy);
+after every sub-step (P, h) are projected back onto them (a bracketed
+density-energy flash for the discharge volume and for the condensing zone in
+the volume the pool leaves free, a Newton correction of the common pressure
+and a uniform enthalpy shift for the suction side).  Volumes that are (nearly)
 liquid-full are integrated with a finer sub-step because their pressure
 dynamics are stiff.
 

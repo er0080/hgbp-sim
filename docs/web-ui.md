@@ -23,14 +23,25 @@ The image builds on x86-64 and arm64. For an x86-64 image on Apple Silicon, add
   output), the compressor panel (start / stop, permissives, trip reset), process values,
   charging and recovery, a saturation pressure calculator (dew point, x = 1) and the event
   log.
-* **Trends:** pressures with setpoints, superheat and subcooling, valves, temperatures,
-  mixing exchanger, flow / power / speed and inventory; CSV export.
+* **Trends:** pressures with setpoints, superheat and subcooling (with the receiver
+  liquid's own subcooling), valves, temperatures, mixing exchanger, flow / power / speed and
+  inventory (receiver level, condenser flooding and liquid); CSV export.
 * **Settings:** simulation speed, noise, control interval, ambient and water temperature,
   charging rate, PID tuning and every plant parameter (with units, descriptions and
   defaults). Refrigerant, volumes and charge apply at the next cold or warm start.
 
 The top bar has the speed factor (up to 100×), pause, cold / warm start and the display
 units.
+
+The schematic shows both brazed plate exchangers cell by cell. A cell shows its quality while
+it is two-phase and its temperature otherwise, and its shading follows the liquid. The
+receiver shows:
+* its level and liquid temperature;
+* the liquid's subcooling, or "flashing" while it boils off after a pressure drop;
+* whether the liquid line has its seal.
+
+The condenser shows its liquid (film and draining condensate) and how much of it is
+flooded.
 
 ## Starting the compressor
 
@@ -44,7 +55,10 @@ least 5 %). To start:
 3. switch the loops to AUTO once the compressor turns (about 600 rpm).
 
 With the discharge loop in AUTO before that, it closes valve 1 against the starting
-compressor and the stand trips on high discharge pressure within seconds. The
+compressor and the stand trips on high discharge pressure within seconds. A PV filter on
+the discharge loop also slows its answer to the start. With the stand's defaults file
+(`FL` = 4 s) the discharge pressure peaks at about 41.6 bar, just over the 41.4 bar trip;
+with `FL` = 2 s it peaks at about 39.6 bar. The
 anti-short-cycle timers (60 s minimum off, 120 s minimum run) can be switched off on the
 Settings tab.
 

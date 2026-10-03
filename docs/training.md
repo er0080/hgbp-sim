@@ -99,9 +99,9 @@ A batch runs in parallel on numba's thread pool. On an 8-core laptop
 
 | stands | environment steps per second |
 |---|---|
-| 16 | about 4 700 |
-| 256 | about 16 000 (4 000 simulated seconds per second) |
-| 1024 | about 21 000 |
+| 16 | about 4 000 |
+| 256 | about 14 500 (3 600 simulated seconds per second) |
+| 1024 | about 19 500 |
 
 * Run one `HGBPVecEnv` with many stands per process, not many processes with one stand
   each.
