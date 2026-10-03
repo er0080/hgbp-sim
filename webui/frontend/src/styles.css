@@ -115,3 +115,55 @@ input.pending { border-color: var(--warn); }
 .chargectl { flex: 2 1 320px; background: var(--panel2); border-radius: 8px; padding: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chargectl .l { color: var(--muted); font-size: 11px; }
 .chargectl input[type=number] { width: 5.5em; }
+
+/* P-h diagram */
+.ph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 430px; gap: 14px; align-items: start; }
+@media (max-width: 1250px) { .ph-layout { grid-template-columns: 1fr; } }
+.ph-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ph text { fill: var(--text); font-size: 11px; font-family: var(--mono); }
+.ph text.lbl { fill: var(--muted); font-family: var(--font); font-size: 12px; }
+.ph .ph-frame { fill: #0b0f14; stroke: var(--line); }
+.ph .ph-grid { stroke: #1f2933; stroke-width: 1; }
+.ph .ph-dome { fill: #42a5f5; fill-opacity: 0.06; stroke: none; }
+.ph .ph-iso { fill: none; stroke: #ffb74d; stroke-opacity: 0.28; stroke-width: 1; }
+.ph .ph-qual { fill: none; stroke: #8b98a5; stroke-opacity: 0.35; stroke-width: 1; stroke-dasharray: 2 4; }
+.ph .ph-sat { fill: none; stroke: #cfd8dc; stroke-width: 2; }
+.ph .ph-sat.ext { stroke-dasharray: 5 4; stroke-opacity: 0.6; }
+.ph .ph-crit { fill: #cfd8dc; }
+.ph .ph-leg { fill: none; stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.ph .ph-ref { fill: none; stroke: #b0bec5; stroke-opacity: 0.5; stroke-width: 1.5; stroke-dasharray: 3 3; }
+.ph .ph-pt { fill: #0b0f14; stroke: #e6edf3; stroke-width: 1.5; }
+.ph .ph-cell { fill: #e6edf3; fill-opacity: 0.8; }
+.ph .ph-hover { fill: none; stroke: var(--sp); stroke-width: 2; }
+.ph .ph-tip { fill: #11171d; stroke: var(--line); fill-opacity: 0.95; }
+.ph text.ph-tiptitle { font-family: var(--font); font-weight: 600; }
+.ph text.ph-num { font-size: 11px; font-weight: 600; fill: #e6edf3; paint-order: stroke; stroke: #0b0f14; stroke-width: 3px; }
+.ph text.ph-valve { font-family: var(--font); font-size: 11px; fill: #cfd8dc; paint-order: stroke; stroke: #0b0f14; stroke-width: 3px; }
+.ph text.ph-isolbl { fill: #ffb74d; fill-opacity: 0.7; font-size: 10px; }
+.ph text.ph-qlbl { fill: var(--muted); font-size: 10px; }
+.ph text.ph-satlbl { fill: #cfd8dc; font-family: var(--font); font-size: 11px; }
+.ph-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.ph-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.ph-legend i { display: inline-block; width: 26px; height: 4px; border-radius: 2px; }
+.ph-legend i.dash { background: repeating-linear-gradient(90deg, #cfd8dc 0 7px, transparent 7px 11px); }
+.ph-legend i.ref { background: repeating-linear-gradient(90deg, #b0bec5 0 3px, transparent 3px 6px); opacity: 0.7; }
+.ph-ctl { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.ph-ctl label { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.ph-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ph-table th { text-align: right; color: var(--muted); font-weight: 500; padding: 2px 4px; white-space: nowrap; }
+.ph-table th:nth-child(2) { text-align: left; }
+.ph-table th small { font-size: 10px; }
+.ph-table td { padding: 2px 4px; border-bottom: 1px solid #1f2933; color: var(--muted); }
+.ph-table td.v { font-family: var(--mono); text-align: right; color: var(--text); white-space: nowrap; }
+.ph-table td.n { color: var(--text); }
+.ph-table tr.grp td { color: var(--muted); font-size: 11px; padding-top: 8px; border-bottom: none; }
+.ph-table tr.cell td.n { color: var(--muted); padding-left: 14px; }
+.ph-table tr.cell td.v { color: #b0bec5; }
+.ph-table tr.hl td { background: #263238; }
+.ph text.ph-splbl { font-family: var(--font); font-size: 11px; }
+.ph { user-select: none; cursor: crosshair; }
+.ph .ph-zoombox { fill: #4fc3f7; fill-opacity: 0.08; stroke: #4fc3f7; stroke-width: 1; stroke-dasharray: 4 3; }
+.ph-chart h2 .ph-cursor { float: right; text-transform: none; letter-spacing: 0; font-family: var(--mono); font-weight: 400; font-size: 12px; }
+.ph text.ph-celllbl { fill: #b0bec5; font-size: 10px; paint-order: stroke; stroke: #0b0f14; stroke-width: 3px; }
+.ph-legend .ph-hint { margin-left: auto; font-style: italic; }
+.ph-ctl .mode button:disabled { opacity: 0.45; cursor: default; }

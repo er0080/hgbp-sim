@@ -20,6 +20,7 @@ import io
 import os
 import threading
 import time
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -63,7 +64,15 @@ class Runner(threading.Thread):
             with self.lock:
                 t_hold = time.monotonic()
                 while True:
-                    st.step(snapshot=False)
+                    try:
+                        st.step(snapshot=False)
+                    except Exception as exc:           # noqa: BLE001 - keep the stand and the UI alive
+                        # a failing step pauses the stand (and says why) instead of ending the thread
+                        st.paused = True
+                        st.log(f"simulation error, paused: {type(exc).__name__}: {exc}")
+                        traceback.print_exc()
+                        now = time.monotonic()
+                        break
                     steps += 1
                     next_t += st.dt_ctrl / st.speed_factor
                     now = time.monotonic()
@@ -221,6 +230,25 @@ def get_saturation(T: float):
     """Dew point (x = 1) pressure of the stand's refrigerant at saturation temperature ``T`` [°C]."""
     with runner.lock:
         return stand.saturation(T)
+
+
+@app.get("/api/ph_chart")
+def get_ph_chart(temps: str = "", view: str = "", unit: str = "C", n: int = 12):
+    """Background of the P-h diagram: saturation lines and isotherms of the stand's
+    refrigerant.  ``temps``: isotherm temperatures (comma-separated, °C).  ``view``:
+    h0,h1,P0,P1 (kJ/kg, bar) for a chart of that region only, with about ``n`` isotherms at
+    round values of ``unit`` (C or F) across it unless ``temps`` is given."""
+    try:
+        T = [float(v) for v in temps.split(",") if v.strip()][:60] or None
+        V = [float(v) for v in view.split(",") if v.strip()] or None
+    except ValueError as exc:
+        raise HTTPException(400, "temps: temperatures in °C; view: h0,h1,P0,P1") from exc
+    if V is not None and (len(V) != 4 or not (V[0] < V[1] and 0 < V[2] < V[3])):
+        raise HTTPException(400, "view: h0,h1,P0,P1 with h0 < h1 and 0 < P0 < P1")
+    if unit not in ("C", "F"):
+        raise HTTPException(400, "unit: C or F")
+    with runner.lock:
+        return JSONResponse(stand.ph_chart(T, view=V, unit=unit, n_iso=max(2, min(n, 40))))
 
 
 @app.get("/api/history")

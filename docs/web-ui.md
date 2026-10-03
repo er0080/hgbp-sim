@@ -26,12 +26,20 @@ The image builds on x86-64 and arm64. For an x86-64 image on Apple Silicon, add
 * **Trends:** pressures with setpoints, superheat and subcooling (with the receiver
   liquid's own subcooling), valves, temperatures, mixing exchanger, flow / power / speed and
   inventory (receiver level, condenser flooding and liquid); CSV export.
+* **P-h diagram:** the stand's state points on the refrigerant's pressure-enthalpy chart,
+  live (see below).
 * **Settings:** simulation speed, noise, control interval, ambient and water temperature,
   charging rate, PID tuning and every plant parameter (with units, descriptions and
   defaults). Refrigerant, volumes and charge apply at the next cold or warm start.
 
+A warm start that finds no equilibrium at the chosen point (for example with too little
+charge) changes nothing: the stand runs on as it was, and parameters waiting for the next
+start stay pending. Should a simulation step ever fail, the stand pauses and the event log
+gives the error.
+
 The top bar has the speed factor (up to 100×), pause, cold / warm start and the display
-units.
+units. The open tab is part of the address (`#operator`, `#trends`, `#ph`, `#settings`), so a
+reload or a bookmark returns to it.
 
 The schematic shows both brazed plate exchangers cell by cell. A cell shows its quality while
 it is two-phase and its temperature otherwise, and its shading follows the liquid. The
@@ -42,6 +50,78 @@ receiver shows:
 
 The condenser shows its liquid (film and draining condensate) and how much of it is
 flooded.
+
+## P-h diagram
+
+![P-h diagram tab](../figures/ph_diagram.png)
+
+The tab draws the stand's state points over the refrigerant's saturated liquid (x = 0) and
+saturated vapor (x = 1) lines, with lines of constant quality, isotherms and the setpoint
+pressures. Every leg has the color of its pipe on the schematic: red for discharge and hot
+gas, blue for liquid, green for suction gas. Through the condenser, the two sides of the
+mixing exchanger and the compressor the color blends from the inlet's pipe to the
+outlet's. Dashed legs are the valves' throttling, at constant enthalpy.
+
+Numbered points, in flow order:
+
+| # | point | # | point |
+|---|---|---|---|
+| 1 | compressor suction | 8 | valve 3 outlet |
+| 2 | discharge (probe) | 9 | quench inlet S3 |
+| 3 | valve 1 inlet | 10 | quench outlet S4 |
+| 4 | hot gas header at the valve 2 branch | 11 | valve 2 outlet |
+| 5 | condenser inlet S3 | 12 | bypass gas inlet S1 |
+| 6 | receiver liquid | 13 | bypass gas outlet S2 |
+| 7 | valve 3 inlet | 14 | tee (the two outlets mixed) |
+
+The small dots are the five cells of each exchanger. Points closer together than the
+labels allow share one label (for example "2,3": the discharge line's drop is small).
+
+* Values are the model's, without sensor noise or lag. Pressures follow the model's pressure
+  chain: line and exchanger drops, static heads, and each exchanger cell at its centre's
+  pressure.
+* The tee mixes the gas and quench outlets weighted by the valve 2 and valve 3 flows, which
+  is exact at steady state.
+* The condenser leg runs from S3 through its cells to the receiver liquid. The step from
+  the last cell to point 6 is the drain, including the condensate's subcooling.
+* Hovering over a point, or over its row in the table, shows its pressure, temperature,
+  enthalpy and its quality, subcooling or superheat.
+* **Fit cycle** scales the axes to the points and keeps them while the cycle fits. **Full
+  dome** shows the whole dome.
+* **Box zoom:** drag a box on the chart to zoom into it, as often as needed. **Back**, Esc
+  or a double click returns to the previous view.
+  * The saturation lines and isotherms are recomputed for each view, with isotherms at
+    round values spaced to suit it (down to 0.5 °C or °F). Quality lines get finer too,
+    down to 0.01.
+  * Zoomed in, the exchanger cells get labels: C1-C5 for the condenser, Q1-Q5 for the
+    quench side, G1-G5 for the gas side, numbered in flow order.
+  * The card header shows the pressure and enthalpy under the cursor.
+
+  This helps around the compressor suction, where the gas outlet, the quench outlet, the
+  tee and the suction port lie within a few kJ/kg and a few tenths of a bar.
+
+![P-h diagram zoomed to the compressor suction](../figures/ph_diagram_zoom.png)
+
+Zoomed to the suction corner at the MT standard point:
+* The bypass gas leaves the mixing exchanger (13) just 0.7 K above its dew point, after
+  cooling through cells G2 to G5.
+* The last quench cell Q5 and the quench outlet (10) are superheated by about 34 K.
+* The tee (14) mixes the two.
+* The suction line drops the pressure to the compressor port (1) and adds a little heat
+  from its wall.
+* **Trail** leaves fading dots behind the main points to show how they moved recently.
+  **Hold reference** keeps the present cycle as a dashed outline for comparison, for example
+  across a setpoint step.
+* The side panel lists every point and cell, the pressure ratio, the enthalpy change over
+  each exchanger and the three valve flows.
+
+The property tables end below the critical pressure (at 92 % of it, 85 % for blends). The
+dome is closed above that by an estimate, drawn dashed, to the critical point. Across a
+blend's glide the isotherms are drawn linear in temperature, as the model treats the
+glide. In US units, enthalpy is the tables' value converted to Btu/lb with the tables'
+reference state (CoolProp's: for R410A and the single-component refrigerants IIR, 200 kJ/kg
+for saturated liquid at 0 °C; blends close to that). It is not the ASHRAE reference used by
+many US charts, so compare differences, not absolute values.
 
 ## Starting the compressor
 
@@ -119,6 +199,7 @@ the plant parameter table stays in SI.
 | heat | kW | Btu/h |
 | electrical power | kW | kW |
 | charge | kg | lb |
+| specific enthalpy | kJ/kg | Btu/lb (same reference state) |
 
 ## Backend API
 
@@ -138,4 +219,5 @@ backend (`webui/backend/app.py`) serves it over HTTP in metric units:
 | `GET /api/history` | trend history |
 | `GET /api/export.csv?units=metric\|english` | history as CSV, columns labelled with units |
 | `GET /api/saturation?T=` | dew point pressure of the refrigerant at `T` °C |
+| `GET /api/ph_chart?temps=&view=&unit=&n=` | P-h chart background: saturation lines and isotherms at `temps` (comma-separated °C), over the whole dome or over `view` = h0,h1,P0,P1 (kJ/kg, bar) with about `n` isotherms at round values of `unit` (C or F) |
 | `WS /ws` | the latest snapshot and new history rows, at most ten messages per second |

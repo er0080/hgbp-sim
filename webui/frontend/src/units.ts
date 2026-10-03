@@ -21,6 +21,7 @@ export type Qty =
   | "heatk"   // heat flow, kW
   | "power"   // electrical power, W
   | "mass"    // refrigerant mass, kg
+  | "h"       // specific enthalpy, kJ/kg (the property tables' reference state)
   | "rate";   // charging rate, g/s
 
 interface Conv { unit: string; k: number; o?: number; dec: number; step: number }
@@ -37,6 +38,8 @@ const TABLE: Record<Qty, Record<UnitSystem, Conv>> = {
   heatk: { metric: { unit: "kW", k: 1, dec: 1, step: 1 }, english: { unit: "kBtu/h", k: 3.41214163, dec: 1, step: 1 } },
   power: { metric: { unit: "kW", k: 1e-3, dec: 2, step: 1 }, english: { unit: "kW", k: 1e-3, dec: 2, step: 1 } },
   mass: { metric: { unit: "kg", k: 1, dec: 3, step: 0.01 }, english: { unit: "lb", k: 2.20462262, dec: 2, step: 0.05 } },
+  // a difference scale only: the English values keep the tables' reference state
+  h: { metric: { unit: "kJ/kg", k: 1, dec: 1, step: 1 }, english: { unit: "Btu/lb", k: 0.429922614, dec: 1, step: 1 } },
   rate: { metric: { unit: "g/s", k: 1, dec: 0, step: 1 }, english: { unit: "lb/min", k: 0.132277357, dec: 2, step: 0.1 } },
 };
 

@@ -34,8 +34,8 @@ compressor speed.
   per second.
 * **Training environment:** batched and `gymnasium` versions, refrigerant-agnostic
   observations, a baseline PID expert, domain randomization and charge labels.
-* **Web UI:** operator panel with the stand's UT35A controller settings, trends, metric or
-  US units.
+* **Web UI:** operator panel with the stand's UT35A controller settings, trends, a live P-h
+  diagram of every flow path, metric or US units.
 * **Steady-state solver** for warm starts, feasibility checks and performance maps.
 
 ## Install
