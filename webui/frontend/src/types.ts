@@ -15,8 +15,10 @@ export interface Snapshot {
   };
   loops: Record<string, Loop>;
   meas: Record<string, number>;
-  // true (model) values; x_q, T_q, T_g, T_mw are per mixing exchanger cell, top -> bottom
-  true: Record<string, number> & { x_q: number[]; T_q: number[]; T_g: number[]; T_mw: number[] };
+  // true (model) values; x_q, T_q, T_g, T_mw are per mixing exchanger cell and x_c, T_c (refrigerant),
+  // T_wc (water), T_cwc (wall) per condenser cell, top -> bottom
+  true: Record<string, number> & { x_q: number[]; T_q: number[]; T_g: number[]; T_mw: number[];
+    x_c: number[]; T_c: number[]; T_wc: number[]; T_cwc: number[] };
   alarms: Record<string, boolean>;
   limits: Record<string, number>;
   charge: { kg: number; nominal_kg: number; pending_kg: number; rate_kg_s: number };

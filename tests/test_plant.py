@@ -125,6 +125,23 @@ def test_mixing_exchanger_profile_is_physical():
     assert np.all(a["y_liq"] == 0.0) and np.all(a["M_q_liq"] > 0.05)
 
 
+def test_condenser_profile_is_physical():
+    """Counterflow: the hot gas enters superheated at S3 and condenses on its way
+    down; the water warms on its way up; plate walls sit between water and
+    refrigerant; what condenses is what valve 3 passes, and the walls' energy
+    balance closes."""
+    pl, res = _rating_state(n=2, N=[3550.0, 1200.0])
+    assert res["converged"].all()
+    a = res["aux"]
+    assert np.all(np.diff(a["x_c"], axis=1) < 0.0)                 # quality falls down the refrigerant side
+    assert np.all(a["x_c"][:, 0] > 1.0) and np.all((a["x_c"][:, -1] > 0.0) & (a["x_c"][:, -1] < 0.5))
+    assert np.all(np.diff(a["T_wc"], axis=1) < 0.0)                # water rises from S1 at the bottom
+    assert np.all(a["T_wc"] <= a["T_cwc"] + 1e-6) and np.all(a["T_cwc"] <= a["T_c"] + 1e-6)
+    assert np.allclose(a["mdot_cr"], a["mdot_3"], rtol=1e-3)
+    Q_amb = pl.p.UA_ca * (pl.T_amb - a["T_cw"])
+    assert np.allclose(a["Q_r"] + a["Q_sc"] + Q_amb, a["Q_w"], rtol=1e-3)
+
+
 def test_receiver_absorbs_charge():
     """The receiver takes up charge variations at unchanged condensing area; only
     a full receiver backs liquid up into the condenser; too little charge loses
@@ -264,9 +281,10 @@ def test_subcooled_zone_is_bounded_by_the_water_inlet():
     T_wi = np.array([293.15, 293.15, 288.15])
     pl.set_inputs(T_amb=298.15, T_wi=T_wi)
     res = solve_steady_state(pl, RATING["P_s"], RATING["P_d"], _rating_SH(pl), RATING["N"], P_i=RATING["P_i"],
-                             charge=pl.nominal_charge() * np.array([1.0, 2.1, 1.0]))
-    assert res["converged"][[0, 2]].all()
+                             charge=pl.nominal_charge() * np.array([1.0, 2.2, 1.0]))
+    assert res["converged"].all()
     a = res["aux"]
+    assert a["cond_flood"][1] > 0.1 and np.all(a["cond_flood"][[0, 2]] == 0.0)
     assert np.all(a["T_co"] >= T_wi - 1e-6) and np.all(a["SC"] > 0.0)
     assert a["SC"][2] > a["SC"][0] + 0.5                     # 15 degC water vs 20 degC
     assert a["SC"][1] > a["SC"][0]                           # flooded plates subcool more

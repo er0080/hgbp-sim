@@ -34,30 +34,36 @@ function Valve({ x, y, open, label, vertical = false, side = "right" }:
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
+
 export default function Schematic({ snap }: { snap: Snapshot }) {
   const m = snap.meas, t = snap.true;
   const u = useUnits();
   const running = snap.compressor.running;
   const rec = clamp01(t.rec_level), flood = clamp01(t.cond_flood);
   const xq: number[] = t.x_q ?? [], Tq: number[] = t.T_q ?? [], Tg: number[] = t.T_g ?? [];
-  const nCells = Math.max(1, xq.length);
+  const xc: number[] = t.x_c ?? [], Tc: number[] = t.T_c ?? [], Twc: number[] = t.T_wc ?? [];
+  // refrigerant cell: quality while two-phase, temperature as vapor or liquid
+  const cellText = (x: number, T: number) => (x >= 0 && x < 1 ? `x ${fmt(x, 2)}` : `${u.fmt("T", T, 0)}°`);
   // geometry
   const CX = 110, CY = 250, CR = 38;                    // compressor
-  const TOP = 60;                                       // discharge / header level
-  const COND = { x: 690, y: 95, w: 170, h: 80 };        // condenser
-  const CIN = COND.x + COND.w / 2;                      // condenser inlet / drain x
-  const REC = { x: CIN - 30, y: 230, w: 60, h: 160 };   // receiver
-  const MX = { x: 440, y: 205, w: 110, h: 175 };        // mixing exchanger (S2, S3 up)
+  const TOP = 40;                                       // discharge / header level
+  const HX = { w: 110, h: 175 };                        // brazed plate heat exchanger outline (both units)
+  const CD = { x: 750, y: 72, ...HX };                  // condenser (S2, S3 up; drawn mirrored)
+  const RX = CD.x + 18, WCX = CD.x + CD.w - 18;         // refrigerant (S3 -> S4) and water (S1 -> S2) port columns
+  const CB = CD.y + CD.h;
+  const REC = { x: RX - 30, y: 280, w: 60, h: 140 };    // receiver
+  const MX = { x: 440, y: 205, ...HX };                 // mixing exchanger (S2, S3 up)
   const GX = MX.x + 18, QX = MX.x + MX.w - 18;          // gas (S1 -> S2) and quench (S3 -> S4) port columns
   const MB = MX.y + MX.h;
   const BX = 370;                                       // bypass line x
   const LX = 660;                                       // liquid line riser x
   const TX = 280, TY = 440;                             // tee
   const OUT_Y = MX.y - 25;                              // gas outlet run to the tee
-  const WX = 930;                                       // water pipe x
-  const cellH = MX.h / nCells;
+  const WX = 975;                                       // water pipe x
+  const W_IN = CB + 28, W_OUT = CD.y - 20;              // water supply run to S1, return run from S2
+  const cellH = MX.h / Math.max(1, xq.length), cellHc = CD.h / Math.max(1, xc.length);
   const liquidY = REC.y + REC.h - 14;                   // receiver outlet level
-  const PTX = 722;                                      // liquid pressure transmitter x
+  const PTX = 720;                                      // liquid pressure transmitter x
   const HOP = 7;                                        // radius of the gas outlet's hop over the bypass line
   const PROBE = CR + 28;                                // probe distance from the compressor centre
   // compressor symbol: two chords converging on the discharge (top), suction enters at the wide end
@@ -66,7 +72,7 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
   const compStroke = running ? "var(--ok)" : "#90a4ae";
   const V = {                                           // valve positions (symbols and pipe cuts)
     v1: { x: CX, y: 125, vertical: true }, v2: { x: BX, y: 125, vertical: true },
-    v3: { x: 610, y: MX.y - 45, vertical: false }, v4: { x: WX, y: 320, vertical: true },
+    v3: { x: 610, y: MX.y - 45, vertical: false }, v4: { x: WX, y: 370, vertical: true },
   };
   return (
     <div className="card">
@@ -81,17 +87,16 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
               : <rect key={i} x={v.x - VS} y={v.y - 6} width={2 * VS} height={12} fill="black" />)}
           </mask>
           <clipPath id="recClip"><rect x={REC.x + 2} y={REC.y + 2} width={REC.w - 4} height={REC.h - 4} rx={REC.w / 2 - 2} ry={16} /></clipPath>
-          <clipPath id="condClip"><rect x={COND.x + 2} y={COND.y + 2} width={COND.w - 4} height={COND.h - 4} rx={4} /></clipPath>
         </defs>
 
         <g mask="url(#pipeCut)">
-          {/* discharge: compressor -> valve 1 -> hot gas header -> condenser */}
-          <polyline points={`${CX},${CY - CR} ${CX},${TOP} ${CIN},${TOP} ${CIN},${COND.y}`} className="pipe hot" />
-          {/* cooling water */}
-          <polyline points={`${WX},470 ${WX},${COND.y + 62} ${COND.x + COND.w},${COND.y + 62}`} className="pipe water" />
-          <polyline points={`${COND.x + COND.w},${COND.y + 18} ${WX},${COND.y + 18} ${WX},${TOP + 20}`} className="pipe water" />
-          {/* condensate drain -> receiver; liquid line: receiver -> valve 3 -> mixing exchanger S3 (top) */}
-          <line x1={CIN} y1={COND.y + COND.h} x2={CIN} y2={REC.y + 8} className="pipe liq" />
+          {/* discharge: compressor -> valve 1 -> hot gas header -> condenser S3 (top) */}
+          <polyline points={`${CX},${CY - CR} ${CX},${TOP} ${RX},${TOP} ${RX},${CD.y}`} className="pipe hot" />
+          {/* cooling water: valve 4 -> condenser S1 (bottom) -> S2 (top) -> return */}
+          <polyline points={`${WX},470 ${WX},${W_IN} ${WCX},${W_IN} ${WCX},${CB}`} className="pipe water" />
+          <polyline points={`${WCX},${CD.y} ${WCX},${W_OUT} ${WX},${W_OUT} ${WX},14`} className="pipe water" />
+          {/* condensate drain S4 -> receiver; liquid line: receiver -> valve 3 -> mixing exchanger S3 (top) */}
+          <line x1={RX} y1={CB} x2={RX} y2={REC.y + 8} className="pipe liq" />
           <polyline points={`${REC.x + 10},${liquidY} ${LX},${liquidY} ${LX},${MX.y - 45} ${QX},${MX.y - 45} ${QX},${MX.y}`} className="pipe liq" />
           {/* bypass: header -> valve 2 -> mixing exchanger S1 (bottom) */}
           <polyline points={`${BX},${TOP} ${BX},${MB + 30} ${GX},${MB + 30} ${GX},${MB}`} className="pipe hot" />
@@ -109,21 +114,39 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <text x={CX + 12} y={CY - PROBE - 22} className="lbl">discharge line ΔP {u.fmtU("dP", t.dP_dis)}</text>
         <text x={560} y={TOP - 14} textAnchor="middle" className="lbl">hot gas header · line ΔP {u.fmtU("dP", t.dP_hdr)}</text>
         <text x={560} y={TOP + 22} textAnchor="middle">{u.fmtU("P", t.P_h)} · sat {u.fmtU("T", t.Tsat_h)}</text>
-        <text x={CIN + 8} y={TOP + 26} className="lbl">refrigerant ΔP {u.fmtU("dP", t.dP_cr)}</text>
 
-        {/* condenser: liquid backs up from a full receiver */}
-        <rect x={COND.x} y={COND.y} width={COND.w} height={COND.h} rx={6} className="vessel" />
-        <rect x={COND.x} y={COND.y + COND.h - 2 - (COND.h - 4) * flood} width={COND.w} height={(COND.h - 4) * flood + 2} className="liquid" clipPath="url(#condClip)" />
-        <text x={CIN} y={COND.y + 18} textAnchor="middle" className="lbl">condenser (BPHE)</text>
-        <text x={CIN} y={COND.y + 35} textAnchor="middle">flooded {fmt(flood * 100, 0)} % · SC {u.fmtU("dT", m.SC)}</text>
-        <text x={CIN} y={COND.y + 50} textAnchor="middle">wall {u.fmtU("T", t.T_cw, 0)}</text>
-        <text x={CIN} y={COND.y + 65} textAnchor="middle" className="lbl">{u.fmtU("heat", t.Q_w)} to water</text>
+        {/* condenser: refrigerant column (left, S3 top -> S4 bottom), water column (right, S1 bottom -> S2 top);
+            liquid backs up from a full receiver into the bottom cells */}
+        <rect x={CD.x} y={CD.y} width={CD.w} height={CD.h} rx={6} className="vessel" />
+        {xc.map((x, j) => {
+          const y = CD.y + j * cellHc;
+          return (
+            <g key={j}>
+              <rect x={CD.x + 2} y={y + 1} width={CD.w / 2 - 3} height={cellHc - 2} className="liquid" style={{ opacity: 0.1 + 0.75 * clamp01(1 - x) }} />
+              <text x={CD.x + CD.w * 0.25} y={y + cellHc / 2 + 4} textAnchor="middle">{cellText(x, Tc[j])}</text>
+              <text x={CD.x + CD.w * 0.75} y={y + cellHc / 2 + 4} textAnchor="middle" className="lbl">{u.fmt("T", Twc[j], 0)}°</text>
+            </g>
+          );
+        })}
+        <line x1={CD.x + CD.w / 2} y1={CD.y + 4} x2={CD.x + CD.w / 2} y2={CB - 4} stroke="#90a4ae" strokeWidth={1} />
+        <text x={RX - 10} y={CD.y - 6} textAnchor="end" className="lbl">S3</text>
+        <text x={RX - 8} y={CB + 12} textAnchor="end" className="lbl">S4</text>
+        <text x={WCX + 10} y={CD.y - 6} className="lbl">S2</text>
+        <text x={WCX + 8} y={CB + 13} className="lbl">S1</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 30} className="lbl">condenser</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 48}>{u.fmtU("heat", t.Q_w)}</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 70} className="lbl">refrigerant (S3 → S4)</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 84}>SC {u.fmtU("dT", m.SC)}</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 98} style={{ fill: flood > 0.05 ? "var(--warn)" : undefined }}>flooded {fmt(flood * 100, 0)} %</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 112}>ΔP {u.fmtU("dP", t.dP_cr)}</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 134} className="lbl">water (S1 → S2)</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 148}>{u.fmtU("flow_w", t.mdot_w)}</text>
+        <text x={CD.x + CD.w + 8} y={CD.y + 162}>ΔP {u.fmtU("dP", t.dP_cw)}</text>
         <Valve {...V.v4} open={m.u4} label="4 cooling water" side="left" />
-        <text x={COND.x + COND.w + 8} y={COND.y + 56} className="lbl">water ΔP {u.fmtU("dP", t.dP_cw)}</text>
-        <text x={WX + 12} y={462} className="lbl">water in</text>
-        <text x={WX + 12} y={476} className="lbl">{u.fmtU("T", m.T_wi)}</text>
-        <text x={WX} y={TOP - 4} textAnchor="middle" className="lbl">water out</text>
-        <text x={WX} y={TOP + 11} textAnchor="middle" className="lbl">{u.fmtU("T", m.T_wo)} · {u.fmtU("flow_w", t.mdot_w)}</text>
+        <text x={WX - 8} y={462} textAnchor="end" className="lbl">water in</text>
+        <text x={WX - 8} y={476} textAnchor="end" className="lbl">{u.fmtU("T", m.T_wi)}</text>
+        <text x={WX - 8} y={W_OUT - 18} textAnchor="end" className="lbl">water out</text>
+        <text x={WX - 8} y={W_OUT - 5} textAnchor="end" className="lbl">{u.fmtU("T", m.T_wo)}</text>
 
         {/* receiver (dished heads); the level fills the vessel outline */}
         <rect x={REC.x} y={REC.y} width={REC.w} height={REC.h} rx={REC.w / 2} ry={18} className="vessel" />
@@ -140,7 +163,6 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <circle cx={PTX} cy={liquidY} r={6} fill="#263238" stroke="#cfd8dc" strokeWidth={1.5} />
         <text x={PTX} y={liquidY + 22} textAnchor="middle">{u.fmtU("P", m.P_i)}</text>
         <text x={PTX} y={liquidY + 36} textAnchor="middle" className="lbl">liquid pressure · sat {u.fmtU("T", m.Tsat_i)}</text>
-
         <Valve {...V.v2} open={m.u2} label="2 suction press. (HGBP)" />
         <text x={BX - 10} y={300} textAnchor="end" className="lbl">bypass</text>
         <text x={BX - 10} y={314} textAnchor="end">{u.fmtU("mdot", t.mdot_2)}</text>
@@ -156,7 +178,7 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
           return (
             <g key={j}>
               <rect x={MX.x + MX.w / 2 + 1} y={y + 1} width={MX.w / 2 - 3} height={cellH - 2} className="liquid" style={{ opacity: 0.1 + 0.75 * wet }} />
-              <text x={MX.x + MX.w * 0.75} y={y + cellH / 2 + 4} textAnchor="middle">{x < 1 ? `x ${fmt(x, 2)}` : `${u.fmt("T", Tq[j], 0)}°`}</text>
+              <text x={MX.x + MX.w * 0.75} y={y + cellH / 2 + 4} textAnchor="middle">{cellText(x, Tq[j])}</text>
               <text x={MX.x + MX.w * 0.25} y={y + cellH / 2 + 4} textAnchor="middle" className="lbl">{u.fmt("T", Tg[j], 0)}°</text>
             </g>
           );

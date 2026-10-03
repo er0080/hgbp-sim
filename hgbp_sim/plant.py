@@ -49,6 +49,12 @@ Model structure
   tube), liquid line, receiver, drain, condenser, header: the condenser keeps
   its full condensing area until the receiver is full, and the liquid seal at
   valve 3 is lost once the receiver level drops below the dip tube.
+* The condenser has ``MX`` plate wall cells (top -> bottom), like the mixing
+  exchanger.  Its refrigerant side is quasi-steady: the hot gas is marched from
+  S3 down the cells to the liquid (wet-wall desuperheating, condensation along
+  the glide; the flow is what the plates condense), giving the quality in every
+  cell; liquid backing up from a full receiver floods the cells from the bottom.
+  The water rises from S1 through the cells in counterflow.
 * The suction side (mixing exchanger, tee, suction line and the compressor's
   internal suction volume) shares one pressure P_s.  The quench side of the
   mixing exchanger is split into ``MX`` finite-volume cells (enthalpy states,
@@ -92,7 +98,7 @@ from .kernel import model as km
 from .params import PlantParams, nominal_charge, sample_params
 from .properties import RefrigerantTables, get_tables
 
-MX = L.MX       # finite-volume cells per side of the mixing exchanger
+MX = L.MX       # finite-volume cells per side of the mixing exchanger and of the condenser
 G = km.G        # gravity [m/s^2]
 
 
@@ -105,7 +111,8 @@ class HGBPPlant:
     T_mw0..             mixing exchanger plate walls (top -> bottom)
     T_sw                suction line wall
     P_d, h_d, T_dw      discharge volume and discharge line wall
-    P_i, h_i, T_cw      intermediate section, condenser plates + water content
+    P_i, h_i            intermediate section
+    T_cw0..             condenser plate walls + water content (top -> bottom)
     T_rw                receiver shell
     T_sh, N             compressor shell temperature, speed [rpm]
     u1..u4              actual valve positions
@@ -126,7 +133,8 @@ class HGBPPlant:
     TMW = slice(L.X_TMW, L.X_TMW + MX)
     T_SW = L.X_T_SW
     P_D, H_D, T_DW = L.X_P_D, L.X_H_D, L.X_T_DW
-    P_I, H_I, T_CW, T_RW = L.X_P_I, L.X_H_I, L.X_T_CW, L.X_T_RW
+    P_I, H_I, T_RW = L.X_P_I, L.X_H_I, L.X_T_RW
+    TCW = slice(L.X_TCW, L.X_TCW + MX)
     T_SH, N_ = L.X_T_SH, L.X_N
     U1, U2, U3, U4 = L.X_U1, L.X_U1 + 1, L.X_U1 + 2, L.X_U1 + 3
     UV = slice(U1, U4 + 1)
@@ -422,9 +430,10 @@ class HGBPPlant:
         x = np.zeros((m, self.NX))
         x[:, self.P_S], x[:, self.HS], x[:, self.HG] = P, H, Hg
         x[:, self.TMW] = T_amb[:, None]
+        x[:, self.TCW] = T_amb[:, None]
         x[:, self.P_D], x[:, self.H_D] = P, h_d
         x[:, self.P_I], x[:, self.H_I] = P, h_i
-        for i in (self.T_SW, self.T_DW, self.T_CW, self.T_RW, self.T_SH, self.TM_S, self.TM_D, self.TM_CO):
+        for i in (self.T_SW, self.T_DW, self.T_RW, self.T_SH, self.TM_S, self.TM_D, self.TM_CO):
             x[:, i] = T_amb
         u_pos = np.zeros((m, self.NU)) if u_pos is None else np.broadcast_to(np.asarray(u_pos, float), (m, self.NU))
         x[:, self.UV] = u_pos

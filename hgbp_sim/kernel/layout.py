@@ -11,12 +11,13 @@ import numpy as np
 from ..geometry import LINES
 from ..params import PlantParams
 
-MX = 5          # finite-volume cells per side of the mixing exchanger
+MX = 5          # finite-volume cells per side of the mixing exchanger and of the condenser
 
 # ------------------------------------------------------------------ state
 STATE_NAMES = tuple(["P_s"] + [f"h_q{j}" for j in range(MX)] + ["h_l1", "h_l2"]
                     + [f"T_mw{j}" for j in range(MX)]
-                    + ["T_sw", "P_d", "h_d", "T_dw", "P_i", "h_i", "T_cw", "T_rw", "T_sh", "N",
+                    + ["T_sw", "P_d", "h_d", "T_dw", "P_i", "h_i"] + [f"T_cw{j}" for j in range(MX)]
+                    + ["T_rw", "T_sh", "N",
                        "u1", "u2", "u3", "u4", "Tm_s", "Tm_d", "mm", "Wm", "Tm_co",
                        "M_s", "M_d", "M_i", "U_s", "U_d", "U_i"]
                     + [f"h_g{j}" for j in range(MX)])
@@ -28,7 +29,8 @@ X_H_L1, X_H_L2 = IX["h_l1"], IX["h_l2"]
 X_TMW = IX["T_mw0"]
 X_T_SW = IX["T_sw"]
 X_P_D, X_H_D, X_T_DW = IX["P_d"], IX["h_d"], IX["T_dw"]
-X_P_I, X_H_I, X_T_CW, X_T_RW = IX["P_i"], IX["h_i"], IX["T_cw"], IX["T_rw"]
+X_P_I, X_H_I, X_T_RW = IX["P_i"], IX["h_i"], IX["T_rw"]
+X_TCW = IX["T_cw0"]                 # condenser plate walls T_cw0.. (top -> bottom)
 X_T_SH, X_N = IX["T_sh"], IX["N"]
 X_U1 = IX["u1"]                     # u1..u4
 X_TM_S, X_TM_D, X_MM, X_WM, X_TM_CO = IX["Tm_s"], IX["Tm_d"], IX["mm"], IX["Wm"], IX["Tm_co"]
@@ -80,6 +82,7 @@ AUX_FIELDS = (
     ("x_l1", 1), ("x_i", 1), ("x_qo", 1), ("T_qo", 1), ("T_go", 1), ("h_go", 1), ("T_l1", 1),
     ("fill_i", 1), ("rec_level", 1), ("ll_fill", 1), ("cond_flood", 1), ("M_q_liq", 1),
     ("h_q", MX), ("x_q", MX), ("T_q", MX), ("T_g", MX), ("h_g", MX), ("T_mw", MX),
+    ("h_c", MX), ("x_c", MX), ("T_c", MX), ("T_wc", MX), ("T_cwc", MX),
     ("Q_mx", 1), ("Q_q", 1), ("rho_s", 1), ("h_l1", 1), ("h_l2", 1), ("h_cin", 1), ("x_l2", 1),
     ("h_d", 1), ("h_i", 1), ("h_co", 1), ("h2", 1), ("h_2f", 1), ("h_3f", 1), ("T2_ad", 1),
     ("P_tee", 1), ("dP_suc", 1), ("dP_dis", 1), ("dP_hdr", 1), ("dP_bp", 1), ("dP_mog", 1),

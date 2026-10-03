@@ -531,6 +531,8 @@ class LiveStand:
                       M_q_liq=f(aux["M_q_liq"]), Q_mx=f(aux["Q_mx"]),
                       x_q=[float(v) for v in aux["x_q"][0]], T_q=[float(v) - C2K for v in aux["T_q"][0]],
                       T_g=[float(v) - C2K for v in aux["T_g"][0]], T_mw=[float(v) - C2K for v in aux["T_mw"][0]],
+                      x_c=[float(v) for v in aux["x_c"][0]], T_c=[float(v) - C2K for v in aux["T_c"][0]],
+                      T_wc=[float(v) - C2K for v in aux["T_wc"][0]], T_cwc=[float(v) - C2K for v in aux["T_cwc"][0]],
                       T_sh=f(aux["T_sh"]) - C2K, T_cw=f(aux["T_cw"]) - C2K, T_rw=f(aux["T_rw"]) - C2K,
                       mdot_1=f(aux["mdot_1"]) * 1e3, mdot_2=f(aux["mdot_2"]) * 1e3, mdot_3=f(aux["mdot_3"]) * 1e3,
                       mdot_w=f(aux["mdot_w"]) * 60.0, Q_w=f(aux["Q_w"]), Q_r=f(aux["Q_r"]), W_el=f(aux["W_el"]),

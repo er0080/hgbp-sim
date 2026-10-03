@@ -20,18 +20,18 @@ from ..components import (PIPE_ROUGHNESS, actuator_rate, amalfi_ftp, compressor_
                           water_valve_flow)
 from . import batch_variants
 from . import props as kp
-from .layout import (A_M_d, A_M_g, A_M_i, A_M_q_liq, A_M_s, A_M_tot, A_N, A_P_d, A_P_h, A_P_i, A_P_s,
-                     A_P_tee, A_Pr, A_Q_dg, A_Q_mx, A_Q_q, A_Q_r, A_Q_rw, A_Q_sc, A_Q_sg, A_Q_w, A_SC, A_SH,
-                     A_T2_ad, A_T_co, A_T_cw, A_T_d, A_T_dw, A_T_g, A_T_go, A_T_i, A_T_l1, A_T_mw, A_T_q, A_T_qo,
-                     A_T_rw, A_T_s, A_T_sat_d, A_T_sat_i, A_T_sat_s, A_T_sh, A_T_sw, A_T_wo, A_Tm_co, A_Tm_d,
-                     A_Tm_s, A_W_el, A_W_shaft, A_Wm, A_cond_flood, A_dP_bp, A_dP_cr, A_dP_cw, A_dP_dis,
-                     A_dP_drn, A_dP_hdr, A_dP_liq, A_dP_mg, A_dP_mog, A_dP_moq, A_dP_mq, A_dP_mq_ch, A_dP_q,
-                     A_dP_q_dist, A_dP_q_in, A_dP_q_out, A_dP_qc, A_dP_suc, A_dx, A_eta_s, A_eta_v, A_fill_i,
-                     A_h2, A_h_2f, A_h_3f, A_h_cin, A_h_co, A_h_d, A_h_g, A_h_go, A_h_i, A_h_l1, A_h_l2, A_h_q,
-                     A_ll_fill, A_mdot_1, A_mdot_2, A_mdot_3, A_mdot_c, A_mdot_cr, A_mdot_w, A_mm, A_rec_level,
-                     A_rho_s, A_u1, A_x_i, A_x_l1, A_x_l2, A_x_out, A_x_q, A_x_qo, A_y_liq, MX, NX, X_H_D, X_H_I,
-                     X_HG, X_HQ, X_M_D, X_M_I, X_M_S, X_MM, X_N, X_P_D, X_P_I, X_P_S, X_T_CW, X_T_DW, X_T_RW,
-                     X_T_SH, X_T_SW, X_TM_CO, X_TM_D, X_TM_S, X_TMW, X_U1, X_U_D, X_U_I, X_U_S, X_WM)
+from .layout import (A_M_d, A_M_g, A_M_i, A_M_q_liq, A_M_s, A_M_tot, A_N, A_P_d, A_P_h, A_P_i, A_P_s, A_P_tee, A_Pr,
+                     A_Q_dg, A_Q_mx, A_Q_q, A_Q_r, A_Q_rw, A_Q_sc, A_Q_sg, A_Q_w, A_SC, A_SH, A_T2_ad, A_T_c, A_T_co,
+                     A_T_cw, A_T_cwc, A_T_d, A_T_dw, A_T_g, A_T_go, A_T_i, A_T_l1, A_T_mw, A_T_q, A_T_qo, A_T_rw, A_T_s,
+                     A_T_sat_d, A_T_sat_i, A_T_sat_s, A_T_sh, A_T_sw, A_T_wc, A_T_wo, A_Tm_co, A_Tm_d, A_Tm_s, A_W_el,
+                     A_W_shaft, A_Wm, A_cond_flood, A_dP_bp, A_dP_cr, A_dP_cw, A_dP_dis, A_dP_drn, A_dP_hdr, A_dP_liq,
+                     A_dP_mg, A_dP_mog, A_dP_moq, A_dP_mq, A_dP_mq_ch, A_dP_q, A_dP_q_dist, A_dP_q_in, A_dP_q_out,
+                     A_dP_qc, A_dP_suc, A_dx, A_eta_s, A_eta_v, A_fill_i, A_h2, A_h_2f, A_h_3f, A_h_c, A_h_cin, A_h_co,
+                     A_h_d, A_h_g, A_h_go, A_h_i, A_h_l1, A_h_l2, A_h_q, A_ll_fill, A_mdot_1, A_mdot_2, A_mdot_3,
+                     A_mdot_c, A_mdot_cr, A_mdot_w, A_mm, A_rec_level, A_rho_s, A_u1, A_x_c, A_x_i, A_x_l1, A_x_l2,
+                     A_x_out, A_x_q, A_x_qo, A_y_liq, MX, NX, X_HG, X_HQ, X_H_D, X_H_I, X_MM, X_M_D, X_M_I, X_M_S, X_N,
+                     X_P_D, X_P_I, X_P_S, X_TCW, X_TMW, X_TM_CO, X_TM_D, X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_U1,
+                     X_U_D, X_U_I, X_U_S, X_WM)
 # (layout's X_* state and A_* output indices are compile-time constants in the kernel)
 
 G = 9.81                    # gravity [m/s^2]
@@ -45,6 +45,7 @@ MAX_DH_STEP = 40e3          # suction cell enthalpy change per sub-step above wh
 MAX_DP_STEP = 0.2           # relative pressure change per sub-step above which it is redone finer
 INTEGRATORS = {"rk4": 0, "heun": 1, "euler": 2}
 NS = MX + 2                 # dynamic suction side cells: quench cells, L1 (tee + suction line), L2 (compressor)
+CF_STAGNANT = 2e-3          # condenser flow below which its vapor counts as stagnant (the section's own) [kg/s]
 
 
 # ------------------------------------------------------------------ helpers
@@ -163,6 +164,83 @@ def _quench_heat(Hq, Tq, T_mw, H_up, dTs, phi_f, Q_2ph, UA_e, UA_v, h_vs):
     return w_wet * UA_e * (T_mw - Tq) + (1.0 - w_wet) * Q_dry
 
 
+@njit(cache=True)
+def _cond_cell_heat(tab, P, s, h_up, Tc, Tw, m, A, a2, a1, w_flow, T_iv):
+    """Heat from the refrigerant into the plate wall of one condenser cell (area
+    ``A`` above the liquid) for flow ``m`` entering with enthalpy ``h_up``.  On a
+    wall below the condensing temperature ``Tc`` vapor condenses (``a2``), and
+    superheated vapor gives up its superheat to the condensate surface
+    (``a1``, effectiveness over the cell: wet-wall desuperheating); a wall above
+    it stays dry and only exchanges sensible heat with the vapor.  Without flow
+    (``w_flow`` -> 0) a dry wall sees the section's own vapor at ``T_iv``."""
+    if A <= 0.0:
+        return 0.0
+    wet = Tw < Tc
+    Q = a2 * A * (Tc - Tw) if wet else 0.0
+    T_t = s.T_v if wet else Tw                     # the vapor cools (or warms) toward this
+    if h_up > s.h_v and m > 0.0:
+        dT = kp.T_vapor(tab, P, h_up) - s.T_v
+        cp = _clip((h_up - s.h_v) / dT if dT > 0.05 else s.cp_v, 300.0, 1e5)
+        Qs = (1.0 - math.exp(-a1 * A / (m * cp))) * m * (h_up - s.h_v - cp * (T_t - s.T_v))
+    else:
+        Qs = 0.0 if wet else a1 * A * (Tc - Tw)    # saturated vapor against a dry wall
+    if not wet:
+        Qs = w_flow * Qs + (1.0 - w_flow) * a1 * A * (T_iv - Tw)
+    return Q + Qs
+
+
+@njit(cache=True)
+def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid):
+    """Refrigerant side of the condenser, quasi-steady, marched over its ``MX``
+    cells from S3 (top) to S4 (bottom) against the plate walls ``T_w``; ``f_fl``
+    is each cell's flooded share (handled with the subcooled zone).
+
+    The vapor flowing in is what the plates condense, so the flow ``m`` is the
+    one that leaves the last cell above the liquid at the bubble point:
+    m (h_in - h_l) = sum Q.  It enters as hot gas from the header (``h_hot``, up
+    to the header surplus ``m_hot``) and otherwise as the section's vapor
+    (``h_vap``).  The flow, the condensing temperatures along the glide and the
+    sensible heat of the superheated vapor depend on each other; three passes
+    of a fixed-point iteration settle them (the sensible heat changes the flow
+    by at most the superheat's share of the enthalpy drop).
+
+    Fills ``Q`` (refrigerant -> wall per cell) and ``h_mid`` (the cells' mean
+    enthalpy above the liquid); returns the flow."""
+    n = MX
+    A = p.cond_A / n
+    a2, a1 = p.alpha_r_2ph, p.alpha_r_1ph
+    dh_lv = max(s.h_v - s.h_l, 1e3)
+    Tc = np.empty(n)
+    m = 0.0
+    for j in range(n):
+        Tc[j] = 0.5 * (s.T_l + s.T_v)
+        if T_w[j] < Tc[j]:
+            m += a2 * A * (1.0 - f_fl[j]) * (Tc[j] - T_w[j])
+    m /= dh_lv                                      # the condensing flow, if the vapor desuperheats fully
+    w = 0.0
+    for _ in range(3):
+        s_hot = min(m_hot / m, 1.0) if m > 1e-12 else (1.0 if m_hot > 0.0 else 0.0)
+        h_in = s_hot * h_hot + (1.0 - s_hot) * h_vap
+        w = smoothstep(m / CF_STAGNANT)
+        h = h_in
+        Q_sum = 0.0
+        for j in range(n):
+            Q[j] = _cond_cell_heat(tab, P, s, h, Tc[j], T_w[j], m, A * (1.0 - f_fl[j]), a2, a1, w, T_iv)
+            Q_sum += Q[j]
+            h = max(h - Q[j] / max(m, 1e-9), s.h_l)
+        m = max(Q_sum, 0.0) / max(h_in - s.h_l, 1e4)
+        # profile at this flow -> condensing temperature of every cell (linear along the glide)
+        h = h_in
+        for j in range(n):
+            h_o = h - Q[j] / max(m, 1e-9)
+            h_mid[j] = _clip(0.5 * (h + h_o), s.h_l, max(h_in, h_vap))
+            Tc[j] = s.T_l + _clip((h_mid[j] - s.h_l) / dh_lv, 0.0, 1.0) * (s.T_v - s.T_l)
+            h = h_o
+    for j in range(n):                              # without flow the cells hold the section's vapor
+        h_mid[j] = w * h_mid[j] + (1.0 - w) * h_vap
+    return m
+
+
 # ----------------------------------------------------------------- RHS
 @njit(cache=True)
 def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out):
@@ -178,7 +256,8 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     T_mw = x[X_TMW:X_TMW + n]
     T_sw = x[X_T_SW]
     P_d, h_d, T_dw = x[X_P_D], x[X_H_D], x[X_T_DW]
-    P_i, h_i, T_cw, T_rw = x[X_P_I], x[X_H_I], x[X_T_CW], x[X_T_RW]
+    P_i, h_i, T_rw = x[X_P_I], x[X_H_I], x[X_T_RW]
+    T_cw = x[X_TCW:X_TCW + n]                       # condenser plate walls (top -> bottom)
     T_sh, N = x[X_T_SH], x[X_N]
     u1, u2, u3, u4 = x[X_U1], x[X_U1 + 1], x[X_U1 + 2], x[X_U1 + 3]
     Tm_s, Tm_d, mm, Wm, Tm_co = x[X_TM_S], x[X_TM_D], x[X_MM], x[X_WM], x[X_TM_CO]
@@ -213,21 +292,26 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     rho_co = I.rho_l * (1.0 - dry) + I.rho * dry
     h_iv = I.h_v * (1.0 - dry) + h_i * dry                     # vapor phase of the section
 
-    # ---- condenser, refrigerant -> wall.  Plate area shares: flooded by liquid backing
-    # up from a full receiver, condensing (a_c) and vapor-covered (the rest).
+    # ---- condenser cells (top -> bottom): liquid backing up from a full receiver floods
+    # them from the bottom; the condensing flow (condensing duty over the latent heat,
+    # exact when the vapor desuperheats completely) sets the refrigerant side's drop
+    sat_i = kp.sat(tab, P_i)
+    f_fl = np.empty(n)
+    m_cond = 0.0
+    T_c2 = 0.5 * (sat_i.T_l + sat_i.T_v)
+    for j in range(n):
+        f_fl[j] = _clip(cond_flood * n - (n - 1 - j), 0.0, 1.0)
+        m_cond += p.alpha_r_2ph * (p.cond_A / n) * (1.0 - f_fl[j]) * max(T_c2 - T_cw[j], 0.0)
     w2 = (1.0 - smoothstep((I.x - 0.85) / 0.15)) * (1.0 - smoothstep(-I.x / 0.05))
-    a_c = w2 * (1.0 - cond_flood)
-    UA_r = p.cond_A * (p.alpha_r_2ph * a_c + p.alpha_r_1ph * (1.0 - cond_flood - a_c))
-    Q_r = UA_r * (I.T - T_cw)                         # refrigerant -> wall
+    a_c = w2 * (1.0 - cond_flood)                   # condensing (two-phase) share of the column
 
     # ---- condenser pressure drop.  P_i is measured at the outlet (after the receiver,
     # ahead of valve 3); the header at the inlet sits above it by the friction drop of
     # the condensing flow and below it by the static head of the refrigerant column
     # (homogeneous two-phase over the condensing area, liquid where flooded).
-    sat_i = kp.sat(tab, P_i)
     rho_v = I.rho if I.x >= 1.0 else sat_i.rho_v
     rho_l = sat_i.rho_l
-    mdot_cr = max(Q_r, 0.0) / max(h_d - I.h_l, 1e4)
+    mdot_cr = m_cond / max(sat_i.h_v - sat_i.h_l, 1e4)
     rho_fr = w2 * 2.0 / (1.0 / rho_v + 1.0 / rho_l) + (1.0 - w2) * rho_v
     r_lv = max(rho_l / rho_v, 1.001)
     rho_hm = rho_v * math.log(r_lv) / (1.0 - 1.0 / r_lv)          # column mean, quality 1 -> 0
@@ -379,11 +463,34 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     h_3i = h_cv_out if fwd3 else H[0]                         # leaving the intermediate section
     h_3f = h_co if fwd3 else H[0]                             # entering the quench side
     T_w1 = T_wi + Q_sc / max(Cw, 1e-9)               # water leaving the subcooled zone
-    eps_w = 1.0 - math.exp(-UA_w * (1.0 - a_sc) / max(Cw, 1e-9))
-    Q_ww = eps_w * Cw * (T_cw - T_w1)                # wall -> water
+
+    # ---- condenser, refrigerant -> walls: the hot gas surplus of the header (or the
+    # section's vapor) marched from S3 down to the liquid
+    h_vap_i = max(h_i, I.h_v)                         # the section's vapor
+    T_iv = I.T if I.x >= 1.0 else sat_i.T_v
+    Q_c, h_cm = np.empty(n), np.empty(n)
+    m_cr = _condenser(p, tab, P_i, sat_i, T_cw, f_fl, h_d, h_vap_i, T_iv, max(mdot_1 - max(mdot_2, 0.0), 0.0),
+                      Q_c, h_cm)
+    Q_r = 0.0
+    for j in range(n):
+        Q_r += Q_c[j]
+
+    # ---- condenser, walls -> water: counterflow, the water rising from S1 (bottom, after
+    # the subcooled zone at its inlet end) to S2 through the wall cells.  Every wall cell
+    # meets the water over its whole area (a flooded cell's wall follows the water)
+    T_wat = T_w1
+    Q_ww = 0.0
+    T_wc, dT_cw = np.empty(n), np.empty(n)
+    eps_w = 1.0 - math.exp(-UA_w / n / max(Cw, 1e-9))
+    for j in range(n - 1, -1, -1):
+        dTw = eps_w * (T_cw[j] - T_wat)
+        Q_wj = Cw * dTw                                          # wall -> water
+        T_wc[j] = T_wat + 0.5 * dTw
+        T_wat += dTw
+        Q_ww += Q_wj
+        dT_cw[j] = (Q_c[j] - Q_wj + (p.UA_ca / n) * (T_amb - T_cw[j])) / (p.C_cw / n)
     Q_w = Q_sc + Q_ww                                # water duty
-    T_wo = T_wi + (Q_w / max(Cw, 1e-9) if Cw > 1e-9 else 0.0)
-    dT_cw = (Q_r - Q_ww + p.UA_ca * (T_amb - T_cw)) / p.C_cw
+    T_wo = T_wat if Cw > 1e-9 else T_wi
 
     # ---- mixing exchanger, gas side: quasi-steady march from S1 (bottom cell n-1)
     # up to S2 against the plate walls; the gas does not condense (walls below
@@ -550,7 +657,9 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
         dx[X_HG + j] = 0.0
     dx[X_T_SW] = dT_sw
     dx[X_P_D], dx[X_H_D], dx[X_T_DW] = dP_d, dh_d, dT_dw
-    dx[X_P_I], dx[X_H_I], dx[X_T_CW], dx[X_T_RW] = dP_i, dh_i, dT_cw, dT_rw
+    dx[X_P_I], dx[X_H_I], dx[X_T_RW] = dP_i, dh_i, dT_rw
+    for j in range(n):
+        dx[X_TCW + j] = dT_cw[j]
     dx[X_T_SH], dx[X_N] = dT_sh, dN
     dx[X_U1] = actuator_rate(u1, u_cmd[0], p.tau_dpv, p.rate_dpv)
     dx[X_U1 + 1] = actuator_rate(u2, u_cmd[1], p.tau_spv, p.rate_spv)
@@ -603,11 +712,22 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     a[A_dP_bp], a[A_dP_mog], a[A_dP_moq], a[A_dP_q], a[A_dP_liq] = dP_bp, dP_mog, dP_moq, dP_q, dP_liq
     a[A_dP_drn], a[A_P_h], a[A_dP_cr], a[A_dP_cw], a[A_dP_mg] = dP_drn, P_h, dP_cr, dP_cw, dP_mg
     a[A_dP_mq], a[A_dP_mq_ch] = dP_mq, dP_mq_ch
-    a[A_dP_q_dist], a[A_dP_q_in], a[A_dP_q_out], a[A_mdot_cr] = q_dist, q_in, q_out, mdot_cr
+    a[A_dP_q_dist], a[A_dP_q_in], a[A_dP_q_out], a[A_mdot_cr] = q_dist, q_in, q_out, m_cr
     a[A_mdot_c], a[A_mdot_1], a[A_mdot_2], a[A_mdot_3], a[A_mdot_w] = mdot_c, mdot_1, mdot_2, mdot_3, mdot_w
     a[A_W_el], a[A_W_shaft], a[A_Pr], a[A_eta_v], a[A_eta_s] = W_el, W_shaft, Pr_c, eta_v, eta_s
     a[A_Q_r], a[A_Q_w], a[A_Q_sc], a[A_Q_sg], a[A_Q_dg], a[A_Q_rw] = Q_r, Q_w, Q_sc, Q_sg, Q_dg, Q_rw
-    a[A_T_wo], a[A_T_sw], a[A_T_dw], a[A_T_cw], a[A_T_rw], a[A_T_sh] = T_wo, T_sw, T_dw, T_cw, T_rw, T_sh
+    T_cw_mean = 0.0
+    for j in range(n):
+        T_cw_mean += T_cw[j] / n
+    a[A_T_wo], a[A_T_sw], a[A_T_dw], a[A_T_cw], a[A_T_rw], a[A_T_sh] = T_wo, T_sw, T_dw, T_cw_mean, T_rw, T_sh
+    # condenser cells: above the liquid the marched profile, flooded shares hold liquid
+    # subcooled halfway between the bubble point and the valve 3 inlet
+    h_fl = sat_i.h_l - I.cp_l * max(sat_i.T_l - 0.5 * (T_l + T_co), 0.0)
+    for j in range(n):
+        hc = (1.0 - f_fl[j]) * h_cm[j] + f_fl[j] * h_fl
+        a[A_h_c + j], a[A_x_c + j] = hc, (hc - sat_i.h_l) / max(sat_i.h_v - sat_i.h_l, 1e3)
+        a[A_T_c + j] = kp.state(tab, P_i, hc).T
+        a[A_T_wc + j], a[A_T_cwc + j] = T_wc[j], T_cw[j]
     a[A_N] = N
     for k in range(4):
         a[A_u1 + k] = x[X_U1 + k]

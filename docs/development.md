@@ -16,7 +16,10 @@ The model runs as numba-compiled code in `hgbp_sim/kernel/`. Everything else is 
 * **Compile cache.** Numba compiles on first use and caches the machine code next to the
   sources (`__pycache__`). Only the first run after installing or after changing the kernel
   pays the compile time; `python -m hgbp_sim.kernel.warmup` does it ahead (the Docker
-  image does it at build time).
+  image does it at build time). Numba only notices changes to a function's own source
+  file: after editing `kernel/model.py`, the cached steady-state solver (`kernel/steady.py`)
+  still runs the old model. Delete the `*.nbi` / `*.nbc` files in `hgbp_sim/kernel/__pycache__`
+  after a kernel change.
 * **Scalar code per stand.** Kernel functions work on one stand; the `*_batch` functions
   loop over a batch, in a serial and a parallel build. A single stand runs serially.
 * **Adding physics.** Model code goes into the kernel (`kernel/model.py`), as scalar code
