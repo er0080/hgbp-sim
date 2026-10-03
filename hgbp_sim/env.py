@@ -194,8 +194,11 @@ class HGBPVecEnv:
         self.reset()
 
     # ------------------------------------------------------------- helpers
-    def _tsat(self, P):
-        return self.props.T_sat(np.maximum(P, self.props.p_min)) - C2K
+    def _tsat(self, *P):
+        """Saturation temperatures [degC] at the pressures ``P`` (arrays of the batch),
+        in one lookup; a single pressure gives a single array."""
+        T = self.props.T_sat(np.maximum(np.stack(np.broadcast_arrays(*P)), self.props.p_min)) - C2K
+        return T if len(P) > 1 else T[0]
 
     def _running(self):
         return self.plant.x[:, HGBPPlant.N_] > 0.5 * self.params.N_min
@@ -214,10 +217,8 @@ class HGBPVecEnv:
                            self.interlock.tripped)
 
     def _errors_K(self, P_s, P_d, SH, P_i):
-        return np.stack([self._tsat(self.sp[:, 0]) - self._tsat(P_s),
-                         self._tsat(self.sp[:, 1]) - self._tsat(P_d),
-                         self.sp[:, 2] - SH,
-                         self._tsat(self.sp[:, 3]) - self._tsat(P_i)], 1)
+        T = self._tsat(self.sp[:, 0], P_s, self.sp[:, 1], P_d, self.sp[:, 3], P_i)
+        return np.stack([T[0] - T[1], T[2] - T[3], self.sp[:, 2] - SH, T[4] - T[5]], 1)
 
     # ------------------------------------------------------------------ reset
     def reset(self, idx=None) -> np.ndarray:
@@ -435,8 +436,9 @@ class HGBPVecEnv:
         m, cfg, p = self.meas, self.cfg, self.plant.p
         running = self._running()
         n = self.n
-        Tsat_s, Tsat_d, Tsat_i = self._tsat(m["P_s"]), self._tsat(m["P_d"]), self._tsat(m["P_i"])
-        e = self._errors_K(m["P_s"], m["P_d"], m["SH"], m["P_i"])
+        Tsat_s, Tsat_d, Tsat_i, sp_s, sp_d, sp_i = self._tsat(m["P_s"], m["P_d"], m["P_i"], self.sp[:, 0],
+                                                            self.sp[:, 1], self.sp[:, 3])
+        e = np.stack([sp_s - Tsat_s, sp_d - Tsat_d, self.sp[:, 2] - m["SH"], sp_i - Tsat_i], 1)
         ie = self.ie if cfg.include_integrated_error else np.zeros_like(self.ie)
         rho_ref = self.props.sat(np.maximum(m["P_s"], self.props.p_min))["rho_v"]
         swept = p.V_disp * np.maximum(m["N"], 1.0) / 60.0
@@ -448,8 +450,7 @@ class HGBPVecEnv:
             np.stack([Tsat_s, Tsat_d, Tsat_i, m["T_s"] - C2K, m["T_d"] - C2K, m["T_co"] - C2K,
                       m["SH"], m["SC"], mdot_norm, W_norm, m["T_wi"] - C2K, m["T_wo"] - C2K,
                       m["T_amb"] - C2K, m["N"] / p.N_nom, m["u1"], m["u2"], m["u3"], m["u4"]], 1),
-            np.stack([self._tsat(self.sp[:, 0]), self._tsat(self.sp[:, 1]), self.sp[:, 2],
-                      self._tsat(self.sp[:, 3]), self.sp[:, 4] / p.N_nom], 1),
+            np.stack([sp_s, sp_d, self.sp[:, 2], sp_i, self.sp[:, 4] / p.N_nom], 1),
             e, ie,
             np.stack([p.V_disp / 250e-6, p.N_nom / 1500.0], 1),
             np.broadcast_to(self._rf_vec, (n, len(self._rf_vec))),

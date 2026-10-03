@@ -382,8 +382,9 @@ class LiveStand:
         x[HGBPPlant.U_I] += dm * h_in       # (P, h) follow through the conservation projection
         pl.aux = None
 
-    def step(self) -> dict:
-        """One control interval.  Returns the snapshot."""
+    def step(self, snapshot: bool = True) -> dict | None:
+        """One control interval.  Returns the snapshot (None without ``snapshot``:
+        the web UI shows at most ten a second, however fast the stand runs)."""
         pl, p, dt = self.plant, self.plant.p, self.dt_ctrl
         meas = pl.measure(noise=self.noise)
         u = np.zeros(4)
@@ -421,7 +422,13 @@ class LiveStand:
         self.t += dt
         self.step_count += 1
         self._record(aux, meas)
-        return self.snapshot(aux, meas, trips)
+        self._last = (aux, meas, trips)
+        return self.snapshot(aux, meas, trips) if snapshot else None
+
+    def last_snapshot(self) -> dict:
+        """Snapshot of the last control step (from its outputs, no recomputation)."""
+        last = getattr(self, "_last", None)
+        return self.snapshot(*last) if last is not None else self.snapshot()
 
     # --------------------------------------------------------------- output
     def _record(self, aux, meas) -> None:

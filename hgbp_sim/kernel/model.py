@@ -46,6 +46,7 @@ MAX_DH_STEP = 40e3          # suction cell enthalpy change per sub-step above wh
 MAX_DP_STEP = 0.2           # relative pressure change per sub-step above which it is redone finer
 INTEGRATORS = {"rk4": 0, "heun": 1, "euler": 2}
 NS = MX + 2                 # dynamic suction side cells: quench cells, L1 (tee + suction line), L2 (compressor)
+RHS_ROWS = 29               # scratch rows of rhs (cell arrays of at most NS entries)
 CF_STAGNANT = 2e-3          # condenser flow below which its vapor counts as stagnant (the section's own) [kg/s]
 WET_BAND = 0.2              # wall temperature band around the condensing temperature over which a cell wets [K]
 POOL_FULL = 0.02            # receiver pool share of its capacity over which a full pool blocks the drain
@@ -221,7 +222,7 @@ def _cond_cell_heat(tab, P, s, h_up, Tc, Tw, m, A, a2, a1, w_flow, T_iv):
 
 
 @njit(cache=True)
-def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid):
+def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid, Tc):
     """Refrigerant side of the condenser, quasi-steady, marched over its ``MX``
     cells from S3 (top) to S4 (bottom) against the plate walls ``T_w``; ``f_fl``
     is each cell's flooded share (handled with the subcooled zone).
@@ -236,12 +237,11 @@ def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid):
     by at most the superheat's share of the enthalpy drop).
 
     Fills ``Q`` (refrigerant -> wall per cell) and ``h_mid`` (the cells' mean
-    enthalpy above the liquid); returns the flow."""
+    enthalpy above the liquid; ``Tc`` is scratch); returns the flow."""
     n = MX
     A = p.cond_A / n
     a2, a1 = p.alpha_r_2ph, p.alpha_r_1ph
     dh_lv = max(s.h_v - s.h_l, 1e3)
-    Tc = np.empty(n)
     m = 0.0
     for j in range(n):
         Tc[j] = 0.5 * (s.T_l + s.T_v)
@@ -294,10 +294,11 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     Tm_s, Tm_d, mm, Wm, Tm_co = x[X_TM_S], x[X_TM_D], x[X_MM], x[X_WM], x[X_TM_CO]
     h_l1, h_l2 = H[n], H[n + 1]
     Vc = p.V_sc
+    ws = np.empty((RHS_ROWS, NS))                   # scratch for the cell arrays (one allocation)
 
     # ---- suction side cells (common pressure)
-    c_rho, c_T, c_x = np.empty(NS), np.empty(NS), np.empty(NS)
-    rho_P, rho_h, M_c = np.empty(NS), np.empty(NS), np.empty(NS)
+    c_rho, c_T, c_x = ws[0, :NS], ws[1, :NS], ws[2, :NS]
+    rho_P, rho_h, M_c = ws[3, :NS], ws[4, :NS], ws[5, :NS]
     for j in range(NS):
         S = kp.state(tab, P_s, H[j])
         c_rho[j], c_T[j], c_x[j], rho_P[j], rho_h[j] = S.rho, S.T, S.x, S.drho_dP, S.drho_dh
@@ -348,7 +349,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # ---- condenser cells (top -> bottom): liquid backing up from a full receiver floods
     # them from the bottom; the condensing flow (condensing duty over the latent heat,
     # exact when the vapor desuperheats completely) sets the refrigerant side's drop
-    f_fl = np.empty(n)
+    f_fl = ws[6, :n]
     m_cond = 0.0
     T_c2 = 0.5 * (sat_i.T_l + sat_i.T_v)
     for j in range(n):
@@ -433,7 +434,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # the S3 port are ahead of the channels and do not raise the boiling pressure.
     f3 = valve_fraction(u3, p.stv_code, p.stv_R)
     rho_c, x_c = c_rho[:n], c_x[:n]
-    head_q = np.empty(n)
+    head_q = ws[7, :n]
     head_sum = 0.0
     for j in range(n):
         head_q[j] = G * (p.mx_H / n) * rho_c[j]
@@ -444,7 +445,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     mu_qo = mixture_viscosity(x_c[n - 1], mu_l_s, mu_v_s)
     C3 = kv_to_C(p.Kv_stv) * f3
     P_3dn = P_tee - head_sum
-    seg = np.empty(n)
+    seg = ws[8, :n]
     # liquid line, quench line, quench side, outlet leg at the valve-alone flow
     m0 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], p.f_choke_liq, p.eps_valve, 0.0, 1.0)
     _, q_in, q_out = _quench_drops(p, m0, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s, mu_v_s,
@@ -465,14 +466,14 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     dP_moq = _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, mdot_3, rho_c[n - 1], mu_qo, 0.5)
     # cell centres above the compressor port: suction line, outlet leg, S4 port, cells below;
     # boiling temperature shift of each cell (Clausius-Clapeyron at P_s)
-    seg_q = np.empty(n)
+    seg_q = ws[9, :n]
     seg_q_sum = 0.0
     for j in range(n):
         seg_q[j] = seg[j] - head_q[j]                          # P(top of cell) - P(bottom of cell)
         seg_q_sum += seg_q[j]
     dTs_dP = sat_s.T_v * (1.0 / sat_s.rho_v - 1.0 / sat_s.rho_l) / max(sat_s.h_v - sat_s.h_l, 1e3)
-    dP_qc = np.empty(n)
-    dTs = np.empty(n)
+    dP_qc = ws[10, :n]
+    dTs = ws[11, :n]
     below = 0.0
     base = dP_suc + dP_moq + q_out
     for j in range(n - 1, -1, -1):
@@ -511,9 +512,9 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # ---- condenser, refrigerant -> walls: the hot gas surplus of the header (or the
     # condensing zone's vapor) marched from S3 down to the liquid
     T_iv = I.T if I.x >= 1.0 else sat_i.T_v
-    Q_c, h_cm = np.empty(n), np.empty(n)
+    Q_c, h_cm = ws[12, :n], ws[13, :n]
     m_cr = _condenser(p, tab, P_i, sat_i, T_cw, f_fl, h_d, h_vap_i, T_iv, max(mdot_1 - max(mdot_2, 0.0), 0.0),
-                      Q_c, h_cm)
+                      Q_c, h_cm, ws[28, :n])
     Q_r = 0.0
     M_film = 0.0                                      # the condensing film's hold-up (Zivi, per cell)
     for j in range(n):
@@ -529,7 +530,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     h_lC = h_i if I.x < 0.0 else sat_i.h_l            # liquid leaving the condensing zone
     T_lC = I.T if I.x < 0.0 else sat_i.T_l
     a_sc = max(cond_flood, p.cond_sc_film)
-    o_sc = np.empty(n)
+    o_sc = ws[14, :n]
     o_sum, T_wsc = 0.0, 0.0
     for j in range(n):
         o_sc[j] = _clip(a_sc * n - (n - 1 - j), 0.0, 1.0)
@@ -555,7 +556,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # through the wall cells
     T_wat = T_wi
     Q_ww = 0.0
-    T_wc, dT_cw = np.empty(n), np.empty(n)
+    T_wc, dT_cw = ws[15, :n], ws[16, :n]
     eps_w = 1.0 - math.exp(-UA_w / n / max(Cw, 1e-9))
     for j in range(n - 1, -1, -1):
         dTw = eps_w * (T_cw[j] - T_wat)
@@ -574,26 +575,27 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     m2p = max(mdot_2, 0.0)
     UA_g = p.mx_alpha_g0 * p.A_mx_cell * (max(m2p, 1e-3 * p.mx_mdot_g_ref) / p.mx_mdot_g_ref) ** 0.8
     hg = h_2f
-    Q_g = np.empty(n)
+    Q_g, T_gc, rho_gc = ws[17, :n], ws[18, :n], ws[19, :n]
     Q_g_sum = 0.0
+    T_up = kp.T_vapor(tab, P_s, hg)
     for j in range(n - 1, -1, -1):
         Tw_eff = max(T_mw[j], T_sat_s)
         # vapor at the wall temperature (linearized from the dew point; an effectiveness target)
         h_eq = h_vs + sat_s.cp_v * max(Tw_eff - sat_s.T_v, 0.0)
-        dT = kp.T_vapor(tab, P_s, hg) - Tw_eff
+        dT = T_up - Tw_eff
         dh = hg - h_eq
         cp_s = _clip(dh / dT if abs(dT) > 0.05 else 1100.0, 300.0, 1e5)
         Q = (1.0 - math.exp(-UA_g / max(m2p * cp_s, 1e-9))) * m2p * dh
         hg = hg - Q / max(m2p, 1e-12)
         Q_g[j] = Q
         hg_out[j] = hg
+        T_up, rho_gc[j] = kp.vapor_props(tab, P_s, hg)      # leaving the cell: entering the next
+        T_gc[j] = T_up
     for j in range(n):
         Q_g_sum += Q_g[j]
     h_go = hg                                        # leaving at S2
-    rho_gc = np.empty(n)
     Fg_b = 0.0
     for j in range(n):
-        rho_gc[j] = kp.vapor_props(tab, P_s, hg_out[j])[1]
         Fg_b += p.V_gc[j] * (1.2 * rho_gc[j] / P_s)   # drho/dP|h of the vapor (ideal-gas-like)
     Fg_b = -Fg_b
 
@@ -603,8 +605,8 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     UA_e = p.mx_alpha_e * p.A_mx_cell * math.sqrt(fq)
     UA_v = p.mx_alpha_v0 * p.A_mx_cell * fq ** 0.8
     # stream entering each cell (upwind): valve 3 / the cell above, or from below on reverse flow
-    H_up, phi_f, Q_2ph = np.empty(n), np.empty(n), np.empty(n)
-    Q_q, dT_mw = np.empty(n), np.empty(n)
+    H_up, phi_f, Q_2ph = ws[20, :n], ws[21, :n], ws[22, :n]
+    Q_q, dT_mw = ws[23, :n], ws[24, :n]
     Q_q_sum = 0.0
     for j in range(n):
         if fwd3:
@@ -627,7 +629,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # (the inflows are taken at their dP/dt = 0 values): every cell then contributes
     # its isentropic capacitance V (rho_P + rho_h / rho) > 0, so the pressure solve
     # stays well posed even where cold liquid enters a vapor-filled cell.
-    A_face, B_face = np.empty(n + 1), np.empty(n + 1)
+    A_face, B_face = ws[25, :n + 1], ws[26, :n + 1]
     a_f, b_f = mdot_3, 0.0                           # flow entering the current quench cell
     A_face[0], B_face[0] = mdot_3, 0.0
     for j in range(n):
@@ -661,7 +663,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # again with the upwind side chosen by each face's actual direction (a fast
     # pressure rise can briefly reverse the flow between quench cells).
     Pr = 0.0 if hold_P_s else dP_s
-    F = np.empty(n + 1)
+    F = ws[27, :n + 1]
     for j in range(n + 1):
         F[j] = A_face[j] + B_face[j] * Pr             # into quench cell j through its top face j
     Fg_now = Fg_a + Fg_b * Pr
@@ -787,7 +789,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     a[A_T_sat_s], a[A_T_sat_d], a[A_T_sat_i] = T_sat_s, D.T_sat, I.T_sat
     a[A_SH], a[A_SC], a[A_x_out], a[A_y_liq] = T_port - T_sat_s, SC, x_out, y_liq
     a[A_x_l1], a[A_x_i], a[A_x_qo], a[A_T_qo] = c_x[n], I.x, x_qo, c_T[n - 1]
-    a[A_T_go], a[A_h_go], a[A_T_l1] = kp.T_vapor(tab, P_s, h_go), h_go, c_T[n]
+    a[A_T_go], a[A_h_go], a[A_T_l1] = T_gc[0], h_go, c_T[n]
     a[A_fill_i] = (V_pool + M_lC / sat_i.rho_l) / p.V_i
     a[A_rec_level], a[A_ll_fill], a[A_cond_flood] = rec_level, ll_fill, cond_flood
     a[A_T_L], a[A_h_L], a[A_SC_L], a[A_M_L] = T_L, h_L, sat_i.T_l - T_L, M_L
@@ -796,7 +798,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     for j in range(n):
         a[A_h_q + j], a[A_x_q + j] = H[j], c_x[j]
         a[A_T_q + j] = c_T[j] + (1.0 - smoothstep((H[j] - h_vs) / DRYOUT_BAND)) * dTs[j]
-        a[A_T_g + j] = kp.vapor_props(tab, P_s, hg_out[j])[0]
+        a[A_T_g + j] = T_gc[j]
         a[A_h_g + j], a[A_T_mw + j], a[A_dP_qc + j] = hg_out[j], T_mw[j], dP_qc[j]
     a[A_Q_mx], a[A_Q_q] = Q_g_sum, Q_q_sum
     a[A_rho_s], a[A_h_l1], a[A_h_l2], a[A_h_cin], a[A_x_l2] = Cin.rho, h_l1, h_l2, h_cin, c_x[n + 1]

@@ -102,6 +102,48 @@ MX = L.MX       # finite-volume cells per side of the mixing exchanger and of th
 G = km.G        # gravity [m/s^2]
 
 
+class Outputs(dict):
+    """Auxiliary outputs by name (layout.AUX_FIELDS) over their array: each is a
+    view into it, taken on first access (a step reads a few dozen of them)."""
+    __slots__ = ("_arr",)
+
+    def __init__(self, arr, **extra):
+        super().__init__(**extra)
+        self._arr = arr
+
+    def __missing__(self, k):
+        o, w = L.AUX_SLICES[k]
+        v = self._arr[:, o] if w == 1 else self._arr[:, o:o + w]
+        self[k] = v
+        return v
+
+    def _all(self):
+        for k in L.AUX_SLICES:
+            self[k]
+        return self
+
+    def __contains__(self, k):
+        return dict.__contains__(self, k) or k in L.AUX_SLICES
+
+    def get(self, k, default=None):
+        return self[k] if k in self else default
+
+    def keys(self):
+        return dict.keys(self._all())
+
+    def values(self):
+        return dict.values(self._all())
+
+    def items(self):
+        return dict.items(self._all())
+
+    def __iter__(self):
+        return dict.__iter__(self._all())
+
+    def __len__(self):
+        return dict.__len__(self._all())
+
+
 class HGBPPlant:
     """Batched stand model.  State vector (per environment, ``STATE_NAMES``):
 
@@ -278,10 +320,7 @@ class HGBPPlant:
 
     def _aux_dict(self, aux, charge) -> dict:
         """Auxiliary outputs by name from their array (layout.AUX_FIELDS)."""
-        out = {k: (aux[:, o] if w == 1 else aux[:, o:o + w]) for k, (o, w) in L.AUX_SLICES.items()}
-        out["t"] = self.t
-        out["charge"] = charge
-        return out
+        return Outputs(aux, t=self.t, charge=charge)
 
     # ------------------------------------------------------------ integrate
     def _sync_mass(self, x, idx=None) -> None:

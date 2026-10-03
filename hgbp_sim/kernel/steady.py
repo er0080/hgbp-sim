@@ -520,7 +520,7 @@ def solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T
         rm, rh = settle_pool(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, zlo, zhi, prof, M_g, charge, fill,
                              use_fill, x, dx, a, hg, 30, relax)
         build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill, x)
-        march_mixer(p, tab, x, z[:4], N, T_amb, T_wi, plo, phi, 400 if rnd == 0 else 250, dx, a, hg)
+        march_mixer(p, tab, x, z[:4], N, T_amb, T_wi, plo, phi, 150 if rnd == 0 else 60, dx, a, hg)
         newton_mixer(p, tab, x, z[:4], N, T_amb, T_wi, plo, phi, dx, a, hg)
         for j in range(n):
             prof[j], prof[n + j] = x[X_HQ + j], x[X_TMW + j]
