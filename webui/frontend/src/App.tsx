@@ -4,15 +4,22 @@ import { useStand } from "./useStand";
 import OperatorPanel from "./components/OperatorPanel";
 import TrendsTab from "./components/TrendsTab";
 import SettingsTab from "./components/SettingsTab";
+import PhTab from "./components/PhTab";
 import InitDialog from "./components/InitDialog";
 import AlarmBar from "./components/AlarmBar";
 import { SYSTEMS, UnitsContext, loadSystem, makeUnits, saveSystem, type UnitSystem } from "./units";
 
-type Tab = "operator" | "trends" | "settings";
+type Tab = "operator" | "trends" | "ph" | "settings";
+const TAB_NAMES: Record<Tab, string> = { operator: "Operator", trends: "Trends", ph: "P-h diagram", settings: "Settings" };
 
 export default function App() {
   const { snap, connected, history, histVersion } = useStand();
-  const [tab, setTab] = useState<Tab>("operator");
+  // the tab follows the address (#ph, ...) so that a page can be bookmarked or reloaded
+  const [tab, setTabState] = useState<Tab>(() => {
+    const h = location.hash.slice(1);
+    return h in TAB_NAMES ? (h as Tab) : "operator";
+  });
+  const setTab = (t: Tab) => { setTabState(t); window.history.replaceState(null, "", `#${t}`); };
   const [init, setInit] = useState<null | "cold" | "warm">(null);
   const [system, setSystem] = useState<UnitSystem>(loadSystem);
   const units = useMemo(() => makeUnits(system), [system]);
@@ -29,10 +36,8 @@ export default function App() {
         <span className="dot" data-on={connected} style={{ background: connected ? "var(--ok)" : "var(--bad)" }} />
         <span className="note">{connected ? "live" : "connecting"}</span>
         <div className="tabs">
-          {(["operator", "trends", "settings"] as Tab[]).map((t) => (
-            <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {t === "operator" ? "Operator" : t === "trends" ? "Trends" : "Settings"}
-            </button>
+          {(Object.keys(TAB_NAMES) as Tab[]).map((t) => (
+            <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{TAB_NAMES[t]}</button>
           ))}
         </div>
         <div className="spacer" />
@@ -66,6 +71,7 @@ export default function App() {
         {!snap && <p className="note">Waiting for the simulator...</p>}
         {snap && tab === "operator" && <OperatorPanel snap={snap} />}
         {snap && tab === "trends" && <TrendsTab history={history} version={histVersion} snap={snap} />}
+        {snap && tab === "ph" && <PhTab snap={snap} />}
         {snap && tab === "settings" && <SettingsTab snap={snap} />}
       </div>
       {init && snap && <InitDialog mode={init} snap={snap} onClose={() => setInit(null)} />}

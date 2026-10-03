@@ -13,7 +13,8 @@ The engine is framework-agnostic (no web code here).  It owns
 * a rolling history of every channel for trend displays,
 * parameter editing (live, or deferred to the next re-initialization for
   structural parameters such as volumes and refrigerant),
-* defaults for all of the above from one document (:mod:`hgbp_sim.defaults`).
+* defaults for all of the above from one document (:mod:`hgbp_sim.defaults`),
+* the state points of a pressure-enthalpy diagram (:mod:`hgbp_sim.phdiagram`).
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from .defaults import merge_defaults
 from .geometry import volume_table
 from .interlock import ST_OFF, STATE_NAMES, Interlock, permissives
 from .params import FLUIDS, PlantParams, clamp_to_range, param_metadata
+from .phdiagram import chart as ph_chart_data, state_points, view_temperatures
 from .plant import HGBPPlant
 from .properties import get_tables
 from .scenarios import NAMED_POINTS, named_point
@@ -181,7 +183,12 @@ class LiveStand:
         """Equilibrium at a test point (``named_point`` name or dict with
         T_evap, T_cond, T_int [degC], SH [K], N [rpm]); compressor running,
         loops in auto at the point's setpoints.  Returns False if no
-        equilibrium exists (e.g. wrong charge); the stand is then left as is."""
+        equilibrium exists (e.g. wrong charge); the stand is then left exactly as it
+        was, still running, with any deferred parameters still pending."""
+        # the stand before the attempt: applying the pending parameters builds a new plant,
+        # controller and interlock, and the solve works on those, so the attributes alone
+        # restore it (the event log is kept)
+        before = dict(self.__dict__)
         self.apply_pending()
         if T_amb is not None:
             self.T_amb = T_amb + C2K
@@ -197,7 +204,9 @@ class LiveStand:
                       N=float(point.get("N", self.speed_sp)))
         res = solve_steady_state(self.plant, pt["P_s"], pt["P_d"], pt["SH"], pt["N"], P_i=pt["P_i"])
         if not bool(res["converged"][0]):
-            self.log("warm start failed: no equilibrium at this point with the current charge")
+            self.__dict__.update(before)
+            self.log("warm start failed: no equilibrium at this point with the current charge / parameters; "
+                     "the stand continues as it was")
             return False
         self.plant.set_state(0, res["x"])
         self.plant.set_inputs(u_cmd=res["u"], N_cmd=pt["N"])
@@ -358,6 +367,20 @@ class LiveStand:
         return dict(fluid=pr.fluid, T_sat=float(T_sat), P=float(np.interp(T, T_dew, P)) / 1e5,
                     T_min=float(T_dew[0]) - C2K, T_max=float(T_dew[-1]) - C2K,
                     in_range=bool(T_dew[0] <= T <= T_dew[-1]))
+
+    def ph_chart(self, temps_C=None, view=None, unit: str = "C", n_iso: int = 12) -> dict:
+        """Background of the P-h diagram for the stand's refrigerant: saturation lines and
+        isotherms at ``temps_C`` [degC] over the whole dome, or over ``view`` = (h0, h1
+        [kJ/kg], P0, P1 [bar]) with, unless ``temps_C`` is given, about ``n_iso``
+        isotherms at round values of ``unit`` ("C" or "F") across it (see
+        :mod:`hgbp_sim.phdiagram`)."""
+        if view is None:
+            return ph_chart_data(self.props, temps_C)
+        h0, h1, P0, P1 = (float(v) for v in view)
+        step = None
+        if temps_C is None:
+            temps_C, step = view_temperatures(self.props, h0 * 1e3, h1 * 1e3, P0 * 1e5, P1 * 1e5, unit, n_iso)
+        return {**ph_chart_data(self.props, temps_C, P_range=(P0 * 1e5, P1 * 1e5)), "iso_step": step}
 
     # -------------------------------------------------------------- physics
     def _inject_charge(self, dm: float) -> None:
@@ -567,6 +590,7 @@ class LiveStand:
                         T_d_max=f(p.T_d_max) - C2K),
             charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=self._nominal_charge(),
                         pending_kg=self.charge_pending, rate_kg_s=self.charge_rate),
+            ph=state_points(aux, self.props),
             pending_params=sorted(self.pending_params),
             events=list(self.events)[:30],
         )

@@ -86,6 +86,7 @@ hgbp_sim/
   env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium)
   interlock.py     compressor start/stop interlock (shared by the environment and the live stand)
   live.py          LiveStand: the web UI's engine
+  phdiagram.py     P-h diagram: state points along the flow paths, saturation lines and isotherms
   ut35a.py         Yokogawa UT35A settings <-> PID gains
   defaults.py      stand defaults document (built-in values, JSON file, validation)
   data/            prebuilt property tables
