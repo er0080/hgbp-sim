@@ -29,7 +29,7 @@ from .defaults import merge_defaults
 from .geometry import volume_table
 from .interlock import ST_OFF, STATE_NAMES, Interlock, permissives
 from .params import FLUIDS, PlantParams, clamp_to_range, param_metadata
-from .phdiagram import chart as ph_chart_data, state_points, view_temperatures
+from .phdiagram import chart as ph_chart_data, compression_paths, state_points, view_entropies, view_temperatures
 from .plant import HGBPPlant
 from .properties import get_tables
 from .scenarios import NAMED_POINTS, named_point
@@ -368,19 +368,25 @@ class LiveStand:
                     T_min=float(T_dew[0]) - C2K, T_max=float(T_dew[-1]) - C2K,
                     in_range=bool(T_dew[0] <= T <= T_dew[-1]))
 
-    def ph_chart(self, temps_C=None, view=None, unit: str = "C", n_iso: int = 12) -> dict:
+    def ph_chart(self, temps_C=None, view=None, unit: str = "C", n_iso: int = 12, isentropes: bool = False) -> dict:
         """Background of the P-h diagram for the stand's refrigerant: saturation lines and
         isotherms at ``temps_C`` [degC] over the whole dome, or over ``view`` = (h0, h1
         [kJ/kg], P0, P1 [bar]) with, unless ``temps_C`` is given, about ``n_iso``
-        isotherms at round values of ``unit`` ("C" or "F") across it (see
+        isotherms at round values of ``unit`` ("C" or "F") across it; with ``isentropes``
+        (views only) about ``n_iso`` isentropes at round values as well (see
         :mod:`hgbp_sim.phdiagram`)."""
         if view is None:
             return ph_chart_data(self.props, temps_C)
         h0, h1, P0, P1 = (float(v) for v in view)
-        step = None
+        args = (self.props, h0 * 1e3, h1 * 1e3, P0 * 1e5, P1 * 1e5, unit, n_iso)
+        step = s_step = None
         if temps_C is None:
-            temps_C, step = view_temperatures(self.props, h0 * 1e3, h1 * 1e3, P0 * 1e5, P1 * 1e5, unit, n_iso)
-        return {**ph_chart_data(self.props, temps_C, P_range=(P0 * 1e5, P1 * 1e5)), "iso_step": step}
+            temps_C, step = view_temperatures(*args)
+        entropies = None
+        if isentropes:
+            entropies, s_step = view_entropies(*args)
+        return {**ph_chart_data(self.props, temps_C, P_range=(P0 * 1e5, P1 * 1e5), entropies=entropies),
+                "iso_step": step, "isen_step": s_step}
 
     # -------------------------------------------------------------- physics
     def _inject_charge(self, dm: float) -> None:
@@ -540,6 +546,7 @@ class LiveStand:
             valve2_open=f(aux["u2"]) >= 0.05, no_trip=not bool(self.interlock.tripped[0]),
             off_time_elapsed=bool(self.interlock.state[0] != ST_OFF or self.interlock.t_state[0] >= self.interlock.min_off_time),
         )
+        ph = state_points(aux, self.props)
         return dict(
             t=self.t, step=self.step_count, paused=self.paused, speed_factor=self.speed_factor,
             achieved_speed=self.achieved_speed, noise=self.noise,
@@ -590,7 +597,7 @@ class LiveStand:
                         T_d_max=f(p.T_d_max) - C2K),
             charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=self._nominal_charge(),
                         pending_kg=self.charge_pending, rate_kg_s=self.charge_rate),
-            ph=state_points(aux, self.props),
+            ph=ph, ph_paths=compression_paths(self.props, ph),
             pending_params=sorted(self.pending_params),
             events=list(self.events)[:30],
         )

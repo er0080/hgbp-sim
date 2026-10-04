@@ -78,6 +78,7 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
   return (
     <div className="card">
       <h2>Stand schematic</h2>
+      <p className="note schem-note">Exchanger cells show the state leaving each cell: the last cell of each side is its outlet.</p>
       <svg viewBox="0 0 1000 500" className="schem" style={{ width: "100%", height: "auto" }}>
         <defs>
           {/* pipes end at the valve faces */}

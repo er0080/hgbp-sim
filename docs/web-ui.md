@@ -42,8 +42,16 @@ units. The open tab is part of the address (`#operator`, `#trends`, `#ph`, `#set
 reload or a bookmark returns to it.
 
 The schematic shows both brazed plate exchangers cell by cell. A cell shows its quality while
-it is two-phase and its temperature otherwise, and its shading follows the liquid. The
-receiver shows:
+it is two-phase and its temperature otherwise, and its shading follows the liquid. Every
+cell shows the state **leaving** it, at the pressure where it leaves, so the last cell of
+each side is that side's outlet:
+* the condenser's bottom cell is the condensate draining at S4, subcooled;
+* the gas side's top cell is the bypass gas at S2, the "out" temperature beside it;
+* the quench side's bottom cell is the quench at S4, after the outlet port.
+
+A note under the schematic's title says so. The P-h diagram plots the same values.
+
+The receiver shows:
 * its level and liquid temperature;
 * the liquid's subcooling, or "flashing" while it boils off after a pressure drop;
 * whether the liquid line has its seal.
@@ -78,12 +86,29 @@ The small dots are the five cells of each exchanger. Points closer together than
 labels allow share one label (for example "2,3": the discharge line's drop is small).
 
 * Values are the model's, without sensor noise or lag. Pressures follow the model's pressure
-  chain: line and exchanger drops, static heads, and each exchanger cell at its centre's
-  pressure.
+  chain: line and exchanger drops and static heads.
+* Each exchanger cell is the state leaving it, at the pressure where it leaves, as on the
+  schematic. The last cell of each side therefore lies on that side's outlet: Q5 on S4
+  (point 10), G5 on S2 (point 13), and C5 at the condenser's S4, the drain.
 * The tee mixes the gas and quench outlets weighted by the valve 2 and valve 3 flows, which
   is exact at steady state.
-* The condenser leg runs from S3 through its cells to the receiver liquid. The step from
-  the last cell to point 6 is the drain, including the condensate's subcooling.
+* **Compression (1 → 2)** follows the compressor model's stages, as small dots:
+  * the motor heats the suction gas at suction pressure;
+  * the gas is compressed to the model's adiabatic end state;
+  * the shell cools (or heats) it at discharge pressure;
+  * the discharge volume brings it to the discharge probe, point 2.
+
+  The model computes only these states. Between them the compression is drawn as a
+  polytropic path: a constant small-step efficiency, fitted to end on the model's state,
+  the usual way to draw a real compression. The path crosses the isentropes, gaining
+  entropy as it goes. The cycle table gives that polytropic efficiency, and the overall
+  isentropic efficiency port to port, (h2s − h1) / (h2 − h1), as a stand reports it.
+* **Isentropes** (off by default): lines of constant entropy over the vapor and two-phase
+  regions, at round values spaced to suit the view. With them on, the isentrope from point
+  1 is drawn dashed up to 2s, the end of an ideal compression.
+* The condenser leg runs from S3 through its cells to the receiver liquid. The last cell
+  is the condensate leaving through the subcooling at the bottom of the plates. The step
+  from there to point 6 is the drain line and the pool, which has its own temperature.
 * Hovering over a point, or over its row in the table, shows its pressure, temperature,
   enthalpy and its quality, subcooling or superheat.
 * **Fit cycle** scales the axes to the points and keeps them while the cycle fits. **Full
@@ -109,6 +134,8 @@ Zoomed to the suction corner at the MT standard point:
 * The tee (14) mixes the two.
 * The suction line drops the pressure to the compressor port (1) and adds a little heat
   from its wall.
+* Inside the compressor, the motor heats the suction gas by about 5 kJ/kg (the small dot
+  right of 1) before the compression climbs away.
 * **Trail** leaves fading dots behind the main points to show how they moved recently.
   **Hold reference** keeps the present cycle as a dashed outline for comparison, for example
   across a setpoint step.
@@ -200,6 +227,7 @@ the plant parameter table stays in SI.
 | electrical power | kW | kW |
 | charge | kg | lb |
 | specific enthalpy | kJ/kg | Btu/lb (same reference state) |
+| specific entropy | kJ/(kg·K) | Btu/(lb·°F) (same reference state) |
 
 ## Backend API
 
@@ -219,5 +247,5 @@ backend (`webui/backend/app.py`) serves it over HTTP in metric units:
 | `GET /api/history` | trend history |
 | `GET /api/export.csv?units=metric\|english` | history as CSV, columns labelled with units |
 | `GET /api/saturation?T=` | dew point pressure of the refrigerant at `T` °C |
-| `GET /api/ph_chart?temps=&view=&unit=&n=` | P-h chart background: saturation lines and isotherms at `temps` (comma-separated °C), over the whole dome or over `view` = h0,h1,P0,P1 (kJ/kg, bar) with about `n` isotherms at round values of `unit` (C or F) |
+| `GET /api/ph_chart?temps=&view=&unit=&n=&s=` | P-h chart background: saturation lines and isotherms at `temps` (comma-separated °C), over the whole dome or over `view` = h0,h1,P0,P1 (kJ/kg, bar) with about `n` isotherms at round values of `unit` (C or F); `s=1` adds about `n` isentropes |
 | `WS /ws` | the latest snapshot and new history rows, at most ten messages per second |

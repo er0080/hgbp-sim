@@ -20,19 +20,19 @@ from ..components import (PIPE_ROUGHNESS, actuator_rate, amalfi_ftp, compressor_
                           water_valve_flow)
 from . import batch_variants
 from . import props as kp
-from .layout import (A_M_L, A_M_cl, A_M_d, A_M_film, A_M_g, A_M_i, A_M_q_liq, A_M_s, A_M_tot, A_N, A_P_d, A_P_h, A_P_i,
-                     A_P_s, A_P_tee, A_Pr, A_Q_dg, A_Q_mx, A_Q_q, A_Q_r, A_Q_rw, A_Q_sc, A_Q_sg, A_Q_w, A_SC, A_SC_L,
-                     A_SH, A_T2_ad, A_T_L, A_T_c, A_T_co, A_T_cw, A_T_cwc, A_T_d, A_T_dw, A_T_g, A_T_go, A_T_i, A_T_l1,
-                     A_T_mw, A_T_q, A_T_qo, A_T_rw, A_T_s, A_T_sat_d, A_T_sat_i, A_T_sat_s, A_T_sh, A_T_sw, A_T_wc,
-                     A_T_wo, A_Tm_co, A_Tm_d, A_Tm_s, A_W_el, A_W_shaft, A_Wm, A_cond_flood, A_dP_bp, A_dP_cr, A_dP_cw,
-                     A_dP_dis, A_dP_drn, A_dP_hdr, A_dP_liq, A_dP_mg, A_dP_mog, A_dP_moq, A_dP_mq, A_dP_mq_ch, A_dP_q,
-                     A_dP_q_dist, A_dP_q_in, A_dP_q_out, A_dP_qc, A_dP_suc, A_dx, A_eta_s, A_eta_v, A_fill_i, A_h2,
-                     A_h_2f, A_h_3f, A_h_L, A_h_c, A_h_cin, A_h_co, A_h_d, A_h_g, A_h_go, A_h_i, A_h_l1, A_h_l2, A_h_q,
-                     A_ll_fill, A_mdot_1, A_mdot_2, A_mdot_3, A_mdot_c, A_mdot_cr, A_mdot_drn, A_mdot_lv, A_mdot_w,
-                     A_mm, A_rec_level, A_rho_s, A_u1, A_x_c, A_x_i, A_x_l1, A_x_l2, A_x_out, A_x_q, A_x_qo, A_y_liq,
-                     MX, NX, X_HG, X_HQ, X_H_D, X_H_I, X_H_L, X_MM, X_M_D, X_M_I, X_M_L, X_M_S, X_N, X_P_D, X_P_I,
-                     X_P_S, X_TCW, X_TMW, X_TM_CO, X_TM_D, X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_U1, X_U_D, X_U_I,
-                     X_U_S, X_WM)
+from .layout import (A_M_L, A_M_cl, A_M_d, A_M_film, A_M_g, A_M_i, A_M_q_liq, A_M_s, A_M_tot, A_N, A_P_cf, A_P_d,
+                     A_P_gf, A_P_h, A_P_i, A_P_qf, A_P_s, A_P_tee, A_Pr, A_Q_dg, A_Q_mx, A_Q_q, A_Q_r, A_Q_rw, A_Q_sc,
+                     A_Q_sg, A_Q_w, A_SC, A_SC_L, A_SH, A_T2_ad, A_T_L, A_T_c, A_T_co, A_T_cw, A_T_cwc, A_T_d, A_T_dw,
+                     A_T_g, A_T_go, A_T_i, A_T_l1, A_T_mw, A_T_q, A_T_qo, A_T_rw, A_T_s, A_T_sat_d, A_T_sat_i,
+                     A_T_sat_s, A_T_sh, A_T_sw, A_T_wc, A_T_wo, A_Tm_co, A_Tm_d, A_Tm_s, A_W_el, A_W_shaft, A_Wm,
+                     A_cond_flood, A_dP_bp, A_dP_cr, A_dP_cw, A_dP_dis, A_dP_drn, A_dP_hdr, A_dP_liq, A_dP_mg,
+                     A_dP_mog, A_dP_moq, A_dP_mq, A_dP_mq_ch, A_dP_q, A_dP_q_dist, A_dP_q_in, A_dP_q_out, A_dP_qc,
+                     A_dP_suc, A_dx, A_eta_s, A_eta_v, A_fill_i, A_h2, A_h2_ad, A_h_2f, A_h_3f, A_h_L, A_h_c, A_h_cin,
+                     A_h_co, A_h_d, A_h_g, A_h_go, A_h_i, A_h_l1, A_h_l2, A_h_q, A_ll_fill, A_mdot_1, A_mdot_2,
+                     A_mdot_3, A_mdot_c, A_mdot_cr, A_mdot_drn, A_mdot_lv, A_mdot_w, A_mm, A_rec_level, A_rho_s, A_u1,
+                     A_x_c, A_x_i, A_x_l1, A_x_l2, A_x_out, A_x_q, A_x_qo, A_y_liq, MX, NX, X_HG, X_HQ, X_H_D, X_H_I,
+                     X_H_L, X_MM, X_M_D, X_M_I, X_M_L, X_M_S, X_N, X_P_D, X_P_I, X_P_S, X_TCW, X_TMW, X_TM_CO, X_TM_D,
+                     X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_U1, X_U_D, X_U_I, X_U_S, X_WM)
 # (layout's X_* state and A_* output indices are compile-time constants in the kernel)
 
 G = 9.81                    # gravity [m/s^2]
@@ -46,7 +46,7 @@ MAX_DH_STEP = 40e3          # suction cell enthalpy change per sub-step above wh
 MAX_DP_STEP = 0.2           # relative pressure change per sub-step above which it is redone finer
 INTEGRATORS = {"rk4": 0, "heun": 1, "euler": 2}
 NS = MX + 2                 # dynamic suction side cells: quench cells, L1 (tee + suction line), L2 (compressor)
-RHS_ROWS = 29               # scratch rows of rhs (cell arrays of at most NS entries)
+RHS_ROWS = 30               # scratch rows of rhs (cell arrays of at most NS entries)
 CF_STAGNANT = 2e-3          # condenser flow below which its vapor counts as stagnant (the section's own) [kg/s]
 WET_BAND = 0.2              # wall temperature band around the condensing temperature over which a cell wets [K]
 POOL_FULL = 0.02            # receiver pool share of its capacity over which a full pool blocks the drain
@@ -222,7 +222,7 @@ def _cond_cell_heat(tab, P, s, h_up, Tc, Tw, m, A, a2, a1, w_flow, T_iv):
 
 
 @njit(cache=True)
-def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid, Tc):
+def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid, h_out, Tc):
     """Refrigerant side of the condenser, quasi-steady, marched over its ``MX``
     cells from S3 (top) to S4 (bottom) against the plate walls ``T_w``; ``f_fl``
     is each cell's flooded share (handled with the subcooled zone).
@@ -236,8 +236,9 @@ def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid, Tc)
     of a fixed-point iteration settle them (the sensible heat changes the flow
     by at most the superheat's share of the enthalpy drop).
 
-    Fills ``Q`` (refrigerant -> wall per cell) and ``h_mid`` (the cells' mean
-    enthalpy above the liquid; ``Tc`` is scratch); returns the flow."""
+    Fills ``Q`` (refrigerant -> wall per cell), ``h_mid`` (the cells' mean
+    enthalpy above the liquid, for the condensing temperatures and the film) and
+    ``h_out`` (the enthalpy leaving each cell; ``Tc`` is scratch); returns the flow."""
     n = MX
     A = p.cond_A / n
     a2, a1 = p.alpha_r_2ph, p.alpha_r_1ph
@@ -265,10 +266,12 @@ def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid, Tc)
         for j in range(n):
             h_o = h - Q[j] / max(m, 1e-9)
             h_mid[j] = _clip(0.5 * (h + h_o), s.h_l, max(h_in, h_vap))
+            h_out[j] = _clip(h_o, s.h_l, max(h_in, h_vap))
             Tc[j] = s.T_l + _clip((h_mid[j] - s.h_l) / dh_lv, 0.0, 1.0) * (s.T_v - s.T_l)
             h = h_o
     for j in range(n):                              # without flow the cells hold the section's vapor
         h_mid[j] = w * h_mid[j] + (1.0 - w) * h_vap
+        h_out[j] = w * h_out[j] + (1.0 - w) * h_vap
     return m
 
 
@@ -512,9 +515,9 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # ---- condenser, refrigerant -> walls: the hot gas surplus of the header (or the
     # condensing zone's vapor) marched from S3 down to the liquid
     T_iv = I.T if I.x >= 1.0 else sat_i.T_v
-    Q_c, h_cm = ws[12, :n], ws[13, :n]
+    Q_c, h_cm, h_co_c = ws[12, :n], ws[13, :n], ws[29, :n]
     m_cr = _condenser(p, tab, P_i, sat_i, T_cw, f_fl, h_d, h_vap_i, T_iv, max(mdot_1 - max(mdot_2, 0.0), 0.0),
-                      Q_c, h_cm, ws[28, :n])
+                      Q_c, h_cm, h_co_c, ws[28, :n])
     Q_r = 0.0
     M_film = 0.0                                      # the condensing film's hold-up (Zivi, per cell)
     for j in range(n):
@@ -788,22 +791,31 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     a[A_T_s], a[A_T_d], a[A_T_i], a[A_T_co] = T_port, D.T, I.T, T_co
     a[A_T_sat_s], a[A_T_sat_d], a[A_T_sat_i] = T_sat_s, D.T_sat, I.T_sat
     a[A_SH], a[A_SC], a[A_x_out], a[A_y_liq] = T_port - T_sat_s, SC, x_out, y_liq
-    a[A_x_l1], a[A_x_i], a[A_x_qo], a[A_T_qo] = c_x[n], I.x, x_qo, c_T[n - 1]
-    a[A_T_go], a[A_h_go], a[A_T_l1] = T_gc[0], h_go, c_T[n]
+    a[A_x_l1], a[A_x_i], a[A_x_qo] = c_x[n], I.x, x_qo
+    a[A_h_go], a[A_T_l1] = h_go, c_T[n]
     a[A_fill_i] = (V_pool + M_lC / sat_i.rho_l) / p.V_i
     a[A_rec_level], a[A_ll_fill], a[A_cond_flood] = rec_level, ll_fill, cond_flood
     a[A_T_L], a[A_h_L], a[A_SC_L], a[A_M_L] = T_L, h_L, sat_i.T_l - T_L, M_L
     a[A_M_cl], a[A_M_film], a[A_mdot_drn], a[A_mdot_lv] = M_lC, M_film, m_drn, m_lv
     a[A_M_q_liq] = M_q_liq
+    # exchanger cells as displayed: the state leaving each cell, at the pressure where it
+    # leaves (the quench side's last cell including the S4 port, so that it is the
+    # exchanger's outlet; the gas side's last cell is S2)
+    face = P_s + dP_suc + dP_moq + q_out                 # quench: below the last channel
+    for j in range(n - 1, -1, -1):
+        Pq = P_s + dP_suc + dP_moq if j == n - 1 else face
+        face += seg_q[j]
+        Sq = kp.state(tab, Pq, H[j])
+        a[A_P_qf + j], a[A_h_q + j], a[A_x_q + j], a[A_T_q + j] = Pq, H[j], Sq.x, Sq.T
     for j in range(n):
-        a[A_h_q + j], a[A_x_q + j] = H[j], c_x[j]
-        a[A_T_q + j] = c_T[j] + (1.0 - smoothstep((H[j] - h_vs) / DRYOUT_BAND)) * dTs[j]
-        a[A_T_g + j] = T_gc[j]
+        Pg = P_tee + dP_mog + dP_mg * j / n               # gas: rising, leaving cell j at its top
+        a[A_P_gf + j], a[A_T_g + j] = Pg, kp.vapor_props(tab, Pg, hg_out[j])[0]
         a[A_h_g + j], a[A_T_mw + j], a[A_dP_qc + j] = hg_out[j], T_mw[j], dP_qc[j]
+    a[A_T_qo], a[A_T_go] = a[A_T_q + n - 1], a[A_T_g]   # the outlets S4, S2: the last cells
     a[A_Q_mx], a[A_Q_q] = Q_g_sum, Q_q_sum
     a[A_rho_s], a[A_h_l1], a[A_h_l2], a[A_h_cin], a[A_x_l2] = Cin.rho, h_l1, h_l2, h_cin, c_x[n + 1]
     a[A_h_d], a[A_h_i], a[A_h_co], a[A_h2], a[A_h_2f], a[A_h_3f] = h_d, h_i, h_co, h2, h_2f, h_3f
-    a[A_T2_ad] = T2_ad
+    a[A_T2_ad], a[A_h2_ad] = T2_ad, h2_ad
     a[A_P_tee], a[A_dP_suc], a[A_dP_dis], a[A_dP_hdr] = P_tee, dP_suc, dP_dis, dP_hdr1 + dP_hdr2
     a[A_dP_bp], a[A_dP_mog], a[A_dP_moq], a[A_dP_q], a[A_dP_liq] = dP_bp, dP_mog, dP_moq, dP_q, dP_liq
     a[A_dP_drn], a[A_P_h], a[A_dP_cr], a[A_dP_cw], a[A_dP_mg] = dP_drn, P_h, dP_cr, dP_cw, dP_mg
@@ -816,13 +828,15 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     for j in range(n):
         T_cw_mean += T_cw[j] / n
     a[A_T_wo], a[A_T_sw], a[A_T_dw], a[A_T_cw], a[A_T_rw], a[A_T_sh] = T_wo, T_sw, T_dw, T_cw_mean, T_rw, T_sh
-    # condenser cells: above the liquid the marched profile, flooded shares hold the
-    # condensate on its way down (halfway subcooled)
-    h_fl = 0.5 * (h_lC + h_drn)
+    # condenser cells as displayed: the state leaving each cell (at its bottom) at that
+    # pressure; the condensate subcools through the bottom share a_sc (film or flooded
+    # plates) and leaves the last cell as the drain (h_drn) at S4
     for j in range(n):
-        hc = (1.0 - f_fl[j]) * h_cm[j] + f_fl[j] * h_fl
-        a[A_h_c + j], a[A_x_c + j] = hc, (hc - sat_i.h_l) / max(sat_i.h_v - sat_i.h_l, 1e3)
-        a[A_T_c + j] = kp.state(tab, P_i, hc).T
+        z = _clip(((j + 1.0) / n - (1.0 - a_sc)) / max(a_sc, 1e-9), 0.0, 1.0)
+        hc = h_co_c[j] - z * (h_lC - h_drn)
+        Pc = P_i + dP_drn + dP_cr * (1.0 - (j + 1.0) / n)
+        Sc = kp.state(tab, Pc, hc)
+        a[A_P_cf + j], a[A_h_c + j], a[A_x_c + j], a[A_T_c + j] = Pc, hc, Sc.x, Sc.T
         a[A_T_wc + j], a[A_T_cwc + j] = T_wc[j], T_cw[j]
     a[A_N] = N
     for k in range(4):

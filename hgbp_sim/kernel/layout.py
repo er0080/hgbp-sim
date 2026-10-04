@@ -86,8 +86,11 @@ AUX_FIELDS = (
     ("mdot_lv", 1),
     ("h_q", MX), ("x_q", MX), ("T_q", MX), ("T_g", MX), ("h_g", MX), ("T_mw", MX),
     ("h_c", MX), ("x_c", MX), ("T_c", MX), ("T_wc", MX), ("T_cwc", MX),
+    # exchanger cells as displayed (h_q, x_q, T_q, h_g, T_g, h_c, x_c, T_c): the state leaving
+    # each cell, at these pressures where it leaves
+    ("P_cf", MX), ("P_qf", MX), ("P_gf", MX),
     ("Q_mx", 1), ("Q_q", 1), ("rho_s", 1), ("h_l1", 1), ("h_l2", 1), ("h_cin", 1), ("x_l2", 1),
-    ("h_d", 1), ("h_i", 1), ("h_co", 1), ("h2", 1), ("h_2f", 1), ("h_3f", 1), ("T2_ad", 1),
+    ("h_d", 1), ("h_i", 1), ("h_co", 1), ("h2", 1), ("h2_ad", 1), ("h_2f", 1), ("h_3f", 1), ("T2_ad", 1),
     ("P_tee", 1), ("dP_suc", 1), ("dP_dis", 1), ("dP_hdr", 1), ("dP_bp", 1), ("dP_mog", 1),
     ("dP_moq", 1), ("dP_q", 1), ("dP_liq", 1), ("dP_drn", 1), ("P_h", 1), ("dP_cr", 1), ("dP_cw", 1),
     ("dP_mg", 1), ("dP_mq", 1), ("dP_mq_ch", 1), ("dP_qc", MX), ("dP_q_dist", 1), ("dP_q_in", 1),

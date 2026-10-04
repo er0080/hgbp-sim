@@ -18,7 +18,9 @@ const N_CELL = [0, 1, 2, 3, 4];
 
 /** Legs in flow order: points, start / end color, label of a valve on the leg. */
 const LEGS: { key: string; name: string; pts: string[]; from: keyof typeof COL; to: keyof typeof COL; valve?: string; arrow?: boolean }[] = [
-  { key: "comp", name: "compression", pts: ["suc", "dis"], from: "suc", to: "hot", arrow: true },
+  // suction port, motor heating, the polytropic path ("@comp"), the end of compression, the
+  // shell, the discharge volume (straight 1 -> 2 when the compressor stands)
+  { key: "comp", name: "compression", pts: ["suc", "cmh", "@comp", "c2a", "cout", "dis"], from: "suc", to: "hot", arrow: true },
   { key: "dis", name: "discharge line", pts: ["dis", "v1i"], from: "hot", to: "hot" },
   { key: "v1", name: "valve 1, header", pts: ["v1i", "hdr"], from: "hot", to: "hot", valve: "V1", arrow: true },
   { key: "hdr", name: "header to condenser", pts: ["hdr", "cin"], from: "hot", to: "hot" },
@@ -46,9 +48,14 @@ const CELL_GROUPS: [string, string, string[]][] = [
   ["q", "quench cells (top → bottom)", cells("q", N_CELL)],
   ["g", "gas cells (bottom → top)", cells("g", [4, 3, 2, 1, 0])],
 ];
+/** Inside the compressor (the model's stages) and the isentropic discharge state 2s. */
+const COMP_POINTS: [string, string][] = [
+  ["cmh", "motor-heated suction gas"], ["c2a", "compression end (adiabatic)"],
+  ["cout", "compressor outlet"], ["c2s", "isentropic discharge 2s"],
+];
 const NUM: Record<string, number> = Object.fromEntries(KEY_POINTS.map(([k], i) => [k, i + 1]));
 const NAME: Record<string, string> = Object.fromEntries([
-  ...KEY_POINTS,
+  ...KEY_POINTS, ...COMP_POINTS,
   ...CELL_GROUPS.flatMap(([, label, ks]) => ks.map((k, i) => [k, `${label.split(" (")[0].replace(" cells", "")} cell ${i + 1}`])),
 ]);
 
@@ -126,11 +133,12 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [showIso, setShowIso] = useState(true);
+  const [showS, setShowS] = useState(false);
   const [showQ, setShowQ] = useState(true);
   const [showCells, setShowCells] = useState(true);
   const [showTrail, setShowTrail] = useState(false);
   const [showSp, setShowSp] = useState(true);
-  const [ref, setRef] = useState<{ t: number; pts: Pts } | null>(null);
+  const [ref, setRef] = useState<{ t: number; pts: Pts; paths: Snapshot["ph_paths"] } | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const range = useRef<Range | null>(null);
@@ -166,12 +174,12 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
     if (!viewKey) return;
     let live = true;
     const timer = window.setTimeout(() => {
-      api<PhChart>(`/api/ph_chart?view=${viewKey}&unit=${u.sys === "metric" ? "C" : "F"}&n=20`)
+      api<PhChart>(`/api/ph_chart?view=${viewKey}&unit=${u.sys === "metric" ? "C" : "F"}&n=20&s=${showS ? 1 : 0}`)
         .then((c) => { if (live) setView(c); })
         .catch(() => { /* keep the previous background */ });
     }, 120);
     return () => { live = false; clearTimeout(timer); };
-  }, [viewKey, u.sys, snap.fluid]);
+  }, [viewKey, u.sys, snap.fluid, showS]);
 
   // Escape steps out of a box zoom
   useEffect(() => {
@@ -212,6 +220,8 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
   const qualities: number[] = [];
   for (let k = 1; k * qStep < 1 - 1e-9; k++) qualities.push(Math.round(k * qStep * 100) / 100);
   const isoDec = chart.iso_step !== undefined && chart.iso_step !== null && chart.iso_step < 1 ? 1 : 0;
+  const sDec = chart.isen_step ? Math.max(0, -Math.floor(Math.log10(chart.isen_step) + 1e-9)) : 2;
+  const isentropes = showS ? chart.isentropes ?? [] : [];
   const xOfDisp = (v: number) => M.l + ((v - hx0) / (hx1 - hx0)) * PW;
   const yOfDisp = (v: number) => M.t + PH - ((Math.log10(v) - ly0) / (ly1 - ly0)) * PH;
 
@@ -222,8 +232,13 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
 
   // a point's position, and whether the point exists (reverse flows can leave gaps)
   const at = (k: string, src: Pts = pts) => (src[k] ? { x: X(src[k][1]), y: Y(src[k][0]) } : null);
-  const legPath = (pk: string[], src: Pts = pts) =>
-    pk.map((k) => at(k, src)).filter(Boolean).map((p) => `${p!.x.toFixed(1)},${p!.y.toFixed(1)}`).join(" ");
+  const paths = snap.ph_paths ?? {};
+  const pathAt = (pp: [number, number][] | undefined) => (pp ?? []).map(([P, h]) => ({ x: X(h), y: Y(P) }));
+  // a leg's vertices: its points, "@comp" the drawn compression path between them
+  const legCoords = (pk: string[], src: Pts = pts, pa: Snapshot["ph_paths"] = paths) =>
+    pk.flatMap((k) => (k === "@comp" ? pathAt(pa.comp) : [at(k, src)])).filter(Boolean) as { x: number; y: number }[];
+  const legPath = (pk: string[], src: Pts = pts, pa: Snapshot["ph_paths"] = paths) =>
+    legCoords(pk, src, pa).map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 
   // numbered labels: points closer than 16 px share one label, placed at the first free
   // corner (above left, above right, below left, below right)
@@ -301,7 +316,7 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
     }
     let best: string | null = null, bd = 16;
     for (const k of Object.keys(pts)) {
-      if (!showCells && /^[cqg]\d$/.test(k)) continue;
+      if ((!showCells && /^[cqg]\d$/.test(k)) || (!showS && k === "c2s")) continue;
       const p = at(k)!;
       const d = Math.hypot(p.x - q.x, p.y - q.y);
       if (d < bd) { bd = d; best = k; }
@@ -328,6 +343,9 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
   const stats: [string, string][] = [
     ["pressure ratio", fmt(pts.dis[0] / Math.max(pts.suc[0], 1e-3), 2)],
     ["compression Δh", `${fmt(u.diff("h", d("suc", "dis")), 1)} ${hU}`],
+    // as a test stand reports it: the isentropic rise over the actual one, port to port
+    ["isentropic efficiency (1 → 2)", fmt(d("suc", "c2s") / d("suc", "dis"), 3)],
+    ["polytropic efficiency (drawn path)", paths.eta_p !== undefined ? fmt(paths.eta_p, 3) : "--"],
     ["condenser Δh (S3 → receiver)", `${fmt(u.diff("h", d("cin", "rec")), 1)} ${hU}`],
     ["bypass gas Δh (S1 → S2)", `${fmt(u.diff("h", d("gin", "gout")), 1)} ${hU}`],
     ["quench Δh (S3 → S4)", `${fmt(u.diff("h", d("qin", "qout")), 1)} ${hU}`],
@@ -387,6 +405,8 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
             {showIso && chart.isotherms.map((iso) => (
               <polyline key={`t${iso.T}`} points={line(iso.P, iso.h)} className="ph-iso" />
             ))}
+            {/* isentropes */}
+            {isentropes.map((l) => <polyline key={`s${l.s}`} points={line(l.P, l.h)} className="ph-isen" />)}
             {/* lines of constant quality */}
             {showQ && qualities.map((q) => (
               <polyline key={`x${q}`} points={line(chart.P, chart.h_l.map((hl, i) => hl + q * (chart.h_v[i] - hl)))} className="ph-qual" />
@@ -406,7 +426,7 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
             ))}
             {/* reference cycle */}
             {ref && LEGS.map((l) => (
-              <polyline key={`r${l.key}`} points={legPath(l.pts, ref.pts)} className="ph-ref" />
+              <polyline key={`r${l.key}`} points={legPath(l.pts, ref.pts, ref.paths)} className="ph-ref" />
             ))}
             {/* trail of the main points */}
             {showTrail && trail.current.map((tp, i) => TRAIL_PTS.map((k) => {
@@ -422,7 +442,7 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
             ))}
             {/* flow direction: an arrow halfway along each main leg */}
             {LEGS.filter((l) => l.arrow).map((l) => {
-              const ps = l.pts.map((k) => at(k)).filter(Boolean) as { x: number; y: number }[];
+              const ps = legCoords(l.pts);
               let len = 0;
               for (let i = 1; i < ps.length; i++) len += Math.hypot(ps[i].x - ps[i - 1].x, ps[i].y - ps[i - 1].y);
               if (len < 30) return null;
@@ -448,6 +468,17 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
             })}
             {/* cells and state points */}
             {showCells && CELL_GROUPS.flatMap(([, , ks]) => ks).map((k) => {
+              const p = at(k);
+              return p ? <circle key={k} cx={p.x} cy={p.y} r={2.6} className="ph-cell" /> : null;
+            })}
+            {/* the isentropic compression from 1, ending at 2s */}
+            {showS && paths.isen && <>
+              <polyline points={pathAt(paths.isen).map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")} className="ph-isen1" />
+              {at("c2s") && <circle cx={at("c2s")!.x} cy={at("c2s")!.y} r={3.5} className="ph-2s" />}
+              {at("c2s") && <text x={at("c2s")!.x - 8} y={at("c2s")!.y - 7} textAnchor="end" className="ph-num">2s</text>}
+            </>}
+            {/* inside the compressor */}
+            {COMP_POINTS.slice(0, 3).map(([k]) => {
               const p = at(k);
               return p ? <circle key={k} cx={p.x} cy={p.y} r={2.6} className="ph-cell" /> : null;
             })}
@@ -480,6 +511,19 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
               placed.push(p);
               return <text key={`tl${iso.T}`} x={p.x + 4} y={p.y - 3} className="ph-isolbl">
                 {u.fmt("T", iso.T, isoDec)}{u.unit("T")}</text>;
+            });
+          })()}
+          {isentropes.length > 0 && (() => {
+            // where each line enters the plot (top or right edge), where there is room
+            const placed: { x: number; y: number }[] = [];
+            return isentropes.map((l) => {
+              const i = l.P.findIndex((p, j) => inPlot(X(l.h[j]), Y(p)));
+              if (i < 0) return null;
+              const p = { x: X(l.h[i]), y: Y(l.P[i]) };
+              if (placed.some((q) => Math.abs(q.x - p.x) < 44 && Math.abs(q.y - p.y) < 13)) return null;
+              placed.push(p);
+              return <text key={`sl${l.s}`} x={p.x - 3} y={p.y + 12} textAnchor="end" className="ph-isenlbl">
+                s {fmt(u.to("s", l.s / 1000), sDec)}</text>;
             });
           })()}
           {showQ && (() => {
@@ -533,6 +577,7 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
           <span><i style={{ background: `linear-gradient(90deg, ${COL.hot}, ${COL.liq})` }} />exchangers and compression: inlet → outlet color</span>
           <span><i className="dash" />valve (throttling)</span>
           {ref && <span><i className="ref" />reference at {fmt(ref.t, 0)} s</span>}
+          {showS && <span><i className="isen" />isentropes; 1 → 2s: isentropic compression</span>}
           <span className="ph-hint">drag a box to zoom · Esc or double click: back</span>
         </div>
       </div>
@@ -550,13 +595,15 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
             <button disabled={!zoomed} onClick={() => setZooms((z) => z.slice(0, -1))}
               title="back to the previous view (also Esc or a double click)">Back</button>
             <label><input type="checkbox" checked={showIso} onChange={(e) => setShowIso(e.target.checked)} /> isotherms</label>
+            <label title="lines of constant entropy, and the isentropic compression from 1 to 2s">
+              <input type="checkbox" checked={showS} onChange={(e) => setShowS(e.target.checked)} /> isentropes</label>
             <label><input type="checkbox" checked={showQ} onChange={(e) => setShowQ(e.target.checked)} /> quality lines</label>
             <label><input type="checkbox" checked={showCells} onChange={(e) => setShowCells(e.target.checked)} /> exchanger cells</label>
             <label><input type="checkbox" checked={showSp} onChange={(e) => setShowSp(e.target.checked)} /> setpoints</label>
             <label title="recent positions of the suction, discharge, header, receiver and exchanger outlet points">
               <input type="checkbox" checked={showTrail} onChange={(e) => setShowTrail(e.target.checked)} /> trail</label>
             <div>
-              <button onClick={() => setRef({ t: snap.t, pts })} title="keep the present cycle as a dashed reference">Hold reference</button>
+              <button onClick={() => setRef({ t: snap.t, pts, paths })} title="keep the present cycle as a dashed reference">Hold reference</button>
               {ref && <button onClick={() => setRef(null)} style={{ marginLeft: 6 }}>Clear</button>}
             </div>
           </div>
@@ -580,6 +627,14 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
                   <td className="v">{stateText(u, pts[k])}</td>
                 </tr>
               ))}
+              <tr className="grp"><td /><td colSpan={5}>compressor (model stages) and 2s</td></tr>
+              {COMP_POINTS.map(([k, name]) => pts[k] && (
+                <tr key={k} className={`cell ${hover === k ? "hl" : ""}`} onMouseEnter={() => setHover(k)} onMouseLeave={() => setHover(null)}>
+                  <td /><td className="n">{name}</td><td className="v">{u.fmt("P", pts[k][0])}</td>
+                  <td className="v">{u.fmt("T", pts[k][2])}</td><td className="v">{u.fmt("h", pts[k][1])}</td>
+                  <td className="v">{stateText(u, pts[k])}</td>
+                </tr>
+              ))}
               {showCells && CELL_GROUPS.map(([g, label, ks]) => [
                 <tr key={g} className="grp"><td /><td colSpan={5}>{label}</td></tr>,
                 ...ks.map((k, i) => pts[k] && (
@@ -592,7 +647,7 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
               ])}
             </tbody>
           </table>
-          <p className="note">Model values (no sensor noise or lag). Exchanger cells sit at their centres' pressures;
+          <p className="note">Model values (no sensor noise or lag). Exchanger cells: the state leaving each cell, at that pressure;
             the {u.sys === "english" ? "Btu/lb values keep the property tables' reference state" : "enthalpy reference is the property tables'"}.</p>
         </div>
       </div>

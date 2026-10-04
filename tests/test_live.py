@@ -208,6 +208,30 @@ def test_ph_diagram_state_points():
     assert all(np.diff([h["gin"]] + [h[f"g{j}"] for j in (4, 3, 2, 1, 0)]) < 0)
     assert all(np.diff([h["qin"]] + [h[f"q{j}"] for j in range(5)]) > 0)
     assert min(h["gout"], h["qout"]) < h["tee"] < max(h["gout"], h["qout"])
+    # cells are the state leaving them, where it leaves: the last cell of each exchanger side
+    # is its outlet (the quench side's S4, the gas side's S2, the condenser's drain at S4)
+    assert np.array_equal(ph["q4"], ph["qout"]) and np.array_equal(ph["g0"], ph["gout"])
+    aux = st._last[0]
+    assert np.isclose(P["c4"], (aux["P_i"][0] + aux["dP_drn"][0]) / 1e5, rtol=1e-6)   # condenser S4
+    assert ph["c4"][3] < 0.0                                                      # the drain, subcooled
+    t = s["true"]
+    assert np.allclose(t["x_c"], [ph[f"c{j}"][3] for j in range(5)], atol=1e-4)
+    assert np.allclose(t["T_q"], [ph[f"q{j}"][2] for j in range(5)], atol=1e-3)
+    assert np.allclose(t["T_g"], [ph[f"g{j}"][2] for j in range(5)], atol=1e-3)
+    assert np.isclose(t["T_go"], ph["gout"][2], atol=1e-3) and np.isclose(t["T_qo"], ph["qout"][2], atol=1e-3)
+    # the compression: motor heating at suction pressure, a polytropic path to the adiabatic
+    # end, the shell and the discharge volume at discharge pressure; the isentrope from 1 ends at 2s
+    assert P["cmh"] == P["suc"] and h["cmh"] > h["suc"] and P["c2a"] == P["cout"] == P["dis"]
+    assert h["suc"] < h["c2s"] < h["c2a"]
+    pa = s["ph_paths"]
+    comp, isen = np.array(pa["comp"]), np.array(pa["isen"])
+    assert np.allclose(comp[0], ph["cmh"][:2], atol=1e-3) and np.allclose(comp[-1], ph["c2a"][:2], atol=1e-3)
+    assert np.allclose(isen[0], ph["suc"][:2], atol=1e-3) and np.allclose(isen[-1], ph["c2s"][:2], atol=1e-3)
+    assert np.all(np.diff(comp, axis=0) > 0.0) and 0.5 < pa["eta_p"] < 1.0
+    s_comp = st.props.state(comp[:, 0] * 1e5, comp[:, 1] * 1e3).s
+    assert np.all(np.diff(s_comp) > 0.0)                      # the real path gains entropy
+    s_isen = st.props.state(isen[:, 0] * 1e5, isen[:, 1] * 1e3).s
+    assert np.ptp(s_isen) < 1e-3 * s_isen[0]
     # receiver liquid subcooled, the quench flashed by valve 3, the suction gas at the setpoint superheat
     assert ph["rec"][3] < 0.0 and np.isclose(ph["rec"][4], s["true"]["SC_L"], atol=0.05)
     assert 0.0 < ph["v3o"][3] < 1.0
@@ -229,6 +253,13 @@ def test_ph_chart():
         for P_x, h_x in ((P_b, st.props.sat(P_b)["h_l"]), (P_d, st.props.sat(P_d)["h_v"])):
             assert np.min(np.hypot(Pi / (P_x / 1e5) - 1.0, (hi - h_x / 1e3) / 100.0)) < 2e-3
     assert np.all(np.array(iso[120.0]["h"]) > np.interp(iso[120.0]["P"], c["P"], c["h_v"]))   # all vapor
+    # isentropes: round entropies in the view, each line at its entropy
+    zs = st.ph_chart(view=(400.0, 520.0, 4.0, 40.0), isentropes=True)
+    S = np.array([i["s"] for i in zs["isentropes"]])
+    assert len(S) >= 4 and np.allclose(S / 1e3 / zs["isen_step"], np.round(S / 1e3 / zs["isen_step"]), atol=1e-6)
+    for line in zs["isentropes"][::3]:
+        sv = st.props.state(np.array(line["P"]) * 1e5, np.array(line["h"]) * 1e3).s
+        assert np.allclose(sv, line["s"], rtol=2e-3)
     # a zoomed view: its own pressure grid and round isotherms across it
     z = st.ph_chart(view=(400.0, 460.0, 5.0, 7.0), unit="C", n_iso=12)
     assert 5.0 / 1.06 < z["P"][0] < z["P"][-1] < 7.0 * 1.06 and "dome_ext" not in z
