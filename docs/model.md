@@ -137,7 +137,7 @@ mixer's gas side:
 | regime change | dry-out share of the cell's area, blended over 15 kJ/kg | wet / dry wall, blended over 0.2 K |
 | coefficients | scale with flow (`mx_alpha_e` ^0.5, `mx_alpha_v0` ^0.8) | constant (`alpha_r_2ph`, `alpha_r_1ph`); water side ^0.8 |
 | steady-state solver | own inner solve (`march_mixer`, `newton_mixer`) | wall temperatures as outer unknowns |
-| displayed per cell | the cell's state (= its outlet) | the cell's mean above the liquid |
+| displayed per cell | the cell's state (= its outlet), at its outlet pressure | the state leaving the cell at its outlet pressure (the bottom cell: the subcooled drain); the model itself condenses at each cell's mean |
 
 The liquid section's dynamics live in the receiver pool and in the condensing zone's hold-up.
 The plates and their water (23.6 kJ/K) dominate the condenser's own thermal response.

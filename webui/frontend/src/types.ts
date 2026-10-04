@@ -24,6 +24,9 @@ export interface Snapshot {
   charge: { kg: number; nominal_kg: number; pending_kg: number; rate_kg_s: number };
   // P-h diagram state points: name -> [P bar, h kJ/kg, T °C, quality x (by enthalpy), SC / SH K]
   ph: Record<string, [number, number, number, number, number]>;
+  // the compression as drawn: the polytropic path (fitted efficiency eta_p) and the isentrope
+  // from the suction port, as [P bar, h kJ/kg] points
+  ph_paths: { comp?: [number, number][]; isen?: [number, number][]; eta_p?: number };
   pending_params: string[];
   events: { t: number; msg: string }[];
 }
@@ -49,6 +52,8 @@ export interface PhChart {
   fluid: string; P: number[]; h_l: number[]; h_v: number[]; T_l: number[]; T_v: number[];
   isotherms: { T: number; P: number[]; h: number[] }[];
   iso_step?: number | null;              // a view's isotherm spacing, in the display unit
+  isentropes?: { s: number; P: number[]; h: number[] }[];   // s in J/(kg K)
+  isen_step?: number | null;             // a view's isentrope spacing, in the display unit
   dome_ext?: { P: number[]; h_l: number[]; h_v: number[] };
   P_min: number; P_max: number; T_crit: number; P_crit: number; h_crit?: number;
 }

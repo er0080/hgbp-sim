@@ -233,11 +233,12 @@ def get_saturation(T: float):
 
 
 @app.get("/api/ph_chart")
-def get_ph_chart(temps: str = "", view: str = "", unit: str = "C", n: int = 12):
+def get_ph_chart(temps: str = "", view: str = "", unit: str = "C", n: int = 12, s: int = 0):
     """Background of the P-h diagram: saturation lines and isotherms of the stand's
     refrigerant.  ``temps``: isotherm temperatures (comma-separated, °C).  ``view``:
     h0,h1,P0,P1 (kJ/kg, bar) for a chart of that region only, with about ``n`` isotherms at
-    round values of ``unit`` (C or F) across it unless ``temps`` is given."""
+    round values of ``unit`` (C or F) across it unless ``temps`` is given, and with ``s=1``
+    about ``n`` isentropes as well."""
     try:
         T = [float(v) for v in temps.split(",") if v.strip()][:60] or None
         V = [float(v) for v in view.split(",") if v.strip()] or None
@@ -248,7 +249,7 @@ def get_ph_chart(temps: str = "", view: str = "", unit: str = "C", n: int = 12):
     if unit not in ("C", "F"):
         raise HTTPException(400, "unit: C or F")
     with runner.lock:
-        return JSONResponse(stand.ph_chart(T, view=V, unit=unit, n_iso=max(2, min(n, 40))))
+        return JSONResponse(stand.ph_chart(T, view=V, unit=unit, n_iso=max(2, min(n, 40)), isentropes=bool(s)))
 
 
 @app.get("/api/history")

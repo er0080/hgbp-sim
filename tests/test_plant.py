@@ -134,7 +134,8 @@ def test_condenser_profile_is_physical():
     assert res["converged"].all()
     a = res["aux"]
     assert np.all(np.diff(a["x_c"], axis=1) < 0.0)                 # quality falls down the refrigerant side
-    assert np.all(a["x_c"][:, 0] > 1.0) and np.all((a["x_c"][:, -1] > 0.0) & (a["x_c"][:, -1] < 0.5))
+    assert np.all(a["x_c"][:, 0] > 1.0) and np.all((a["x_c"][:, -2] > 0.0) & (a["x_c"][:, -2] < 0.6))
+    assert np.all(a["x_c"][:, -1] < 0.0)                           # leaving the last cell: the subcooled drain
     assert np.all(np.diff(a["T_wc"], axis=1) < 0.0)                # water rises from S1 at the bottom
     assert np.all(a["T_wc"] <= a["T_cwc"] + 1e-6) and np.all(a["T_cwc"] <= a["T_c"] + 1e-6)
     assert np.allclose(a["mdot_cr"], a["mdot_3"], rtol=1e-2)
