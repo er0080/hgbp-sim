@@ -69,6 +69,13 @@ compressor is started automatically and stopped after the last point.
   * A point also ends when its maximum hold time runs out. The collections come on top of
     `hold_time`; raise `episode_time` to fit them.
   * After the last point the compressor must be stopped, and the episode ends successfully.
+* **Given schedules:** `env.reset(idx, schedule=dict(points=..., k=..., hold=...))` replaces
+  the sampled points of those stands with a procedure's own list (for example a rating
+  schedule in lift order), up to `max_points` (default 4) per episode.
+  `Envelope.point(props, T_evap, T_cond, RGT, N, T_wi)` builds a point from saturated
+  suction and discharge temperatures, RGT (°C) and speed (rpm), with the clamped liquid
+  pressure. Given points skip the feasibility filter. The rest of the episode
+  (parameters, charge, ambient, water, start) is drawn as usual.
 * **Start modes:** `warm` (equilibrium at the first point or another one, from the
   steady-state solver), `cold` (equalized stand at ambient, compressor off, optionally
   some liquid migrated to the suction side) or `random`.

@@ -112,6 +112,7 @@ class EnvConfig:
     integrator: str = "rk4"
     episode_time: float = 2400.0         # hard truncation [s]
     k_points: tuple = (1, 3)             # number of test points per episode
+    max_points: int = 4                  # longest schedule (sampled or given to reset)
     hold_time: tuple = (300.0, 900.0)    # maximum time per test point to become stable [s]
                                          # (the collections come on top of it)
     advance_on_dwell: bool = True        # complete a point once stable for dwell_required
@@ -199,8 +200,10 @@ class HGBPVecEnv:
         self.run_required = np.ones(n_, bool)
         self.schedule_complete = np.zeros(n_, bool)
         self.k = np.zeros(n_, int)
-        self.sched_points = np.zeros((n_, 4, 5))
-        self.sched_hold = np.zeros((n_, 4))
+        if not 1 <= cfg.k_points[0] <= cfg.k_points[1] <= cfg.max_points:
+            raise ValueError(f"k_points {cfg.k_points} must lie in 1..max_points ({cfg.max_points})")
+        self.sched_points = np.zeros((n_, cfg.max_points, 5))
+        self.sched_hold = np.zeros((n_, cfg.max_points))
         self.sched_k = np.ones(n_, int)
         self.sp = np.zeros((n_, 5))          # P_s, P_d, RGT, P_i, N
         self.start_at = np.zeros(n_)
@@ -248,7 +251,16 @@ class HGBPVecEnv:
         return RGT - self.props.T_sat(np.maximum(P_s, self.props.p_min))
 
     # ------------------------------------------------------------------ reset
-    def reset(self, idx=None) -> np.ndarray:
+    def reset(self, idx=None, schedule: dict | None = None) -> np.ndarray:
+        """Start new episodes for the stands ``idx`` (default: all).
+
+        ``schedule`` replaces the sampled test points of these stands with given ones, as a
+        test procedure lists them: ``points`` of shape (m, k, 5) in ``POINT_FIELDS`` order
+        (SI; see :meth:`Envelope.point`), optional ``k`` (m,) points in use (default k) and
+        optional ``hold`` (m, k) maximum times to become stable [s] (default sampled from
+        ``hold_time``).  Given points skip the feasibility filter.  Everything else
+        (parameters, charge, ambient and water, start) is drawn as usual.
+        """
         cfg, pl, rng = self.cfg, self.plant, self.rng
         idx = np.arange(self.n) if idx is None else np.atleast_1d(np.asarray(idx))
         m = len(idx)
@@ -264,10 +276,13 @@ class HGBPVecEnv:
         self.charge_factor[idx] = fac
         pl.p.charge[idx] = pl.nominal_charge(idx) * fac
 
-        sch = sample_schedule(rng, m, 4, cfg.envelope, pl.props, self.params, T_wi,
-                              hold_range=cfg.hold_time, k_range=cfg.k_points)
-        if cfg.filter_feasible:
-            self._filter_feasible(sch, idx)
+        if schedule is None:
+            sch = sample_schedule(rng, m, cfg.max_points, cfg.envelope, pl.props, self.params, T_wi,
+                                  hold_range=cfg.hold_time, k_range=cfg.k_points)
+            if cfg.filter_feasible:
+                self._filter_feasible(sch, idx)
+        else:
+            sch = self._given_schedule(schedule, m)
         self.sched_points[idx], self.sched_hold[idx], self.sched_k[idx] = sch["points"], sch["hold"], sch["k"]
         self.k[idx] = 0
         self.t_point[idx] = 0.0
@@ -324,6 +339,28 @@ class HGBPVecEnv:
         pl.aux = None
         self.meas = pl.measure(noise=cfg.noise)
         return self._observe()
+
+    def _given_schedule(self, schedule: dict, m: int) -> dict:
+        """``reset``'s ``schedule`` argument checked and padded to ``max_points``."""
+        pts = np.asarray(schedule["points"], float)
+        if pts.ndim != 3 or pts.shape[0] != m or pts.shape[2] != len(POINT_FIELDS):
+            raise ValueError(f"schedule points must have shape ({m}, k, {len(POINT_FIELDS)}), got {pts.shape}")
+        kk = pts.shape[1]
+        if not 1 <= kk <= self.cfg.max_points:
+            raise ValueError(f"a schedule has 1..max_points ({self.cfg.max_points}) points, got {kk}")
+        k = np.broadcast_to(np.asarray(schedule.get("k", kk), int), (m,)).copy()
+        if k.min() < 1 or k.max() > kk:
+            raise ValueError(f"schedule k must be 1..{kk}")
+        if not np.isfinite(pts[np.arange(kk)[None, :] < k[:, None]]).all():
+            raise ValueError("schedule points in use must be finite")
+        hold = schedule.get("hold")
+        hold = self.rng.uniform(*self.cfg.hold_time, size=(m, kk)) if hold is None \
+            else np.broadcast_to(np.asarray(hold, float), (m, kk))
+        out = dict(points=np.zeros((m, self.cfg.max_points, len(POINT_FIELDS))),
+                   hold=np.zeros((m, self.cfg.max_points)), k=k)
+        out["points"][:, :kk] = np.nan_to_num(pts)
+        out["hold"][:, :kk] = hold
+        return out
 
     def _clear_of_trips(self, res, idx):
         """Converged equilibria with their discharge temperature and pressures inside the
