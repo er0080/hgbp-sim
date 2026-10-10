@@ -93,6 +93,11 @@ def _pq_update(AS, CP, p, q, last: dict) -> None:
                    list(AS.mole_fractions_liquid()), list(AS.mole_fractions_vapor()))
 
 
+# Upper end of the tables as a fraction of the critical pressure, where the default does not
+# reach the stand's limits: R410A's discharge trip is 700 psia = 48.26 bar, 0.985 x P_crit
+P_MAX_FRACTION = {"R410A": 0.99}
+
+
 class RefrigerantTables:
     """Tabulated refrigerant properties with array lookups.
 
@@ -101,7 +106,7 @@ class RefrigerantTables:
     fluid : CoolProp fluid name (e.g. "R134a", "R404A", "R410A", "R32", "R290").
     n_p, n_z : grid resolution in log(P) and in the region coordinate zeta.
     p_min, p_max : pressure range of the tables [Pa].  Default p_max is
-        0.92 * P_critical.
+        0.92 * P_critical (0.85 for mixtures; per fluid in ``P_MAX_FRACTION``).
     t_min, t_max : temperature bounds for the liquid / vapor tables [K].
     cache_dir : where to look for / store the .npz cache (package data dir is
         always checked first).
@@ -155,7 +160,8 @@ class RefrigerantTables:
             Tc, Pc = crit[0].T, crit[0].p
         Tmax_eos, Ttr = AS.Tmax(), AS.Ttriple()
         # a mixture's phase equilibrium solver gets unreliable close to the critical point
-        p_max = p_max if p_max is not None else (0.85 if len(AS.fluid_names()) > 1 else 0.92) * Pc
+        frac = P_MAX_FRACTION.get(self.fluid, 0.85 if len(AS.fluid_names()) > 1 else 0.92)
+        p_max = p_max if p_max is not None else frac * Pc
         t_max = t_max if t_max is not None else min(Tmax_eos, Tc + 160.0)
         t_min = t_min if t_min is not None else max(Ttr + 5.0, 200.0)
         AS.update(CP.QT_INPUTS, 0.0, t_min + 3.0)
