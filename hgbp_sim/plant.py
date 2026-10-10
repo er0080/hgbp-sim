@@ -526,9 +526,15 @@ class HGBPPlant:
         W = a["Wm"] * (1.0 + z(p.sig_W_rel))
         T_sat_s = self.props.T_sat(np.maximum(P_s, self.props.p_min))
         T_sat_i = self.props.T_sat(np.maximum(P_i, self.props.p_min))
+        # the stand's positive-displacement meter in the suction line reads volume flow; here it
+        # is the mass flow reading at the vapor density of the measured suction pressure and
+        # temperature (held just above saturation, so a wet probe does not give liquid density)
+        P_m = np.maximum(P_s, self.props.p_min)
+        rho_m = self.props.rho_Ph(P_m, self.props.h_PT(P_m, np.maximum(T_s, T_sat_s + 0.1)))
         return dict(P_s=P_s, P_d=P_d, P_i=P_i, T_s=T_s, T_d=T_d, T_co=T_co,
                     SH=T_s - T_sat_s, SC=T_sat_i - T_co, T_sat_s=T_sat_s, T_sat_i=T_sat_i,
-                    mdot=mdot, W=W, N=a["N"], u1=a["u1"], u2=a["u2"], u3=a["u3"], u4=a["u4"],
+                    mdot=mdot, Vdot=mdot / rho_m,
+                    W=W, N=a["N"], u1=a["u1"], u2=a["u2"], u3=a["u3"], u4=a["u4"],
                     T_wi=self.T_wi.copy(), T_wo=a["T_wo"] + z(p.sig_T), T_amb=self.T_amb.copy(),
                     rec_level=a["rec_level"].copy())          # sight glass (read by eye, no noise)
 
