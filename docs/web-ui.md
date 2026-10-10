@@ -142,7 +142,8 @@ Zoomed to the suction corner at the MT standard point:
 * The side panel lists every point and cell, the pressure ratio, the enthalpy change over
   each exchanger and the three valve flows.
 
-The property tables end below the critical pressure (at 92 % of it, 85 % for blends). The
+The property tables end below the critical pressure (at 92 % of it, 85 % for blends, 99 % for
+R410A). The
 dome is closed above that by an estimate, drawn dashed, to the critical point. Across a
 blend's glide the isotherms are drawn linear in temperature, as the model treats the
 glide. In US units, enthalpy is the tables' value converted to Btu/lb with the tables'

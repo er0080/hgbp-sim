@@ -350,6 +350,8 @@ variable-speed 355 cm³/rev semi-hermetic compressor on R410A.
 * The compressor map is generic; replace `components.compressor_s` for a measured map.
 * Water inlet and ambient temperatures are constant within an episode (they can be
   changed with `plant.set_inputs`).
-* Property tables cover 0.2 bar to 0.92 P_crit; states are clamped to the table range.
+* Property tables cover 0.2 bar to 0.92 P_crit (0.85 for blends; R410A to 0.99 P_crit = 48.5 bar so
+  that the stand's 700 psia discharge trip lies inside them); states are clamped to the table
+  range, and a state held at the clamp does not conserve mass.
 * Mixtures with glide (R407C, R448A) work through CoolProp tables, but the two-phase
   temperature is a linear interpolation between bubble and dew point.
