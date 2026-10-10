@@ -201,9 +201,14 @@ warm-up seen on real stands.
 
 ### Sensors and trips
 * Pressure transducers (noise); temperatures at the compressor suction port, discharge and
-  the liquid line at valve 3 (first-order lag + noise); Coriolis flow meter and power
-  meter (lag + relative noise); receiver sight glass.
+  the liquid line at valve 3 (first-order lag + noise); mass flow and power meter (lag +
+  relative noise); receiver sight glass. The stand measures flow with a
+  positive-displacement meter in the suction line: `measure()` also gives that volume
+  flow (`Vdot`), the mass flow reading at the vapor density of the measured suction
+  pressure and temperature.
 * Trips: high discharge pressure, high discharge temperature, low / high suction pressure.
+  The defaults are the stand's hard limits: 700 psia (48.3 bar), 320 °F (160 °C) and a
+  30 psia (2.07 bar) minimum suction pressure.
 * Flags: liquid at the compressor (floodback), quench liquid leaving the mixing exchanger,
   no liquid seal (undercharge), receiver full and condenser flooding (overcharge).
 * The liquid line sensor reads the receiver pool's temperature with its lag. While the pool

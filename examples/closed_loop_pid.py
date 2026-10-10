@@ -22,13 +22,14 @@ def run(cold: bool = False, seed: int = 0, gains: dict | None = None, T_end: flo
     plant = HGBPPlant(params, n=1, dt=0.05, rng=np.random.default_rng(seed))
     plant.p.charge[:] = plant.nominal_charge() * charge_factor
     pr = plant.props
-    T_amb, T_wi = 25.0 + C2K, 20.0 + C2K
+    T_amb, T_wi = 25.0 + C2K, 4.44 + C2K           # the stand's cooling water: 40 degF
     plant.set_inputs(T_amb=T_amb, T_wi=T_wi)
+    hz = lambda f: params.N_nom * f / 60.0          # VFD frequency -> speed (nominal speed at 60 Hz)
     schedule = [
-        (0.0, named_point("MT_standard", pr, 1450.0)),
-        (600.0, named_point("high_lift", pr, 1750.0)),
-        (1200.0, named_point("HT_standard", pr, 1200.0)),
-        (1800.0, named_point("LT_standard", pr, 1450.0)),
+        (0.0, named_point("MT_standard", pr, hz(60.0))),
+        (600.0, named_point("AC_standard", pr, hz(70.0))),
+        (1200.0, named_point("HT_standard", pr, hz(40.0))),
+        (1800.0, named_point("low_lift", pr, hz(50.0))),
     ]
     ctrl = BaselineController(1, gains)
     p0 = schedule[0][1]
@@ -54,7 +55,8 @@ def run(cold: bool = False, seed: int = 0, gains: dict | None = None, T_end: flo
         N_cmd = sp["N"] if t >= t_start else 0.0
         meas = plant.measure(noise=noise)
         running = plant.x[:, HGBPPlant.N_] > 0.5 * params.N_min
-        u = ctrl(meas, dict(P_s=sp["P_s"], P_d=sp["P_d"], SH=sp["SH"], P_i=sp["P_i"]), dt_ctrl, running)
+        T_s_sp = float(plant.props.T_sat(np.array([sp["P_s"]]))[0]) + sp["SH"]   # return gas temperature
+        u = ctrl(meas, dict(P_s=sp["P_s"], P_d=sp["P_d"], T_s=T_s_sp, P_i=sp["P_i"]), dt_ctrl, running)
         aux = plant.step(dt_ctrl, u_cmd=u, N_cmd=N_cmd)
         t = plant.t
         log.append([t, aux["P_s"][0], aux["P_d"][0], aux["SH"][0], aux["P_i"][0],           # 0-4

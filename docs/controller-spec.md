@@ -32,12 +32,12 @@ The stand has four manipulated valves and four controlled variables:
 |---|---|---|
 | discharge pressure | 1, discharge pressure valve | lowers the intermediate pressure and the bypass flow |
 | suction pressure | 2, hot gas bypass valve | raises discharge pressure, superheat and mass flow |
-| suction superheat | 3, liquid (suction temperature) valve | raises suction and discharge pressure |
+| return gas (suction) temperature | 3, liquid (suction temperature) valve | raises suction and discharge pressure |
 | intermediate (condensing) pressure | 4, cooling water valve | moves every other variable |
 
 Open-loop step responses from the medium-temperature point (`examples/open_loop_step.py`):
-a 10 % opening of valve 2 raises suction pressure by about 3 bar, discharge pressure by
-about 5 bar and superheat by about 40 K within 10 minutes. The plant is therefore a strongly coupled, nonlinear
+a 10 % opening of valve 2 raises suction pressure by about 2.7 bar, discharge pressure by
+about 3.7 bar and superheat by about 60 K within 10 minutes. The plant is therefore a strongly coupled, nonlinear
 4x4 system; single-loop PID (the baseline) works but produces large superheat excursions
 at every setpoint change and needs several minutes to settle.
 
@@ -74,8 +74,8 @@ are expressed as saturation temperatures (refrigerant-agnostic), errors in kelvi
 | group | entries | notes |
 |---|---|---|
 | measurements (18) | `Tsat_s`, `Tsat_d`, `Tsat_i` (saturation temperature at suction, discharge, intermediate pressure); `T_s` (compressor inlet), `T_d` (/150), `T_co` (condenser outlet, /80); `SH` (/30), `SC` (/20); `mdot_norm` = mass flow / (saturated vapor density at P_suc x swept volume x speed), a volumetric-efficiency proxy in 0..1; `W_norm` = power / (swept volume x speed x P_suc) (/3); `T_wi`, `T_wo`, `T_amb`; `N_rel` = speed / nominal; `u1..u4` valve positions | sensor lag and noise included; `mdot_norm`, `W_norm` are 0 while the compressor is off |
-| setpoints (5) | `Tsat_s_sp`, `Tsat_d_sp`, `SH_sp`, `Tsat_i_sp`, `N_sp_rel` | current test point |
-| errors (8) | `e_Tsat_s`, `e_Tsat_d`, `e_SH`, `e_Tsat_i` (setpoint minus measurement, K, /10); `ie_*` clipped integrals of error/scale in minutes (+-5, /5) | integrals reset at each point change and while stopped |
+| setpoints (5) | `Tsat_s_sp`, `Tsat_d_sp`, `RGT_sp` (return gas temperature, degC / 50), `Tsat_i_sp`, `N_sp_rel` | current test point |
+| errors (8) | `e_Tsat_s`, `e_Tsat_d`, `e_RGT`, `e_Tsat_i` (setpoint minus measurement, K, /10); `ie_*` clipped integrals of error/scale in minutes (+-5, /5) | integrals reset at each point change and while stopped |
 | context (10) | `V_disp_rel` = swept volume / 250 cm3; `N_nom_rel` = nominal speed / 1500 rpm; refrigerant descriptors `rf_T_crit` (/400 K), `rf_P_crit` (/50 bar), `rf_M_molar` (/0.1 kg/mol), `rf_P_sat_ref` (/5 bar at 0 degC), `rf_h_fg_ref` (/200 kJ/kg), `rf_rho_v_ref` (/20 kg/m3), `rf_rho_l_ref` (/1200 kg/m3), `rf_dPsat_dT_ref` (/0.1 bar/K) | constant within an episode; descriptors let the policy interpolate to refrigerants not seen in training |
 | status (10) | `running`, `run_required` (schedule wants the compressor on), `permissive_ok` (start permissives hold), one-hot interlock state `st_off/st_starting/st_running/st_stopping`, `t_point`, `t_in_tol`, `t_since_switch` (s, /600, capped) | |
 
@@ -101,20 +101,25 @@ policy's output a rate that the PLC can clamp.
 
 ### 3.4 Episode structure and labels
 
-* 1..3 test points from the envelope (evaporating -30..12 degC, condensing 30..57 degC,
-  superheat 3..25 K, intermediate temperature between water inlet and condensing,
-  50..140 % speed, estimated discharge temperature below the trip), each checked
-  against the equilibrium solver at nominal charge (every valve below 95 % at steady
-  state; unreachable points are resampled), each with a maximum hold of 5..15 min. A point is **completed** when the three test variables have been
-  inside the tolerance band (0.3 K, 0.2 K, 0.5 K on Tsat_suc, Tsat_dis, SH) for
-  `dwell_required` = 180 s; then the next point is loaded. After the last point
+* 1..3 test points as the test procedure states them: saturated suction and discharge
+  temperatures inside the compressor's operating envelope, a return gas temperature
+  (65 degF for 30 % of the points, otherwise -10..35 degC with 5..50 K superheat) and a
+  VFD frequency of 35..75 Hz. The liquid pressure setpoint is the geometric mean of
+  suction and discharge pressure, at least 6 K of saturation temperature above the
+  cooling water. Each point is checked against the equilibrium solver at nominal charge
+  (every valve below 95 %, a margin to every trip; unreachable points are resampled),
+  each with a maximum hold of 5..15 min. The stand is stable when the three test
+  variables have been inside the tolerance band (0.3 K, 0.2 K, 0.5 K on Tsat_suc,
+  Tsat_dis, RGT) for `dwell_required` = 180 s. A point is then **completed**, or, with
+  `n_collections` > 0 (the stand's 3 x 15 min), after that many uninterrupted data
+  collections; then the next point is loaded. After the last point
   `run_required` drops to 0 and the episode terminates successfully once the compressor
   is off.
 * Start modes: warm (at or near a point, compressor running), cold (equalized stand at
   ambient, liquid in the receiver and optionally some migrated to the suction side,
   compressor off), sampled 70/30.
 * Per episode randomization: plant parameters (+-10..30 %), ambient 15..35 degC, water
-  inlet 12..30 degC, charge factor 0.85..1.15 (85 % of episodes) or 0.3..1.8 (15 %),
+  inlet 38..40 degF, charge factor 0.85..1.15 (85 % of episodes) or 0.3..1.8 (15 %),
   liquid migrated to the suction side at cold start, sensor noise.
 * `info` provides training labels and privileged states: `charge_factor` (true charge /
   nominal), `steady` (in tolerance for >= 120 s), `true` (noise-free pressures,
@@ -251,7 +256,7 @@ closed, valve 4 to 30 % (the expert's rest positions).
   otherwise "ok"; require two consecutive points before changing the advisory.
 * Supporting physical indicators that must agree before the advisory is shown (both are
   visible to an operator and make the estimate auditable): undercharge = valve 3 near
-  fully open with superheat above setpoint and subcooling near 0 K; overcharge =
+  fully open with the return gas temperature above setpoint and subcooling near 0 K; overcharge =
   subcooling above 8 K with valve 4 unusually open for the condensing temperature. Use
   the steady subcooling only: after an intermediate pressure change the receiver takes
   minutes to settle, and the subcooling swings by several kelvin either way.
