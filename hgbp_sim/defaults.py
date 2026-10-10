@@ -186,6 +186,20 @@ def load_defaults(path: str | None, create: bool = True) -> dict:
         raise ValueError(f"{path}: {exc}") from exc
 
 
+def controller_settings(doc: dict) -> dict:
+    """Keyword arguments for :class:`hgbp_sim.control.BaselineController` from the
+    ``loops`` section of a defaults document: the stand's UT35A tuning as SI gains,
+    the output limits OL..OH and the PV input filters FL."""
+    gains, limits, pv_filter = {}, {}, {}
+    for k in LOOP_NAMES:
+        t = doc["loops"][k]
+        Kp, Ki, Kd = ut35a.to_gains(t["P"], t["I"], t["D"], t["DR"], t["RH"] - t["RL"])
+        gains[k] = dict(Kp=Kp / _GAIN_SCALE[k], Ki=Ki / _GAIN_SCALE[k], Kd=Kd / _GAIN_SCALE[k])
+        limits[k] = (t["OL"] / 100.0, t["OH"] / 100.0)
+        pv_filter[k] = None if t.get("FL", ut35a.OFF) == ut35a.OFF else float(t["FL"])
+    return dict(gains=gains, limits=limits, pv_filter=pv_filter)
+
+
 if __name__ == "__main__":  # pragma: no cover
     if len(sys.argv) > 1:
         write_defaults(sys.argv[1])

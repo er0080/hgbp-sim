@@ -33,12 +33,18 @@ Interlock state machine (always active, mirrors what a PLC would enforce)
     time; STOPPING -> OFF once the compressor has stopped.
 
 Episode
-    A schedule of test points (P_s, P_d, SH, P_i, N).  A point is *completed*
-    when suction pressure, discharge pressure and superheat have stayed inside
-    the tolerance band for ``dwell_required`` seconds (the stand is "stable"
-    in the test-standard sense) or when its maximum hold time elapses.  After
-    the last point the compressor must be stopped (shutdown phase); the
-    episode terminates successfully once it is off.
+    A schedule of test points (P_s, P_d, RGT, P_i, N): saturated suction and
+    discharge conditions, a return gas (suction) temperature, the liquid pressure
+    (geometric mean of suction and discharge pressure, clamped by the cooling
+    water) and the compressor speed.  The stand is *stable* once suction
+    pressure, discharge pressure and return gas temperature have stayed inside
+    the tolerance band for ``dwell_required`` seconds.  Without collections a
+    point is then completed; with ``n_collections`` > 0 the stand must stay
+    stable for that many data collections of ``collection_time`` seconds each (a
+    collection interrupted by leaving the band is lost and restarts once the
+    stand is stable again).  A point also ends when its maximum hold time
+    elapses.  After the last point the compressor must be stopped (shutdown
+    phase); the episode terminates successfully once it is off.
 
 Reward (per control step)
     minus the weighted normalized tracking errors while running, a bonus while
@@ -61,10 +67,11 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .control import BaselineController
+from .defaults import controller_settings, load_defaults
 from .interlock import ST_OFF, ST_RUNNING, ST_STARTING, ST_STOPPING, STATE_NAMES, Interlock, permissives
 from .params import PlantParams
 from .plant import HGBPPlant
-from .scenarios import Envelope, sample_schedule
+from .scenarios import POINT_FIELDS, Envelope, sample_schedule
 from .steady_state import solve_steady_state
 
 C2K = 273.15
@@ -73,9 +80,9 @@ OBS_GROUPS = {
     "measurements": ("Tsat_s", "Tsat_d", "Tsat_i", "T_s", "T_d", "T_co", "SH", "SC",
                      "mdot_norm", "W_norm", "T_wi", "T_wo", "T_amb", "N_rel",
                      "u1", "u2", "u3", "u4"),
-    "setpoints": ("Tsat_s_sp", "Tsat_d_sp", "SH_sp", "Tsat_i_sp", "N_sp_rel"),
-    "errors": ("e_Tsat_s", "e_Tsat_d", "e_SH", "e_Tsat_i",
-               "ie_Tsat_s", "ie_Tsat_d", "ie_SH", "ie_Tsat_i"),
+    "setpoints": ("Tsat_s_sp", "Tsat_d_sp", "RGT_sp", "Tsat_i_sp", "N_sp_rel"),
+    "errors": ("e_Tsat_s", "e_Tsat_d", "e_RGT", "e_Tsat_i",
+               "ie_Tsat_s", "ie_Tsat_d", "ie_RGT", "ie_Tsat_i"),
     "context": ("V_disp_rel", "N_nom_rel",
                 "rf_T_crit", "rf_P_crit", "rf_M_molar", "rf_P_sat_ref", "rf_h_fg_ref",
                 "rf_rho_v_ref", "rf_rho_l_ref", "rf_dPsat_dT_ref"),
@@ -87,7 +94,7 @@ OBS_NAMES = tuple(n for g in OBS_GROUPS.values() for n in g)
 _OBS_SCALE = np.array(
     [50.0, 50.0, 50.0, 50.0, 150.0, 80.0, 30.0, 20.0, 1.0, 3.0, 50.0, 50.0, 50.0, 1.0,
      1.0, 1.0, 1.0, 1.0]
-    + [50.0, 50.0, 30.0, 50.0, 1.0]
+    + [50.0, 50.0, 50.0, 50.0, 1.0]
     + [10.0, 10.0, 10.0, 10.0, 5.0, 5.0, 5.0, 5.0]
     + [1.0] * 10
     + [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 600.0, 600.0, 600.0])
@@ -105,9 +112,13 @@ class EnvConfig:
     integrator: str = "rk4"
     episode_time: float = 2400.0         # hard truncation [s]
     k_points: tuple = (1, 3)             # number of test points per episode
-    hold_time: tuple = (300.0, 900.0)    # maximum time per test point [s]
+    hold_time: tuple = (300.0, 900.0)    # maximum time per test point to become stable [s]
+                                         # (the collections come on top of it)
     advance_on_dwell: bool = True        # complete a point once stable for dwell_required
     dwell_required: float = 180.0        # [s] contiguous time inside the tolerance band
+    n_collections: int = 0               # data collections per point once stable (the stand's
+                                         # procedure: 3 x 15 min); 0 completes a point when stable
+    collection_time: float = 900.0       # [s] per collection
     steady_time: float = 120.0           # [s] in tolerance -> info["steady"] (charge-estimation label)
     shutdown_phase: bool = True          # require compressor stop after the last point
     start_mode: str = "random"           # "cold" | "warm" | "random"
@@ -124,19 +135,25 @@ class EnvConfig:
     randomize_spec: dict | None = None
     noise: bool = True
     T_amb_range: tuple = (15.0, 35.0)    # degC
-    T_wi_range: tuple = (12.0, 30.0)     # degC
+    T_wi_range: tuple = (3.3, 4.6)       # degC; the stand's water is 40 degF, down to 38 degF
+    stand: str | None = None             # stand definition (a defaults file such as
+                                         # webui/config/stand_defaults.json): plant parameters and
+                                         # the baseline loops' UT35A settings; None: built-in
     charge_range: tuple = (0.85, 1.15)   # factor on nominal charge (normal episodes)
     charge_extreme_range: tuple = (0.3, 1.8)   # under-/over-charged episodes
     p_charge_extreme: float = 0.15
     envelope: Envelope = field(default_factory=Envelope)
     filter_feasible: bool = True         # resample points the stand cannot reach at nominal charge
     feasible_u_max: float = 0.95         # a point needs every valve below this at equilibrium
+    feasible_T_d_margin: float = 10.0    # ... a discharge temperature this far below the trip [K]
+    feasible_P_margin: float = 1.0e5     # ... and pressures this far inside their trips [Pa]
+                                         # (warm starts need the same margins at their state)
     include_integrated_error: bool = True
     ie_clip: float = 5.0
-    # reward shaping (errors in kelvin of saturation temperature / superheat)
-    err_scale: tuple = (1.0, 0.7, 1.0, 1.0)     # Tsat_s, Tsat_d, SH, Tsat_i
+    # reward shaping (errors in kelvin of saturation temperature / return gas temperature)
+    err_scale: tuple = (1.0, 0.7, 1.0, 1.0)     # Tsat_s, Tsat_d, RGT, Tsat_i
     err_weight: tuple = (1.0, 1.0, 1.0, 0.5)
-    tol: tuple = (0.3, 0.2, 0.5)                # tolerance band on Tsat_s, Tsat_d, SH [K]
+    tol: tuple = (0.3, 0.2, 0.5)                # tolerance band on Tsat_s, Tsat_d, RGT [K]
     err_cap: float = 10.0
     w_track: float = 1.0
     w_tol_bonus: float = 0.5
@@ -161,13 +178,16 @@ class HGBPVecEnv:
         self.cfg = config if config is not None else EnvConfig()
         self.n = int(n)
         self.rng = np.random.default_rng(seed)
-        self.params = params if params is not None else PlantParams()
         cfg = self.cfg
+        stand = load_defaults(cfg.stand, create=False) if cfg.stand else None
+        if params is None:
+            params = PlantParams(**stand["plant"]) if stand else PlantParams()
+        self.params = params
         self.plant = HGBPPlant(self.params, n=self.n, dt=cfg.dt_sim, integrator=cfg.integrator,
                                rng=self.rng, randomize=cfg.randomize_params,
                                randomize_spec=cfg.randomize_spec)
         self.props = self.plant.props
-        self.expert = BaselineController(self.n)
+        self.expert = BaselineController(self.n, **(controller_settings(stand) if stand else {}))
         self.obs_dim = len(OBS_NAMES)
         self.act_dim = 5 if cfg.start_stop_action else 4
         self._rf_vec = self.props.descriptor_vector()
@@ -182,7 +202,7 @@ class HGBPVecEnv:
         self.sched_points = np.zeros((n_, 4, 5))
         self.sched_hold = np.zeros((n_, 4))
         self.sched_k = np.ones(n_, int)
-        self.sp = np.zeros((n_, 5))          # P_s, P_d, SH, P_i, N
+        self.sp = np.zeros((n_, 5))          # P_s, P_d, RGT, P_i, N
         self.start_at = np.zeros(n_)
         self.u_cmd = np.zeros((n_, 4))
         self.ie = np.zeros((n_, 4))
@@ -191,6 +211,8 @@ class HGBPVecEnv:
         self.episode_return = np.zeros(n_)
         self.episode_len = np.zeros(n_, int)
         self.points_completed = np.zeros(n_, int)
+        self.t_coll = np.zeros(n_)               # time into the current collection [s]
+        self.n_coll = np.zeros(n_, int)          # collections completed at the current point
         self.reset()
 
     # ------------------------------------------------------------- helpers
@@ -216,9 +238,14 @@ class HGBPVecEnv:
         return permissives(m["P_s"], m["P_d"], x[:, HGBPPlant.U1], x[:, HGBPPlant.U2], self.plant.p,
                            self.interlock.tripped)
 
-    def _errors_K(self, P_s, P_d, SH, P_i):
+    def _errors_K(self, P_s, P_d, T_s, P_i):
         T = self._tsat(self.sp[:, 0], P_s, self.sp[:, 1], P_d, self.sp[:, 3], P_i)
-        return np.stack([T[0] - T[1], T[2] - T[3], self.sp[:, 2] - SH, T[4] - T[5]], 1)
+        return np.stack([T[0] - T[1], T[2] - T[3], self.sp[:, 2] - T_s, T[4] - T[5]], 1)
+
+    def _superheat(self, P_s, RGT):
+        """Superheat [K] a return gas temperature means at a suction pressure (the
+        steady-state solver works with superheat)."""
+        return RGT - self.props.T_sat(np.maximum(P_s, self.props.p_min))
 
     # ------------------------------------------------------------------ reset
     def reset(self, idx=None) -> np.ndarray:
@@ -253,6 +280,8 @@ class HGBPVecEnv:
         self.episode_return[idx] = 0.0
         self.episode_len[idx] = 0
         self.points_completed[idx] = 0
+        self.t_coll[idx] = 0.0
+        self.n_coll[idx] = 0
 
         if cfg.start_mode == "cold":
             cold = np.ones(m, bool)
@@ -267,10 +296,10 @@ class HGBPVecEnv:
             at_sp = rng.uniform(size=mw) < cfg.p_warm_at_setpoint
             alt = cfg.envelope.sample(rng, mw, pl.props, self.params, pl.T_wi[warm_idx])
             first = self.sp[warm_idx]
-            tgt = {f: np.where(at_sp, first[:, c], alt[f]) for c, f in enumerate(("P_s", "P_d", "SH", "P_i", "N"))}
-            res = solve_steady_state(pl, tgt["P_s"], tgt["P_d"], tgt["SH"], tgt["N"], P_i=tgt["P_i"],
-                                     idx=warm_idx)
-            ok = res["converged"]
+            tgt = {f: np.where(at_sp, first[:, c], alt[f]) for c, f in enumerate(POINT_FIELDS)}
+            res = solve_steady_state(pl, tgt["P_s"], tgt["P_d"], self._superheat(tgt["P_s"], tgt["RGT"]),
+                                     tgt["N"], P_i=tgt["P_i"], idx=warm_idx)
+            ok = self._clear_of_trips(res, warm_idx)
             good = warm_idx[ok]
             if len(good):
                 pl.set_state(good, res["x"][ok])
@@ -296,6 +325,16 @@ class HGBPVecEnv:
         self.meas = pl.measure(noise=cfg.noise)
         return self._observe()
 
+    def _clear_of_trips(self, res, idx):
+        """Converged equilibria with their discharge temperature and pressures inside the
+        trip limits by the configured margins (a stand parked at a trip limit is no test
+        point and no start)."""
+        cfg, p, a = self.cfg, self.plant.p, res["aux"]
+        p_ = lambda v: np.asarray(v)[idx] if np.ndim(v) else v      # per-stand parameters
+        return (res["converged"] & (a["T_d"] < p_(p.T_d_max) - cfg.feasible_T_d_margin)
+                & (a["P_d"] < p_(p.P_d_max) - cfg.feasible_P_margin)
+                & (a["P_s"] > p_(p.P_s_min) + cfg.feasible_P_margin))
+
     def _filter_feasible(self, sch, idx, rounds: int = 3) -> None:
         """Replace scheduled points that have no equilibrium (with all valves
         below ``feasible_u_max``) for the environment's parameters at nominal
@@ -308,13 +347,13 @@ class HGBPVecEnv:
                 if len(todo) == 0:
                     break
                 q = pts[todo, j, :]
-                res = solve_steady_state(pl, q[:, 0], q[:, 1], q[:, 2], q[:, 4], P_i=q[:, 3],
-                                         fill=0.4, idx=idx[todo])
-                bad = ~(res["converged"] & (res["u"] < cfg.feasible_u_max).all(1))
+                res = solve_steady_state(pl, q[:, 0], q[:, 1], self._superheat(q[:, 0], q[:, 2]), q[:, 4],
+                                         P_i=q[:, 3], fill=0.4, idx=idx[todo])
+                bad = ~(self._clear_of_trips(res, idx[todo]) & (res["u"] < cfg.feasible_u_max).all(1))
                 if not bad.any():
                     break
                 new = cfg.envelope.sample(rng, int(bad.sum()), pl.props, self.params, pl.T_wi[idx[todo[bad]]])
-                for c, f in enumerate(("P_s", "P_d", "SH", "P_i", "N")):
+                for c, f in enumerate(POINT_FIELDS):
                     pts[todo[bad], j, c] = new[f]
                 todo = todo[bad]
 
@@ -347,7 +386,7 @@ class HGBPVecEnv:
         running = self._running()
 
         # ---- tracking (true values, kelvin)
-        e = self._errors_K(aux["P_s"], aux["P_d"], aux["SH"], aux["P_i"])
+        e = self._errors_K(aux["P_s"], aux["P_d"], aux["T_s"], aux["P_i"])
         en = np.minimum(np.abs(e) / np.asarray(cfg.err_scale), cfg.err_cap)
         wts = np.asarray(cfg.err_weight)
         trips = pl.trips()
@@ -371,13 +410,25 @@ class HGBPVecEnv:
             self.interlock.tripped |= tripped
 
         # ---- measured errors for the integral features
-        em = self._errors_K(self.meas["P_s"], self.meas["P_d"], self.meas["SH"], self.meas["P_i"]) \
+        em = self._errors_K(self.meas["P_s"], self.meas["P_d"], self.meas["T_s"], self.meas["P_i"]) \
             / np.asarray(cfg.err_scale)
         self.ie = np.clip(self.ie + em * cfg.dt_ctrl / 60.0, -cfg.ie_clip, cfg.ie_clip) * running[:, None]
 
-        # ---- schedule progression: completion by dwell or by timeout
-        by_dwell = cfg.advance_on_dwell & (self.t_in_tol >= cfg.dwell_required) & self.run_required
-        by_timeout = (self.t_point >= self.sched_hold[np.arange(self.n), self.k]) & self.run_required
+        # ---- schedule progression: completion once stable (and collected), or by timeout
+        stable = (self.t_in_tol >= cfg.dwell_required) & self.run_required
+        if cfg.n_collections > 0:
+            collecting = stable & (self.n_coll < cfg.n_collections)
+            collection_lost = ~collecting & (self.t_coll > 0.0)
+            self.t_coll = np.where(collecting, self.t_coll + cfg.dt_ctrl, 0.0)
+            collected = self.t_coll >= cfg.collection_time - 1e-9
+            self.n_coll += collected
+            self.t_coll[collected] = 0.0
+            by_dwell = cfg.advance_on_dwell & (self.n_coll >= cfg.n_collections) & self.run_required
+        else:
+            collecting = collection_lost = collected = np.zeros(self.n, bool)
+            by_dwell = cfg.advance_on_dwell & stable
+        t_max = self.sched_hold[np.arange(self.n), self.k] + cfg.n_collections * cfg.collection_time
+        by_timeout = (self.t_point >= t_max) & self.run_required
         done_point = by_dwell | by_timeout
         r_point = cfg.w_point_done * by_dwell
         self.points_completed += by_dwell
@@ -387,6 +438,8 @@ class HGBPVecEnv:
             self.k[advance] += 1
             self.t_point[advance] = 0.0
             self.t_in_tol[advance] = 0.0
+            self.t_coll[advance] = 0.0
+            self.n_coll[advance] = 0
             self.sp[advance] = self.sched_points[advance, self.k[advance], :]
             self.ie[advance] = 0.0
         finished = done_point & last
@@ -413,7 +466,8 @@ class HGBPVecEnv:
                       mdot_1=aux["mdot_1"], mdot_2=aux["mdot_2"], mdot_3=aux["mdot_3"], mdot_w=aux["mdot_w"],
                       N=aux["N"], charge=aux["charge"], T_sh=aux["T_sh"], T_cw=aux["T_cw"]),
             charge_factor=self.charge_factor.copy(), steady=steady, t_in_tol=self.t_in_tol.copy(),
-            error=e, in_tol=in_tol, running=running, state=self.state.copy(), permissive_ok=perm,
+            error=e, in_tol=in_tol, stable=stable, collecting=collecting, collected=collected,
+            collection_lost=collection_lost, collections_done=self.n_coll.copy(), running=running, state=self.state.copy(), permissive_ok=perm,
             run_required=self.run_required.copy(), point_done=by_dwell, schedule_complete=self.schedule_complete.copy(),
             trips=trips, tripped=tripped,
             r_track=r_track, r_bonus=r_bonus, r_action=r_action, r_flood=r_flood, r_Td=r_Td,
@@ -438,7 +492,7 @@ class HGBPVecEnv:
         n = self.n
         Tsat_s, Tsat_d, Tsat_i, sp_s, sp_d, sp_i = self._tsat(m["P_s"], m["P_d"], m["P_i"], self.sp[:, 0],
                                                             self.sp[:, 1], self.sp[:, 3])
-        e = np.stack([sp_s - Tsat_s, sp_d - Tsat_d, self.sp[:, 2] - m["SH"], sp_i - Tsat_i], 1)
+        e = np.stack([sp_s - Tsat_s, sp_d - Tsat_d, self.sp[:, 2] - m["T_s"], sp_i - Tsat_i], 1)
         ie = self.ie if cfg.include_integrated_error else np.zeros_like(self.ie)
         rho_ref = self.props.sat(np.maximum(m["P_s"], self.props.p_min))["rho_v"]
         swept = p.V_disp * np.maximum(m["N"], 1.0) / 60.0
@@ -450,7 +504,7 @@ class HGBPVecEnv:
             np.stack([Tsat_s, Tsat_d, Tsat_i, m["T_s"] - C2K, m["T_d"] - C2K, m["T_co"] - C2K,
                       m["SH"], m["SC"], mdot_norm, W_norm, m["T_wi"] - C2K, m["T_wo"] - C2K,
                       m["T_amb"] - C2K, m["N"] / p.N_nom, m["u1"], m["u2"], m["u3"], m["u4"]], 1),
-            np.stack([sp_s, sp_d, self.sp[:, 2], sp_i, self.sp[:, 4] / p.N_nom], 1),
+            np.stack([sp_s, sp_d, self.sp[:, 2] - C2K, sp_i, self.sp[:, 4] / p.N_nom], 1),
             e, ie,
             np.stack([p.V_disp / 250e-6, p.N_nom / 1500.0], 1),
             np.broadcast_to(self._rf_vec, (n, len(self._rf_vec))),
@@ -464,7 +518,7 @@ class HGBPVecEnv:
     # ----------------------------------------------------------------- expert
     def expert_action(self) -> np.ndarray:
         """Action the baseline PID controller would take now (for imitation)."""
-        sp = dict(P_s=self.sp[:, 0], P_d=self.sp[:, 1], SH=self.sp[:, 2], P_i=self.sp[:, 3])
+        sp = dict(P_s=self.sp[:, 0], P_d=self.sp[:, 1], T_s=self.sp[:, 2], P_i=self.sp[:, 3])
         u = self.expert(self.meas, sp, self.cfg.dt_ctrl, running=self._running())
         if self.cfg.action_mode == "absolute":
             a = 2.0 * u - 1.0
