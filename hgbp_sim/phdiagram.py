@@ -143,7 +143,8 @@ def _polytropic(tab, Pk, h0, h_end, out):
     ``out``.  The rise is close to linear in 1 / eta: a secant in 1 / eta from the
     isentrope's rise converges in a few marches."""
     u0, f0 = 1.0, _march(tab, Pk, h0, 1.0, out) - h_end
-    u1 = (h_end - h0) / max(f0 + h_end - h0, 1.0)
+    # (clamped like the secant steps: a stopping compressor can end where it started)
+    u1 = min(max((h_end - h0) / max(f0 + h_end - h0, 1.0), 0.05), 10.0)
     for _ in range(12):
         f1 = _march(tab, Pk, h0, 1.0 / u1, out) - h_end
         if abs(f1) < 0.1 or f1 == f0:
