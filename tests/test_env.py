@@ -186,3 +186,29 @@ def test_gymnasium_wrapper():
         if term or trunc:
             break
     assert np.isfinite(total)
+
+
+def test_given_schedule():
+    """A procedure's points replace the sampled ones; the stand warm-starts at the first."""
+    cfg = EnvConfig(start_mode="warm", p_warm_at_setpoint=1.0, noise=False, randomize_params=False,
+                    p_charge_extreme=0.0, max_points=6)
+    env = HGBPVecEnv(2, cfg, seed=11)
+    T_wi = env.plant.T_wi
+    lift = [(-10.0, 45.0), (0.0, 40.0), (5.0, 35.0), (7.0, 45.0), (-5.0, 50.0)]   # (evap, cond) degC
+    pts = np.zeros((2, len(lift), 5))
+    for j, (te, tc) in enumerate(lift):
+        p = cfg.envelope.point(env.props, te, tc, 18.33, env.params.N_nom, T_wi)
+        pts[:, j] = np.stack([p[f] for f in ("P_s", "P_d", "RGT", "P_i", "N")], 1)
+    env.reset(schedule=dict(points=pts, k=[5, 3], hold=600.0))
+    assert np.allclose(env.sched_points[:, :5], pts) and list(env.sched_k) == [5, 3]
+    assert np.allclose(env.sched_hold[:, :5], 600.0) and np.allclose(env.sp, pts[:, 0])
+    # the liquid pressure: geometric mean, clamped 6 K above the water
+    Ti = env.props.T_sat(pts[:, :, 3]) - 273.15
+    gm = env.props.T_sat(np.sqrt(pts[:, :, 0] * pts[:, :, 1])) - 273.15
+    assert np.all(Ti >= gm - 1e-6) and np.all(Ti >= T_wi[:, None] - 273.15 + 6.0 - 1e-6)
+    obs, r, term, trunc, info = env.step(np.zeros((2, 4)))
+    assert info["in_tol"].all() and (info["state"] == ST_RUNNING).all()
+    with pytest.raises(ValueError):
+        env.reset(schedule=dict(points=np.zeros((2, 7, 5))))     # longer than max_points
+    with pytest.raises(ValueError):
+        HGBPVecEnv(1, EnvConfig(k_points=(1, 5)))                 # sampled schedules too

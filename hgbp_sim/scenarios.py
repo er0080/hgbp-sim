@@ -75,6 +75,21 @@ class Envelope:
         h2 = h1 + (h2s - h1) / params.eta_s0
         return props.T_vapor(P_d, h2)
 
+    def liquid_pressure(self, props, P_s, P_d, T_wi):
+        """Liquid pressure setpoint [Pa]: the geometric mean of the suction and discharge
+        pressures, at least the saturation pressure ``dT_int_above_water`` above the cooling
+        water inlet ``T_wi`` [K]."""
+        return np.maximum(np.sqrt(P_s * P_d), props.P_sat(np.asarray(T_wi, float) + self.dT_int_above_water))
+
+    def point(self, props, T_evap, T_cond, RGT, N, T_wi) -> dict:
+        """A test point as the procedure states it: saturated suction and discharge
+        temperatures and return gas temperature [degC], speed [rpm], with the liquid pressure
+        for cooling water at ``T_wi`` [K].  Returns SI arrays keyed by ``POINT_FIELDS``
+        (a row of ``HGBPVecEnv.reset(schedule=...)``).  No feasibility check."""
+        T_evap, T_cond, RGT, N, T_wi = np.broadcast_arrays(*(np.asarray(v, float) for v in (T_evap, T_cond, RGT, N, T_wi)))
+        P_s, P_d = props.P_sat(T_evap + C2K), props.P_sat(T_cond + C2K)
+        return dict(P_s=P_s, P_d=P_d, RGT=RGT + C2K, P_i=self.liquid_pressure(props, P_s, P_d, T_wi), N=N.copy())
+
     def sample(self, rng: np.random.Generator, n: int, props, params, T_wi) -> dict:
         """Rejection-sample ``n`` feasible test points.  Returns SI arrays."""
         T_wi = np.broadcast_to(np.asarray(T_wi, float), (n,))
@@ -95,7 +110,7 @@ class Envelope:
             N = rng.uniform(N_lo, N_hi, m)
             P_s = props.P_sat(Te + C2K)
             P_d = props.P_sat(Tc + C2K)
-            P_i = np.maximum(np.sqrt(P_s * P_d), props.P_sat(T_wi[todo] + self.dT_int_above_water))
+            P_i = self.liquid_pressure(props, P_s, P_d, T_wi[todo])
             Ti = props.T_sat(P_i) - C2K
             T_d_est = self.estimate_T_d(props, params, P_s, P_d, sh)
             ok = in_env & (P_d / P_s <= self.Pr_max) & (Tc - Te >= self.dT_lift_min) \
