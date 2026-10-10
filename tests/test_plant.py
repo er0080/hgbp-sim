@@ -7,6 +7,8 @@ from hgbp_sim.geometry import tube_volume
 
 C2K = 273.15
 RATING = dict(P_s=9.98e5, P_d=33.89e5, P_i=18.0e5, N=3550.0)
+# the model tests also run the compressor below the stand's 35-75 Hz VFD range
+WIDE = dict(N_min=1000.0, N_max=5400.0)
 
 
 def _point(plant, name, N=1450.0):
@@ -18,7 +20,7 @@ def _rating_SH(pl, T_s=18.33):
 
 
 def _rating_state(n=1, T_wi=283.15, **kw):
-    pl = HGBPPlant(n=n, dt=0.05)
+    pl = HGBPPlant(PlantParams(**WIDE), n=n, dt=0.05)
     pl.set_inputs(T_amb=298.15, T_wi=T_wi)
     res = solve_steady_state(pl, RATING["P_s"], RATING["P_d"], kw.pop("SH", _rating_SH(pl)), kw.pop("N", RATING["N"]),
                              P_i=RATING["P_i"], **kw)
@@ -44,7 +46,7 @@ def test_volumes_follow_the_piping_and_component_specification():
 
 
 def test_cold_start_holds_charge_and_is_near_equilibrium():
-    pl = HGBPPlant(n=3, dt=0.05)
+    pl = HGBPPlant(PlantParams(**WIDE), n=3, dt=0.05)
     pl.set_inputs(T_amb=298.15)
     charge = pl.nominal_charge() * np.array([0.2, 1.0, 1.6])
     pl.cold_start(T_amb=298.15, charge=charge, liquid_in_suction=np.array([0.0, 0.0, 0.1]))
@@ -65,7 +67,7 @@ def test_cold_start_holds_charge_and_is_near_equilibrium():
 
 
 def test_mass_and_energy_conservation_open_loop():
-    pl = HGBPPlant(n=1, dt=0.05)
+    pl = HGBPPlant(PlantParams(**WIDE), n=1, dt=0.05)
     pl.cold_start(T_amb=298.15)
     pl.set_inputs(u_cmd=[0.8, 0.6, 0.15, 0.5], N_cmd=1450.0, T_wi=293.15)
     M0 = pl.conserved_mass()[0]
@@ -78,7 +80,7 @@ def test_mass_and_energy_conservation_open_loop():
 
 
 def test_steady_state_solver_and_energy_balance():
-    pl = HGBPPlant(n=3, dt=0.05)
+    pl = HGBPPlant(PlantParams(**WIDE), n=3, dt=0.05)
     pl.set_inputs(T_amb=298.15, T_wi=293.15)
     pts = [_point(pl, "MT_standard"), _point(pl, "LT_standard"), _point(pl, "HT_standard", 1200.0)]
     kw = {k: [p[k] for p in pts] for k in ("P_s", "P_d", "SH", "N", "P_i")}
@@ -178,7 +180,7 @@ def test_receiver_absorbs_charge():
     """The receiver takes up charge variations at unchanged condensing area; only
     a full receiver backs liquid up into the condenser; too little charge loses
     the liquid seal and the point becomes unreachable."""
-    pl = HGBPPlant(n=5, dt=0.05)
+    pl = HGBPPlant(PlantParams(**WIDE), n=5, dt=0.05)
     pl.set_inputs(T_amb=298.15, T_wi=283.15)
     fac = np.array([0.3, 0.8, 1.0, 1.4, 2.4])
     charge = pl.nominal_charge() * fac
@@ -195,8 +197,8 @@ def test_receiver_absorbs_charge():
 
 
 def test_batch_matches_single():
-    pA = HGBPPlant(n=1, dt=0.05)
-    pB = HGBPPlant(n=4, dt=0.05)
+    pA = HGBPPlant(PlantParams(**WIDE), n=1, dt=0.05)
+    pB = HGBPPlant(PlantParams(**WIDE), n=4, dt=0.05)
     for pl in (pA, pB):
         pl.cold_start(T_amb=298.15)
         pl.set_inputs(u_cmd=[0.5, 0.5, 0.15, 0.4], N_cmd=1450.0)
@@ -206,7 +208,7 @@ def test_batch_matches_single():
 
 
 def test_pid_reaches_test_point():
-    pl = HGBPPlant(n=1, dt=0.05, rng=np.random.default_rng(0))
+    pl = HGBPPlant(PlantParams(**WIDE), n=1, dt=0.05, rng=np.random.default_rng(0))
     pl.set_inputs(T_amb=298.15, T_wi=293.15)
     p0 = _point(pl, "MT_standard")
     p1 = _point(pl, "HT_standard", 1200.0)
@@ -214,7 +216,8 @@ def test_pid_reaches_test_point():
     pl.set_state(0, res["x"])
     ctrl = BaselineController(1)
     ctrl.reset(res["u"])
-    sp = dict(P_s=p1["P_s"], P_d=p1["P_d"], SH=p1["SH"], P_i=p1["P_i"])
+    T_s = float(pl.props.T_sat(np.array([p1["P_s"]]))[0]) + p1["SH"]     # the point's return gas temperature
+    sp = dict(P_s=p1["P_s"], P_d=p1["P_d"], T_s=T_s, P_i=p1["P_i"])
     for _ in range(3600):          # 900 s at the 0.25 s control interval
         meas = pl.measure(noise=False)
         u = ctrl(meas, sp, 0.25)
@@ -310,7 +313,7 @@ def test_subcooled_zone_is_bounded_by_the_water_inlet():
     liquid never leaves colder than the water enters, colder water subcools more,
     flooded plates subcool more, and the receiver pool carries it to valve 3 (closing
     the valve leaves the liquid at the pool's temperature)."""
-    pl = HGBPPlant(n=3, dt=0.05)
+    pl = HGBPPlant(PlantParams(**WIDE), n=3, dt=0.05)
     T_wi = np.array([293.15, 293.15, 288.15])
     pl.set_inputs(T_amb=298.15, T_wi=T_wi)
     res = solve_steady_state(pl, RATING["P_s"], RATING["P_d"], _rating_SH(pl), RATING["N"], P_i=RATING["P_i"],
@@ -394,7 +397,7 @@ def test_pipe_pressure_drops():
 @pytest.mark.parametrize("fluid", ["R454B", "R454C"])
 def test_stand_runs_on_r454_blends(fluid):
     """The stand reaches equilibrium at a test point on R454B / R454C and stays there."""
-    pl = HGBPPlant(PlantParams(fluid=fluid), n=1)
+    pl = HGBPPlant(PlantParams(fluid=fluid, **WIDE), n=1)
     pl.set_inputs(T_amb=298.15, T_wi=293.15)
     pt = _point(pl, "MT_standard", 3550.0)
     res = solve_steady_state(pl, pt["P_s"], pt["P_d"], pt["SH"], pt["N"], P_i=pt["P_i"])
