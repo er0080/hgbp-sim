@@ -1,9 +1,12 @@
+import os
+
 import numpy as np
 import pytest
 
 from hgbp_sim import OBS_GROUPS, OBS_NAMES, EnvConfig, HGBPVecEnv
 from hgbp_sim.env import ST_OFF, ST_RUNNING, ST_STARTING
 from hgbp_sim.plant import HGBPPlant
+from hgbp_sim.scenarios import inside_polygon
 
 
 def test_vec_env_api():
@@ -46,6 +49,76 @@ def test_warm_start_is_near_setpoint_and_context_in_obs():
     assert np.allclose(obs[:, i("rf_T_crit")], 344.5 / 400.0, atol=1e-3)   # R410A
     assert np.all(obs[:, i("mdot_norm")] > 0.3) and np.all(obs[:, i("mdot_norm")] < 1.0)
     assert np.all(obs[:, i("st_running")] == 1.0)
+
+
+STAND = os.path.join(os.path.dirname(__file__), "..", "webui", "config", "stand_defaults.json")
+
+
+def test_test_points_follow_the_procedure():
+    """Return gas temperature setpoints, the geometric-mean liquid pressure clamped by the
+    cooling water, speeds inside the VFD range and points clear of the trip limits."""
+    env = HGBPVecEnv(32, EnvConfig(start_mode="warm", noise=False), seed=5)
+    pr, p = env.props, env.params
+    k = env.sched_k
+    P_s, P_d, RGT, P_i, N = (np.concatenate([env.sched_points[i, :k[i], c] for i in range(32)]) for c in range(5))
+    T_wi = np.concatenate([np.full(k[i], env.plant.T_wi[i]) for i in range(32)])
+    clamp = pr.P_sat(T_wi + env.cfg.envelope.dT_int_above_water)
+    assert np.allclose(P_i, np.maximum(np.sqrt(P_s * P_d), clamp), rtol=1e-9)
+    assert (P_i > np.sqrt(P_s * P_d) * 1.001).any() and (P_i > clamp * 1.001).any()     # both cases occur
+    SH = RGT - pr.T_sat(P_s)
+    assert SH.min() >= 5.0 - 1e-6 and SH.max() <= 50.0 + 1e-6
+    assert np.isclose(RGT, 18.33 + 273.15).any()                                       # 65 degF points
+    assert inside_polygon(pr.T_sat(P_s) - 273.15, pr.T_sat(P_d) - 273.15, env.cfg.envelope.polygon).all()
+    Hz = N / p.N_nom * 60.0
+    assert Hz.min() >= 35.0 - 1e-6 and Hz.max() <= 75.0 + 1e-6
+    assert np.all((env.plant.T_wi > 3.3 + 273.15 - 1e-9) & (env.plant.T_wi < 4.6 + 273.15 + 1e-9))
+    # warm starts track the return gas temperature, and the stand starts clear of the trips
+    obs, r, term, trunc, info = env.step(env.expert_action())
+    assert np.all(info["true"]["T_d"] < env.plant.p.T_d_max - 5.0)
+    assert np.all(info["true"]["P_s"] > env.plant.p.P_s_min)
+    i = OBS_NAMES.index
+    assert np.allclose(obs[:, i("RGT_sp")] * 50.0, env.sp[:, 2] - 273.15)
+
+
+def test_stand_definition_sets_plant_and_loops():
+    import json
+    doc = json.load(open(STAND))
+    env = HGBPVecEnv(2, EnvConfig(stand=STAND, start_mode="warm", randomize_params=False), seed=6)
+    assert env.params.T_d_max == doc["plant"]["T_d_max"] and env.params.N_min == doc["plant"]["N_min"]
+    pid = env.expert.pid_1                       # dpv: P 150 % of a 0..50 bar span, I 50 s, DIR
+    t = doc["loops"]["dpv"]
+    Kp = -100.0 / (t["P"] * (t["RH"] - t["RL"])) / 1e5
+    assert np.isclose(pid.Kp, Kp) and np.isclose(pid.Ki, Kp / t["I"])
+    assert env.expert.pv_filter["stv"] == t["FL"] and np.isclose(env.expert.pid_1.u_min, t["OL"] / 100.0)
+    for _ in range(20):
+        obs, r, term, trunc, info = env.step(env.expert_action())
+    assert np.isfinite(obs).all()
+    assert np.all(env.meas["Vdot"] > 0.0)
+    rho = env.meas["mdot"] / env.meas["Vdot"]                     # suction vapor density
+    assert np.all((rho > 5.0) & (rho < 80.0))
+
+
+def test_collections_complete_a_point():
+    """Stable for the dwell, then n collections; leaving the band loses the running one."""
+    cfg = EnvConfig(start_mode="warm", p_warm_at_setpoint=1.0, noise=False, randomize_params=False,
+                    p_charge_extreme=0.0, k_points=(2, 2), dwell_required=10.0, n_collections=2,
+                    collection_time=20.0, hold_time=(600.0, 600.0))
+    env = HGBPVecEnv(1, cfg, seed=7)
+    done_at, lost = None, False
+    for step in range(int(120.0 / cfg.dt_ctrl)):
+        if step == int(20.0 / cfg.dt_ctrl):        # mid first collection: push the stand off the band
+            env.sp[:, 1] += 2e5
+        if step == int(21.0 / cfg.dt_ctrl):
+            env.sp[:, 1] -= 2e5
+        obs, r, term, trunc, info = env.step(env.expert_action())
+        lost |= bool(info["collection_lost"][0])
+        if info["point_done"][0]:
+            done_at = info["t"][0]
+            break
+    assert lost
+    # first collection lost, then dwell + 2 x 20 s once back in the band
+    assert done_at is not None and done_at >= 21.0 + 10.0 + 40.0 - 1e-6
+    assert env.k[0] == 1 and env.n_coll[0] == 0                  # next point, counters reset
 
 
 def test_charge_is_randomized():

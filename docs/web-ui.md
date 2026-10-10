@@ -162,10 +162,10 @@ least 5 %). To start:
 3. switch the loops to AUTO once the compressor turns (about 600 rpm).
 
 With the discharge loop in AUTO before that, it closes valve 1 against the starting
-compressor and the stand trips on high discharge pressure within seconds. A PV filter on
-the discharge loop also slows its answer to the start. With the stand's defaults file
-(`FL` = 4 s) the discharge pressure peaks at about 41.6 bar, just over the 41.4 bar trip;
-with `FL` = 2 s it peaks at about 39.6 bar. The
+compressor and the discharge pressure overshoots. A PV filter on the discharge loop also
+slows its answer to the start. With the stand's defaults file (`FL` = 4 s) the discharge
+pressure peaks at about 41.5 bar, with `FL` = 2 s at about 39.5 bar, both below the
+stand's 700 psia (48.3 bar) trip. The
 anti-short-cycle timers (60 s minimum off, 120 s minimum run) can be switched off on the
 Settings tab.
 

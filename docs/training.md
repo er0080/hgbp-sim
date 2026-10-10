@@ -21,12 +21,14 @@ obs, reward, terminated, truncated, info = env.step(env.expert_action())
   superheat, subcooling, mass flow normalized by swept volume × speed × suction vapor
   density, power normalized by swept volume × speed × suction pressure, temperatures,
   speed, valve positions;
-* **setpoints**, **tracking errors** and clipped **integrated errors** (kelvin);
+* **setpoints** (saturation temperatures, the RGT, the speed), **tracking errors** and
+  clipped **integrated errors** (kelvin);
 * **context**: swept volume, nominal speed and eight physical refrigerant descriptors;
 * **status** of the compressor start/stop interlock.
 
 One environment instance is one refrigerant; run one instance per fluid to train across
-refrigerants.
+refrigerants. The suction-line volume flow the stand's meter reads is in `env.meas["Vdot"]`
+(not part of the observation).
 
 ## Action
 
@@ -41,18 +43,39 @@ compressor is started automatically and stopped after the last point.
 
 ## Episodes
 
-* **Test points:** 1-3 per episode, sampled from `Envelope`: evaporating -30 to 12 °C,
-  condensing 30 to 57 °C, superheat 3 to 25 K, intermediate temperature between the
-  cooling water and the condensing temperature, 50-140 % speed. Points that fail the
-  feasibility filters (estimated discharge temperature, equilibrium at nominal charge) are
-  resampled.
-* **Completion:** a point is done once suction and discharge saturation temperature and
-  superheat stay inside the tolerance band (0.3 K, 0.2 K, 0.5 K) for `dwell_required`
-  seconds, or when its maximum hold time runs out. After the last point the compressor
-  must be stopped, and the episode ends successfully.
+* **Test points:** 1-3 per episode, as the test procedure gives them: saturated suction
+  and discharge temperatures, a return gas (suction) temperature (RGT) and a VFD
+  frequency. They are sampled from `Envelope`:
+  * evaporating and condensing temperature inside the compressor's operating envelope
+    (`Envelope.polygon`, the manufacturer's R410A map);
+  * RGT of 65 °F for 30 % of the points, otherwise -10 to 35 °C, with the superheat it
+    implies between 5 and 50 K;
+  * 35-75 Hz (the nominal speed is taken as 60 Hz).
+* **Liquid pressure setpoint:** the geometric mean of the suction and discharge pressures,
+  but at least the saturation pressure 6 K above the cooling water inlet (40 °F, down to
+  38 °F: `T_wi_range`).
+* **Feasibility:** points that fail the filters are resampled. The filters are an estimated
+  discharge temperature, and an equilibrium at nominal charge with every valve below 95 %
+  and a margin to the trips (10 K on discharge temperature, 1 bar on the pressures). Warm
+  starts need the same margins at their starting state.
+* **Completion:** the stand is stable once suction and discharge saturation temperature and
+  RGT stay inside the tolerance band (0.3 K, 0.2 K, 0.5 K) for `dwell_required` seconds.
+  * With `n_collections = 0` (default) the point is then done.
+  * With `n_collections > 0` (the stand's procedure is 3 x 15 min: `n_collections=3`,
+    `collection_time=900`) the stand must stay stable for that many collections. Leaving
+    the band loses the collection in progress; it restarts once the stand is stable again.
+    `info` reports `stable`, `collecting`, `collected`, `collection_lost` and
+    `collections_done`.
+  * A point also ends when its maximum hold time runs out. The collections come on top of
+    `hold_time`; raise `episode_time` to fit them.
+  * After the last point the compressor must be stopped, and the episode ends successfully.
 * **Start modes:** `warm` (equilibrium at the first point or another one, from the
   steady-state solver), `cold` (equalized stand at ambient, compressor off, optionally
   some liquid migrated to the suction side) or `random`.
+* **Stand definition:** `EnvConfig(stand="webui/config/stand_defaults.json")` takes the
+  plant parameters and the baseline loops' UT35A settings (tuning, output limits, PV
+  filters) from a defaults file, the same document the web UI reads. Without it, the
+  built-in parameters and gains apply.
 * **Randomized per episode:** plant parameters, ambient and water temperature, the charge
   (`charge_range`, plus a share `p_charge_extreme` of episodes in
   `charge_extreme_range`) and the cold-start liquid distribution.
@@ -82,10 +105,13 @@ environment's action space, for behaviour cloning, DAgger or reward shaping.
 |---|---|
 | discharge pressure | 1 |
 | suction pressure | 2 |
-| superheat | 3 |
-| intermediate pressure | 4 |
+| return gas (suction) temperature | 3 |
+| intermediate (liquid) pressure | 4 |
 
-The superheat loop is slow on purpose (integral time 60 s): the suction temperature
+With `EnvConfig(stand=...)` the loops use the stand's UT35A settings from the defaults
+file; otherwise the built-in gains below.
+
+The built-in suction temperature loop is slow on purpose (integral time 60 s): the suction temperature
 responds to valve 3 over about a minute, because the mixing exchanger's plates have to
 change temperature, and a faster loop limit-cycles into floodback. Every valve moves
 suction pressure, discharge pressure and superheat together

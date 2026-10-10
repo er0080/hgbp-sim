@@ -37,8 +37,8 @@ class PlantParams:
     # ----------------------------------------------------------- compressor
     V_disp: float = 3.55e-4     # swept volume per revolution [m^3/rev]
     N_nom: float = 3550.0       # nominal speed, also the default speed setpoint [rpm]
-    N_min: float = 1200.0       # minimum VFD speed when running [rpm]
-    N_max: float = 5400.0       # maximum VFD speed [rpm]
+    N_min: float = 2071.0       # minimum VFD speed when running, 35 Hz with N_nom at 60 Hz [rpm]
+    N_max: float = 4438.0       # maximum VFD speed, 75 Hz with N_nom at 60 Hz [rpm]
     eta_v0: float = 0.95        # volumetric efficiency at pressure ratio 1 (mass flow per swept volume)
     c_cl: float = 0.04          # clearance volume fraction: volumetric efficiency falls as the pressure ratio rises
     kappa: float = 1.10         # polytropic exponent of the clearance gas re-expansion
@@ -212,10 +212,10 @@ class PlantParams:
     sig_W_rel: float = 0.005    # power measurement noise, standard deviation relative to the reading
 
     # ------------------------------------------------------------- limits
-    P_d_max: float = 41.4e5     # high discharge pressure trip, 600 psig R410A switch [Pa]
-    P_s_min: float = 0.3e5      # low suction pressure trip [Pa]
+    P_d_max: float = 48.26e5    # high discharge pressure trip, the stand's 700 psia hard limit [Pa]
+    P_s_min: float = 2.068e5    # low suction pressure trip, the stand's 30 psia hard limit [Pa]
     P_s_max: float = 30e5       # high suction pressure trip [Pa]
-    T_d_max: float = 135.0 + 273.15  # high discharge temperature trip [K]
+    T_d_max: float = 160.0 + 273.15  # high discharge temperature trip, the stand's 320 degF hard limit [K]
     y_flood: float = 0.005      # liquid mass share at the compressor suction port counted as floodback
 
     # ------------------------------------------------- baseline control aid

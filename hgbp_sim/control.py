@@ -5,7 +5,7 @@ single-input single-output PI loops
 
     discharge pressure    -> valve 1, discharge pressure valve   (reverse acting)
     suction pressure      -> valve 2, hot gas bypass valve       (direct acting)
-    suction superheat     -> valve 3, quench valve               (reverse acting)
+    suction temperature   -> valve 3, quench valve               (reverse acting)
     intermediate pressure -> valve 4, cooling water valve        (reverse acting)
 
 It serves as a sanity check of the plant, as a comparison for learned
@@ -93,22 +93,34 @@ class PID:
 DEFAULT_GAINS = dict(
     dpv=dict(Kp=-0.05e-5, Ki=-0.01e-5, Kd=0.0),      # discharge pressure -> valve 1 [per Pa], Ti = 5 s
     spv=dict(Kp=0.15e-5, Ki=0.03e-5, Kd=0.0),        # suction pressure -> valve 2 [per Pa], Ti = 5 s
-    stv=dict(Kp=-0.003, Ki=-0.00005, Kd=0.0),        # superheat -> valve 3 [per K], Ti = 60 s
+    stv=dict(Kp=-0.003, Ki=-0.00005, Kd=0.0),        # suction temperature -> valve 3 [per K], Ti = 60 s
     water=dict(Kp=-0.40e-5, Ki=-0.0133e-5, Kd=0.0),  # intermediate pressure -> valve 4 [per Pa], Ti = 30 s
 )
 
 
+LOOP_KEYS = ("dpv", "spv", "stv", "water")
+_LOOP_PV = dict(dpv="P_d", spv="P_s", stv="T_s", water="P_i")
+_U_LIMITS = dict(dpv=(0.02, 1.0), spv=(0.0, 1.0), stv=(0.0, 1.0), water=(0.02, 1.0))
+
+
 class BaselineController:
     """Four-loop PI controller producing absolute valve commands in [0, 1],
-    ordered [valve 1, valve 2, valve 3, valve 4]."""
+    ordered [valve 1, valve 2, valve 3, valve 4].
 
-    def __init__(self, n: int = 1, gains: dict | None = None):
+    ``gains`` and ``limits`` (output range per loop) override the built-in tuning;
+    ``pv_filter`` gives a PV input filter time constant [s] per loop (the UT35A's FL,
+    a first-order lag ahead of the PID; missing or None: no filter).  A stand's own
+    settings come from its defaults file, see :func:`hgbp_sim.defaults.controller_settings`."""
+
+    def __init__(self, n: int = 1, gains: dict | None = None, limits: dict | None = None,
+                 pv_filter: dict | None = None):
         g = DEFAULT_GAINS if gains is None else {**DEFAULT_GAINS, **gains}
+        lim = _U_LIMITS if limits is None else {**_U_LIMITS, **limits}
         self.n = n
-        self.pid_1 = PID(n=n, u_min=0.02, u_max=1.0, **g["dpv"])
-        self.pid_2 = PID(n=n, u_min=0.0, u_max=1.0, **g["spv"])
-        self.pid_3 = PID(n=n, u_min=0.0, u_max=1.0, **g["stv"])
-        self.pid_4 = PID(n=n, u_min=0.02, u_max=1.0, **g["water"])
+        self.pid_1, self.pid_2, self.pid_3, self.pid_4 = (
+            PID(n=n, u_min=lim[k][0], u_max=lim[k][1], **g[k]) for k in LOOP_KEYS)
+        self.pv_filter = {k: (pv_filter or {}).get(k) for k in LOOP_KEYS}
+        self._pv_f = {k: np.full(n, np.nan) for k in LOOP_KEYS}
         # valve positions while the compressor is off
         self.u_off = np.array([0.5, 0.6, 0.0, 0.3])
 
@@ -119,14 +131,23 @@ class BaselineController:
         self.pid_2.reset(u0[:, 1], idx)
         self.pid_3.reset(u0[:, 2], idx)
         self.pid_4.reset(u0[:, 3], idx)
+        for k in LOOP_KEYS:
+            self._pv_f[k][idx] = np.nan             # the filters restart from the next PV
+
+    def _pv(self, k: str, y, dt: float):
+        """The PV the loop sees: the measurement through the loop's input filter."""
+        FL = self.pv_filter[k]
+        if not FL:
+            return y
+        prev = self._pv_f[k]
+        self._pv_f[k] = np.where(np.isnan(prev), y, prev + (1.0 - np.exp(-dt / FL)) * (y - prev))
+        return self._pv_f[k]
 
     def __call__(self, meas: dict, sp: dict, dt: float, running=None) -> np.ndarray:
-        """``meas`` from ``HGBPPlant.measure``; ``sp`` has P_s, P_d, SH, P_i targets.
-        Returns (n, 4) commands."""
+        """``meas`` from ``HGBPPlant.measure``; ``sp`` has P_d, P_s, T_s (return gas
+        temperature) and P_i targets.  Returns (n, 4) commands."""
         running = np.ones(self.n, bool) if running is None else np.asarray(running, bool)
-        u1 = self.pid_1.update(sp["P_d"], meas["P_d"], dt, running)
-        u2 = self.pid_2.update(sp["P_s"], meas["P_s"], dt, running)
-        u3 = self.pid_3.update(sp["SH"], meas["SH"], dt, running)
-        u4 = self.pid_4.update(sp["P_i"], meas["P_i"], dt, running)
-        u = np.stack([u1, u2, u3, u4], axis=1)
+        pids = (self.pid_1, self.pid_2, self.pid_3, self.pid_4)
+        u = np.stack([pid.update(sp[_LOOP_PV[k]], self._pv(k, meas[_LOOP_PV[k]], dt), dt, running)
+                      for k, pid in zip(LOOP_KEYS, pids)], axis=1)
         return np.where(running[:, None], u, self.u_off[None, :] * np.ones((self.n, 1)))

@@ -12,11 +12,13 @@ running the stand interactively in a browser.
 |---|---|
 | 1 discharge line | discharge pressure |
 | 2 hot gas bypass | suction pressure |
-| 3 liquid quench | suction temperature (superheat) |
+| 3 liquid quench | suction (return gas) temperature |
 | 4 condenser cooling water | intermediate (condensing) pressure |
 
-A test point is suction pressure, discharge pressure, superheat, intermediate pressure and
-compressor speed.
+A test point is a saturated suction and discharge temperature, a return gas (suction)
+temperature and a VFD frequency, inside the compressor's operating envelope. The
+intermediate (liquid) pressure setpoint is the geometric mean of the suction and discharge
+pressures, clamped by the cooling water.
 
 ## Features
 

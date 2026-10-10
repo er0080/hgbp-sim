@@ -18,8 +18,8 @@ VALVES = ["1 discharge pressure", "2 suction pressure (HGBP)", "3 suction temper
 def step_responses(T_end: float = 600.0, du: float = 0.10):
     params = PlantParams()
     pl = HGBPPlant(params, n=4, dt=0.05)
-    pl.set_inputs(T_amb=25 + C2K, T_wi=20 + C2K)
-    p0 = named_point("MT_standard", pl.props, 1450.0)
+    pl.set_inputs(T_amb=25 + C2K, T_wi=4.44 + C2K)                # 40 degF cooling water
+    p0 = named_point("MT_standard", pl.props, params.N_nom)        # 60 Hz
     res = solve_steady_state(pl, p0["P_s"], p0["P_d"], p0["SH"], p0["N"], P_i=p0["P_i"])
     assert res["converged"].all()
     pl.set_state(np.arange(4), res["x"])

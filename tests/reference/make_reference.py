@@ -98,10 +98,14 @@ def scenarios(pkg):
     params_mod = importlib.import_module(pkg + ".params")
     LiveStand, HGBPPlant, PlantParams = live.LiveStand, plant_mod.HGBPPlant, params_mod.PlantParams
 
-    def stand():
-        st = LiveStand(seed=0)
+    def stand(**params):
+        st = LiveStand(PlantParams(**params) if params else None, seed=0)
         st.noise = False
         return st
+
+    # trip limits in force when the reference was made; the trip scenario depends on them
+    # (the defaults now hold the stand's 700 psia / 320 degF / 30 psia hard limits)
+    ref_limits = dict(P_d_max=41.4e5, P_s_min=0.3e5, T_d_max=135.0 + 273.15)
 
     # 1. cold start, pull-down and settling under the baseline loops
     st = stand()
@@ -144,7 +148,7 @@ def scenarios(pkg):
     yield rec, st.plant
 
     # 5. cooling water closed: discharge pressure rises until the stand trips
-    st = stand()
+    st = stand(**ref_limits)
     rec = Recorder("trip")
     assert st.warm_start("MT_standard")
     st.set_loop("water", mode="manual")
