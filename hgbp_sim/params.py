@@ -53,7 +53,9 @@ class PlantParams:
     UA_sha: float = 8.0         # shell -> ambient conductance [W/K]
     cp_gas: float = 1000.0      # vapor cp used for the discharge gas -> shell heat exchange [J/kg/K]
     tau_N: float = 0.5          # speed response time constant of motor and VFD [s]
-    ramp_N: float = 300.0       # VFD acceleration / deceleration limit [rpm/s]
+    ramp_N: float = 300.0       # acceleration / deceleration limit of the motor [rpm/s] (across the line it
+                                # reaches line speed within about a second; on a VFD, the drive's ramp)
+    ramp_N_vfd: float = 300.0   # the VFD's ramp [rpm/s]: the environment uses it for episodes on the drive
     V_comp_suc: float = 5.0e-3  # compressor internal suction volume behind the suction port, excluding oil [m^3]
     V_comp_dis: float = 1.5e-3  # compressor internal discharge volume up to the discharge port (estimate) [m^3]
     comp_x_min: float = 0.7     # lowest quality the compressor draws in; more liquid collects in its shell (internal suction volume)

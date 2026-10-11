@@ -127,6 +127,10 @@ class EnvConfig:
     start_delay: tuple = (5.0, 30.0)     # automatic start: delay before the run request [s]
     p_warm_at_setpoint: float = 0.5      # warm start exactly at first point (else at a random point)
     cold_liquid_in_suction: tuple = (0.0, 0.1)   # share of the liquid migrated to the suction side, per cold start
+    p_line: float = 0.0                  # share of episodes run across the line (no VFD): every point at one
+                                         # line frequency, the motor at ramp_N; the others run on the VFD
+                                         # (speed per point from the envelope, at ramp_N_vfd)
+    line_hz: tuple = (50.0, 60.0)        # line frequencies (drawn per episode); nominal speed at 60 Hz
     cold_valves: tuple | None = None     # valve positions of the idle stand at a cold start (None: the
                                          # baseline controller's rest positions; a stand whose shutdown
                                          # procedure closes every valve: (0, 0, 0, 0))
@@ -213,6 +217,8 @@ class HGBPVecEnv:
         self.u_cmd = np.zeros((n_, 4))
         self.ie = np.zeros((n_, 4))
         self.charge_factor = np.ones(n_)
+        self.line = np.zeros(n_, bool)           # episode runs across the line (no VFD)
+        self._ramp_line = np.asarray(self.plant.p.ramp_N, float).copy()   # the motor's own ramp per stand
         self.meas: dict | None = None
         self.episode_return = np.zeros(n_)
         self.episode_len = np.zeros(n_, int)
@@ -261,7 +267,8 @@ class HGBPVecEnv:
         test procedure lists them: ``points`` of shape (m, k, 5) in ``POINT_FIELDS`` order
         (SI; see :meth:`Envelope.point`), optional ``k`` (m,) points in use (default k) and
         optional ``hold`` (m, k) maximum times to become stable [s] (default sampled from
-        ``hold_time``).  Given points skip the feasibility filter.  Everything else
+        ``hold_time``) and optional ``line`` (m,) episodes run across the line (default False:
+        on the VFD).  Given points skip the feasibility filter.  Everything else
         (parameters, charge, ambient and water, start) is drawn as usual.
         """
         cfg, pl, rng = self.cfg, self.plant, self.rng
@@ -271,6 +278,7 @@ class HGBPVecEnv:
             return self._observe()
         if cfg.randomize_params:
             pl.resample_params(idx)
+            self._ramp_line[idx] = pl.p.ramp_N[idx]
         T_amb = rng.uniform(*cfg.T_amb_range, m) + C2K
         T_wi = rng.uniform(*cfg.T_wi_range, m) + C2K
         pl.T_amb[idx], pl.T_wi[idx] = T_amb, T_wi
@@ -280,12 +288,20 @@ class HGBPVecEnv:
         pl.p.charge[idx] = pl.nominal_charge(idx) * fac
 
         if schedule is None:
+            line = rng.uniform(size=m) < cfg.p_line
+            hz = rng.choice(np.asarray(cfg.line_hz, float), size=m)
+            N_line = np.where(line, hz / 60.0 * self.params.N_nom, np.nan)
             sch = sample_schedule(rng, m, cfg.max_points, cfg.envelope, pl.props, self.params, T_wi,
                                   hold_range=cfg.hold_time, k_range=cfg.k_points)
+            sch["points"][:, :, 4] = np.where(line[:, None], N_line[:, None], sch["points"][:, :, 4])
             if cfg.filter_feasible:
-                self._filter_feasible(sch, idx)
+                self._filter_feasible(sch, idx, N_line)
         else:
             sch = self._given_schedule(schedule, m)
+            line = np.broadcast_to(np.asarray(schedule.get("line", False), bool), (m,)).copy()
+            N_line = np.where(line, sch["points"][:, 0, 4], np.nan)
+        self.line[idx] = line
+        pl.p.ramp_N[idx] = np.where(line, self._ramp_line[idx], pl.p.ramp_N_vfd[idx])
         self.sched_points[idx], self.sched_hold[idx], self.sched_k[idx] = sch["points"], sch["hold"], sch["k"]
         self.k[idx] = 0
         self.t_point[idx] = 0.0
@@ -313,6 +329,8 @@ class HGBPVecEnv:
             mw = len(warm_idx)
             at_sp = rng.uniform(size=mw) < cfg.p_warm_at_setpoint
             alt = cfg.envelope.sample(rng, mw, pl.props, self.params, pl.T_wi[warm_idx])
+            N_lw = N_line[~cold]
+            alt["N"] = np.where(np.isnan(N_lw), alt["N"], N_lw)          # across the line: one speed
             first = self.sp[warm_idx]
             tgt = {f: np.where(at_sp, first[:, c], alt[f]) for c, f in enumerate(POINT_FIELDS)}
             res = solve_steady_state(pl, tgt["P_s"], tgt["P_d"], self._superheat(tgt["P_s"], tgt["RGT"]),
@@ -376,7 +394,7 @@ class HGBPVecEnv:
                 & (a["P_d"] < p_(p.P_d_max) - cfg.feasible_P_margin)
                 & (a["P_s"] > p_(p.P_s_min) + cfg.feasible_P_margin))
 
-    def _filter_feasible(self, sch, idx, rounds: int = 3) -> None:
+    def _filter_feasible(self, sch, idx, N_line=None, rounds: int = 3) -> None:
         """Replace scheduled points that have no equilibrium (with all valves
         below ``feasible_u_max``) for the environment's parameters at nominal
         charge.  Points still infeasible after ``rounds`` resamples are kept."""
@@ -394,6 +412,9 @@ class HGBPVecEnv:
                 if not bad.any():
                     break
                 new = cfg.envelope.sample(rng, int(bad.sum()), pl.props, self.params, pl.T_wi[idx[todo[bad]]])
+                if N_line is not None:
+                    nl = N_line[todo[bad]]
+                    new["N"] = np.where(np.isnan(nl), new["N"], nl)
                 for c, f in enumerate(POINT_FIELDS):
                     pts[todo[bad], j, c] = new[f]
                 todo = todo[bad]
@@ -513,7 +534,7 @@ class HGBPVecEnv:
             trips=trips, tripped=tripped,
             r_track=r_track, r_bonus=r_bonus, r_action=r_action, r_flood=r_flood, r_Td=r_Td,
             r_idle=r_idle, r_blocked=r_blocked, r_shut=r_shut, r_point=r_point, r_done=r_done,
-            u_cmd=self.u_cmd.copy(), setpoint=self.sp.copy(), t=self.t_ep.copy(),
+            u_cmd=self.u_cmd.copy(), setpoint=self.sp.copy(), t=self.t_ep.copy(), line=self.line.copy(),
         )
         done = terminated | truncated
         if done.any():
