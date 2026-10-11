@@ -78,7 +78,10 @@ compressor is started automatically and stopped after the last point.
   (parameters, charge, ambient, water, start) is drawn as usual.
 * **Start modes:** `warm` (equilibrium at the first point or another one, from the
   steady-state solver), `cold` (equalized stand at ambient, compressor off, optionally
-  some liquid migrated to the suction side) or `random`.
+  some liquid migrated to the suction side) or `random`. `cold_valves` sets the idle
+  stand's valve positions (default: the baseline controller's rest positions; the stand's
+  shutdown procedure closes every valve, `(0, 0, 0, 0)`). Open the discharge and suction
+  valves before the run request: the start permissives need them open.
 * **Stand definition:** `EnvConfig(stand="webui/config/stand_defaults.json")` takes the
   plant parameters and the baseline loops' UT35A settings (tuning, output limits, PV
   filters) from a defaults file, the same document the web UI reads. Without it, the

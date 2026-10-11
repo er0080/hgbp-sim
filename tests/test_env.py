@@ -212,3 +212,9 @@ def test_given_schedule():
         env.reset(schedule=dict(points=np.zeros((2, 7, 5))))     # longer than max_points
     with pytest.raises(ValueError):
         HGBPVecEnv(1, EnvConfig(k_points=(1, 5)))                 # sampled schedules too
+
+
+def test_cold_start_valve_positions():
+    env = HGBPVecEnv(2, EnvConfig(start_mode="cold", cold_valves=(0.0, 0.0, 0.0, 0.0), noise=False), seed=12)
+    assert np.allclose(env.u_cmd, 0.0) and np.allclose(env.plant.x[:, HGBPPlant.UV], 0.0)
+    assert not env._permissives().any()                    # closed valves block the start
