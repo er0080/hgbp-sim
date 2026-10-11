@@ -7,8 +7,8 @@ import math
 import numpy as np
 from numba import njit, prange
 
-from ..components import (compressor_s, gas_valve_flow_s, kv_to_C, liquid_valve_flow_s, series_C3, smoothstep,
-                          water_valve_flow)
+from ..components import (BYPASS_CODE, BYPASS_R, compressor_s, gas_valve_flow_s, kv_to_C, liquid_valve_flow_s,
+                          series_C3, smoothstep, valve_fraction, water_valve_flow)
 from . import batch_variants
 from . import props as kp
 from .layout import (A_M_cl, A_M_film, A_M_g, A_M_s, A_Q_sg, A_T_co, A_T_d, A_T_s, A_W_el, A_h_2f, A_h_3f, A_h_g,
@@ -69,6 +69,19 @@ def _solve_linear(A, b, out):
 
 
 @njit(cache=True)
+def invert_train(kv, Kv, code, R, Kv2, split, Kv_bp, b):
+    """Command of a valve train (components.train_kv) for effective ``kv``: the bypass
+    passes its share, the small valve the next ``Kv2``, the large one the rest."""
+    if Kv_bp > 0.0 and b > 0.0:
+        kv = kv - Kv_bp * valve_fraction(b, BYPASS_CODE, BYPASS_R)
+    if Kv2 > 0.0:
+        if kv <= Kv2:
+            return split * invert_characteristic(kv / Kv2, code, R)
+        return split + (1.0 - split) * invert_characteristic((kv - Kv2) / Kv, code, R)
+    return invert_characteristic(kv / Kv, code, R)
+
+
+@njit(cache=True)
 def invert_characteristic(f, code, R):
     """Stem position for installed flow fraction ``f`` (inverse of components.valve_fraction)."""
     f = min(max(f, 1e-4), 1.0)
@@ -101,13 +114,15 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
     rho_g = kp.vapor_props(tab, P_i, h_d)[1]
     # valve 1 passes the full compressor flow
     g1 = gas_valve_flow_s(1.0, P_d, P_i, D.rho, rho_g, p.kappa, p.xT, p.eps_valve, 0.0, 1.0)
-    z[0] = invert_characteristic(mdot_c / max(g1 * kv_to_C(p.Kv_dpv), 1e-12), p.dpv_code, p.dpv_R)
+    z[0] = invert_train(mdot_c / max(g1 * kv_to_C(1.0), 1e-12), p.Kv_dpv, p.dpv_code, p.dpv_R,
+                        p.Kv_dpv2, p.dpv_split, p.Kv_dpv_bp, p.dpv_bp)
     # suction side energy balance -> split between bypass and quench
     frac_l = min(max((h_d - h_s) / max(h_d - h_l, 1.0), 0.02), 0.9)
     mdot_3 = frac_l * mdot_c
     mdot_2 = mdot_c - mdot_3
     g2 = gas_valve_flow_s(1.0, P_i, P_s, rho_g, S.rho, p.kappa, p.xT, p.eps_valve, 0.0, 1.0)
-    z[1] = invert_characteristic(mdot_2 / max(g2 * kv_to_C(p.Kv_spv), 1e-12), p.spv_code, p.spv_R)
+    z[1] = invert_train(mdot_2 / max(g2 * kv_to_C(1.0), 1e-12), p.Kv_spv, p.spv_code, p.spv_R,
+                        p.Kv_spv2, p.spv_split, p.Kv_spv_bp, p.spv_bp)
     l3 = liquid_valve_flow_s(1.0, P_i, P_s, sati.rho_l, S.rho, p.f_choke_liq, p.eps_valve, 0.0, 1.0)
     z[2] = invert_characteristic(mdot_3 / max(l3 * kv_to_C(p.Kv_stv), 1e-12), p.stv_code, p.stv_R)
     # condenser duty and water flow (bisection on the effectiveness relation; the

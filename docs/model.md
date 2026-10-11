@@ -317,7 +317,7 @@ variable-speed 355 cm³/rev semi-hermetic compressor on R410A.
 | mixing exchanger | `mx_n_plates`, `mx_V_ch`, `mx_A`, `mx_mass`, `mx_alpha_g0`, `mx_alpha_e`, `mx_alpha_v0`, `mx_mdot_g_ref`, `mx_mdot_q_ref`, `mx_UA_a`, `tee_tau_evap` |
 | pressure drops | `cond_Kv_r`, `cond_Kv_w`, `mx_Kv_g`, `mx_Kv_dist`, quench-side plate geometry (`mx_beta`, `mx_b`, `mx_W`, `mx_phi`, `mx_d_port`, `mx_d_S34`), `cond_H`, `mx_H`, `P_w_sup`, `P_w_ret`, `Kv_wpipe` |
 | pipe walls | `UA_sg`, `UA_sa`, `UA_dg`, `UA_da` |
-| valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w`, characteristics, `tau_*`, `rate_*` |
+| valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w`, characteristics, `tau_*`, `rate_*`; trains of valves 1 and 2: `Kv_dpv2`, `dpv_split`, `Kv_dpv_bp`, `dpv_bp` (and `spv`) |
 | sensors | `tau_T`, `tau_m`, `tau_W`, `sig_*` |
 | limits | `P_d_max`, `P_s_min`, `P_s_max`, `T_d_max`, `y_flood` |
 

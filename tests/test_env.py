@@ -235,3 +235,38 @@ def test_line_and_vfd_episodes():
     assert np.all(p.ramp_N_vfd < 400.0)
     warm = env.state == ST_RUNNING
     assert np.allclose(env.plant.outputs()["N"][line & warm], N[line & warm, 0], rtol=1e-3)
+
+
+def test_valve_trains():
+    """Split range: the small valve over the command's first share, then the large one; the
+    manual bypass adds; the steady-state inversion is exact."""
+    from hgbp_sim.components import train_kv
+    from hgbp_sim.kernel.steady import invert_train
+    args = (6.3, 0, 30.0, 2.5, 0.28)                                  # linear valves
+    assert np.isclose(train_kv(0.28, *args, 0.0, 0.0), 2.5) and np.isclose(train_kv(1.0, *args, 0.0, 0.0), 8.8)
+    assert np.isclose(train_kv(0.14, *args, 0.0, 0.0), 1.25)
+    assert np.isclose(train_kv(0.0, *args, 165.0, 1.0), 165.0)
+    for u in (0.05, 0.2, 0.28, 0.5, 0.9):
+        for b in (0.0, 0.3):
+            assert np.isclose(invert_train(train_kv(u, *args, 165.0, b), *args, 165.0, b), u)
+    assert np.isclose(train_kv(0.7, 6.3, 0, 30.0, 0.0, 0.3, 0.0, 0.0), 6.3 * 0.7)    # no train: one valve
+
+
+def test_points_needing_the_bypass():
+    from hgbp_sim import Envelope
+    """With bypass openings allowed, points beyond the control valves are accepted, the
+    opening they need is recorded and reported, and a warm start there begins with it open."""
+    cfg = EnvConfig(stand=STAND, start_mode="warm", p_warm_at_setpoint=1.0, k_points=(1, 1), noise=False,
+                    randomize_params=False, p_charge_extreme=0.0, bypass_openings=(0.2, 0.3, 0.4, 0.5),
+                    envelope=Envelope(polygon=((4.0, 25.0), (11.0, 30.0), (11.0, 34.0), (4.0, 29.0)),
+                                      N_frac=(74.0 / 60.0, 75.0 / 60.0)))   # high SST, low SDT, 75 Hz
+    env = HGBPVecEnv(48, cfg, seed=14)
+    need = env.sched_bypass[:, 0, :]
+    assert (need > 0).any(), "no point needed a bypass at 75 Hz"
+    obs, r, term, trunc, info = env.step(np.zeros((48, 4)))
+    warm = info["state"] == ST_RUNNING
+    assert np.allclose(info["bypass"][warm], need[warm]) and np.allclose(info["bypass_needed"], need)
+    i = np.flatnonzero(warm & (need > 0).any(1))[0]
+    assert np.abs(info["error"][i, :3]).max() < 0.5                  # in tolerance with the bypass open
+    env.set_bypass([i], dpv=0.0, spv=0.0)
+    assert np.allclose(env.bypass[i], 0.0)
