@@ -16,7 +16,7 @@ from numba import njit, prange
 
 from ..components import (PIPE_ROUGHNESS, actuator_rate, amalfi_ftp, compressor_s,
                           cv_balance, gas_valve_flow_s, hx_drop, kv_to_C, liquid_valve_flow_s, martin_xi,
-                          mixture_viscosity, pipe_drop_s, series_C3, smoothstep, valve_fraction,
+                          mixture_viscosity, pipe_drop_s, series_C3, smoothstep, train_C, valve_fraction,
                           water_valve_flow)
 from . import batch_variants
 from . import props as kp
@@ -392,11 +392,11 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     dP_suc = _pipe(p.D_suc, p.t_suc, p.L_suc, p.K_suc, mdot_c, c_rho[n], mu_l1, 1.0)
     P_tee = P_s + dP_suc
 
-    # ---- valve 1: discharge -> header branch, in series with the discharge line and the
+    # ---- valve 1 (its train: control valves in split range and the manual bypass):
+    # discharge -> header branch, in series with the discharge line and the
     # first half of the header (equivalent resistance at the valve-alone flow)
     T_g, rho_g = kp.vapor_props(tab, P_h, h_d)                    # header gas after throttling
-    f1 = valve_fraction(u1, p.dpv_code, p.dpv_R)
-    C1 = kv_to_C(p.Kv_dpv) * f1
+    C1 = train_C(u1, p.Kv_dpv, p.dpv_code, p.dpv_R, p.Kv_dpv2, p.dpv_split, p.Kv_dpv_bp, p.dpv_bp)
     m0 = gas_valve_flow_s(C1, P_d, P_h, D.rho, rho_g, p.kappa, p.xT, p.eps_valve, 0.0, 1.0)
     dP0 = (_pipe(p.D_dis, p.t_dis, p.L_dis, p.K_dis, m0, D.rho, mu_v_d, 1.0)
            + _pipe(p.D_hdr, p.t_hdr, p.L_hdr, p.K_hdr, m0, rho_g, mu_v_i, 0.5))
@@ -408,8 +408,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
 
     # ---- valve 2: header branch -> bypass line -> mixing exchanger gas side (S1 at the
     # bottom, rising to S2) -> outlet leg -> tee, all in series
-    f2 = valve_fraction(u2, p.spv_code, p.spv_R)
-    C2 = kv_to_C(p.Kv_spv) * f2
+    C2 = train_C(u2, p.Kv_spv, p.spv_code, p.spv_R, p.Kv_spv2, p.spv_split, p.Kv_spv_bp, p.spv_bp)
     rho_gin = kp.vapor_props(tab, P_s, h_d)[1]                    # bypass gas after throttling
     rho_gm = 2.0 / (1.0 / rho_gin + 1.0 / sat_s.rho_v)
     head_g = G * p.mx_H * rho_gm

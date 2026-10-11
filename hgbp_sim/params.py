@@ -189,6 +189,18 @@ class PlantParams:
     spv_R: float = 30.0         # valve 2 rangeability (largest / smallest controllable flow), used by eqpct
     tau_spv: float = 0.3        # valve 2 actuator time constant [s]
     rate_spv: float = 0.2       # valve 2 actuator stroke speed limit, full strokes per second [1/s]
+    # The discharge and suction pressure valves can be trains: a smaller control valve in
+    # parallel, driven in split range on the same command (it opens first, over the command's
+    # first `split`, the large valve over the rest), and a manual bypass, a full-port ball
+    # valve the technician opens for the largest flows.  Kv 0 leaves them out.
+    Kv_dpv2: float = 0.0        # valve 1's parallel small control valve [m^3/h] (0: none)
+    dpv_split: float = 0.3      # share of valve 1's command over which the small valve opens
+    Kv_dpv_bp: float = 0.0      # valve 1's manual bypass, fully open [m^3/h] (0: none)
+    dpv_bp: float = 0.0         # its opening 0..1 (set by the technician; roughly equal percentage)
+    Kv_spv2: float = 0.0        # valve 2's parallel small control valve [m^3/h] (0: none)
+    spv_split: float = 0.3      # share of valve 2's command over which the small valve opens
+    Kv_spv_bp: float = 0.0      # valve 2's manual bypass, fully open [m^3/h] (0: none)
+    spv_bp: float = 0.0         # its opening 0..1
     Kv_stv: float = 1.0         # valve 3: suction temperature (liquid) valve [m^3/h]
     stv_char: str = "linear"    # valve 3 flow characteristic: linear, eqpct (equal percentage) or quick opening
     stv_R: float = 30.0         # valve 3 rangeability (largest / smallest controllable flow), used by eqpct
@@ -249,6 +261,8 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
     "tau_dpv": 0.3, "tau_spv": 0.3, "tau_stv": 0.3, "rate_dpv": 0.3, "rate_spv": 0.3,
     "rate_stv": 0.3, "tau_w": 0.3, "rate_w": 0.3,
     "tau_T": 0.3, "tau_m": 0.3,
+    # (added last: the draws above stay as they were)
+    "Kv_dpv2": 0.15, "Kv_spv2": 0.15, "Kv_dpv_bp": 0.15, "Kv_spv_bp": 0.15,
 }
 
 
@@ -370,6 +384,8 @@ _REQUIRE_INIT = {"fluid", "charge", "cold_liquid_in_suction", "V_comp_suc", "V_c
 # Parameters that are not listed are unconstrained.
 _RANGES: dict[str, tuple[float, float]] = {
     "Kv_dpv": (0.01, 200.0), "Kv_spv": (0.01, 200.0),
+    "Kv_dpv2": (0.0, 200.0), "Kv_spv2": (0.0, 200.0), "Kv_dpv_bp": (0.0, 1000.0), "Kv_spv_bp": (0.0, 1000.0),
+    "dpv_split": (0.05, 0.95), "spv_split": (0.05, 0.95), "dpv_bp": (0.0, 1.0), "spv_bp": (0.0, 1.0),
     "Kv_stv": (0.01, 200.0), "Kv_w": (0.01, 200.0),
     "P_w_sup": (0.2e5, 10e5), "P_w_ret": (0.0, 9e5),
     "cond_Kv_r": (0.1, 500.0), "cond_Kv_w": (0.1, 500.0), "mx_Kv_g": (0.1, 500.0), "mx_Kv_dist": (0.1, 500.0),

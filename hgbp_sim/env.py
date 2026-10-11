@@ -131,6 +131,10 @@ class EnvConfig:
                                          # line frequency, the motor at ramp_N; the others run on the VFD
                                          # (speed per point from the envelope, at ramp_N_vfd)
     line_hz: tuple = (50.0, 60.0)        # line frequencies (drawn per episode); nominal speed at 60 Hz
+    bypass_openings: tuple = ()          # manual bypass openings the technician may use (the stand's trains
+                                         # need Kv_dpv_bp / Kv_spv_bp): a point the control valves cannot
+                                         # hold is accepted if one of these openings brings them back in range;
+                                         # () keeps such points out
     cold_valves: tuple | None = None     # valve positions of the idle stand at a cold start (None: the
                                          # baseline controller's rest positions; a stand whose shutdown
                                          # procedure closes every valve: (0, 0, 0, 0))
@@ -218,6 +222,7 @@ class HGBPVecEnv:
         self.ie = np.zeros((n_, 4))
         self.charge_factor = np.ones(n_)
         self.line = np.zeros(n_, bool)           # episode runs across the line (no VFD)
+        self.sched_bypass = np.zeros((n_, cfg.max_points, 2))   # bypass openings each point needs (1, 2)
         self._ramp_line = np.asarray(self.plant.p.ramp_N, float).copy()   # the motor's own ramp per stand
         self.meas: dict | None = None
         self.episode_return = np.zeros(n_)
@@ -267,8 +272,9 @@ class HGBPVecEnv:
         test procedure lists them: ``points`` of shape (m, k, 5) in ``POINT_FIELDS`` order
         (SI; see :meth:`Envelope.point`), optional ``k`` (m,) points in use (default k) and
         optional ``hold`` (m, k) maximum times to become stable [s] (default sampled from
-        ``hold_time``) and optional ``line`` (m,) episodes run across the line (default False:
-        on the VFD).  Given points skip the feasibility filter.  Everything else
+        ``hold_time``), optional ``line`` (m,) episodes run across the line (default False:
+        on the VFD) and optional ``bypass`` (m, k, 2) the manual bypass openings the points
+        need (a warm start at the first point starts with them open).  Given points skip the feasibility filter.  Everything else
         (parameters, charge, ambient and water, start) is drawn as usual.
         """
         cfg, pl, rng = self.cfg, self.plant, self.rng
@@ -301,6 +307,9 @@ class HGBPVecEnv:
             line = np.broadcast_to(np.asarray(schedule.get("line", False), bool), (m,)).copy()
             N_line = np.where(line, sch["points"][:, 0, 4], np.nan)
         self.line[idx] = line
+        self.sched_bypass[idx] = sch.get("bypass", np.zeros((m, cfg.max_points, 2)))
+        pl.p.dpv_bp[idx] = 0.0                    # a test starts with the bypasses closed
+        pl.p.spv_bp[idx] = 0.0
         pl.p.ramp_N[idx] = np.where(line, self._ramp_line[idx], pl.p.ramp_N_vfd[idx])
         self.sched_points[idx], self.sched_hold[idx], self.sched_k[idx] = sch["points"], sch["hold"], sch["k"]
         self.k[idx] = 0
@@ -333,6 +342,8 @@ class HGBPVecEnv:
             alt["N"] = np.where(np.isnan(N_lw), alt["N"], N_lw)          # across the line: one speed
             first = self.sp[warm_idx]
             tgt = {f: np.where(at_sp, first[:, c], alt[f]) for c, f in enumerate(POINT_FIELDS)}
+            bp0 = np.where(at_sp[:, None], self.sched_bypass[warm_idx, 0, :], 0.0)
+            pl.p.dpv_bp[warm_idx], pl.p.spv_bp[warm_idx] = bp0[:, 0], bp0[:, 1]    # opened for that point
             res = solve_steady_state(pl, tgt["P_s"], tgt["P_d"], self._superheat(tgt["P_s"], tgt["RGT"]),
                                      tgt["N"], P_i=tgt["P_i"], idx=warm_idx)
             ok = self._clear_of_trips(res, warm_idx)
@@ -345,6 +356,8 @@ class HGBPVecEnv:
                 self.start_at[good] = -1.0
                 self.interlock.reset(good, running=True)
                 self.expert.reset(res["u"][ok], good)
+            pl.p.dpv_bp[warm_idx[~ok]] = 0.0
+            pl.p.spv_bp[warm_idx[~ok]] = 0.0
             cold = cold | np.isin(idx, warm_idx[~ok])
 
         cold_idx = idx[cold]
@@ -382,6 +395,9 @@ class HGBPVecEnv:
                    hold=np.zeros((m, self.cfg.max_points)), k=k)
         out["points"][:, :kk] = np.nan_to_num(pts)
         out["hold"][:, :kk] = hold
+        out["bypass"] = np.zeros((m, self.cfg.max_points, 2))
+        if schedule.get("bypass") is not None:
+            out["bypass"][:, :kk] = np.broadcast_to(np.asarray(schedule["bypass"], float), (m, kk, 2))
         return out
 
     def _clear_of_trips(self, res, idx):
@@ -394,21 +410,76 @@ class HGBPVecEnv:
                 & (a["P_d"] < p_(p.P_d_max) - cfg.feasible_P_margin)
                 & (a["P_s"] > p_(p.P_s_min) + cfg.feasible_P_margin))
 
+    def _feasible(self, q, sidx, res=None):
+        """Points ``q`` (rows of POINT_FIELDS) have an equilibrium on stands ``sidx`` at nominal
+        charge, clear of the trips, with every valve below ``feasible_u_max``."""
+        if res is None:
+            res = self._solve(q, sidx)
+        return self._clear_of_trips(res, sidx) & (res["u"] < self.cfg.feasible_u_max).all(1)
+
+    def _solve(self, q, sidx):
+        return solve_steady_state(self.plant, q[:, 0], q[:, 1], self._superheat(q[:, 0], q[:, 2]), q[:, 4],
+                                  P_i=q[:, 3], fill=0.4, idx=sidx)
+
+    def _with_bypass(self, q, idx, todo, bad, out):
+        """For the rejected points whose discharge or suction train ran out of travel, try the
+        technician's bypass openings (smallest first) on the trains that need it; record the
+        opening that works in ``out`` (rows of ``idx``).  Returns the points it rescued."""
+        cfg, p = self.cfg, self.plant.p
+        ok = np.zeros(len(todo), bool)
+        if not cfg.bypass_openings or not bad.any():
+            return ok
+        res0 = self._solve(q[bad], idx[todo[bad]])
+        need = (res0["u"][:, :2] >= cfg.feasible_u_max) & (res0["u"][:, 2:] < cfg.feasible_u_max).all(1)[:, None]
+        has = np.stack([p.Kv_dpv_bp[idx[todo[bad]]], p.Kv_spv_bp[idx[todo[bad]]]], 1) > 0.0
+        need &= has
+        rows = np.flatnonzero(bad)[need.any(1)]
+        need = need[need.any(1)]
+        for b in sorted(cfg.bypass_openings):
+            if len(rows) == 0:
+                break
+            sidx = idx[todo[rows]]
+            p.dpv_bp[sidx] = np.where(need[:, 0], b, 0.0)
+            p.spv_bp[sidx] = np.where(need[:, 1], b, 0.0)
+            good = self._feasible(q[rows], sidx)
+            p.dpv_bp[sidx] = 0.0
+            p.spv_bp[sidx] = 0.0
+            out[todo[rows[good]]] = np.where(need[good], b, 0.0)
+            ok[rows[good]] = True
+            rows, need = rows[~good], need[~good]
+        return ok
+
+    def set_bypass(self, idx, dpv=None, spv=None) -> None:
+        """The technician sets the manual bypass openings (0..1) of the discharge (``dpv``)
+        and suction (``spv``) trains on stands ``idx``; None leaves one as it is."""
+        idx = np.atleast_1d(np.asarray(idx))
+        if dpv is not None:
+            self.plant.p.dpv_bp[idx] = np.clip(dpv, 0.0, 1.0)
+        if spv is not None:
+            self.plant.p.spv_bp[idx] = np.clip(spv, 0.0, 1.0)
+
+    @property
+    def bypass(self) -> np.ndarray:
+        """Manual bypass openings now, (n, 2): discharge and suction train."""
+        return np.stack([self.plant.p.dpv_bp, self.plant.p.spv_bp], 1).copy()
+
     def _filter_feasible(self, sch, idx, N_line=None, rounds: int = 3) -> None:
         """Replace scheduled points that have no equilibrium (with all valves
-        below ``feasible_u_max``) for the environment's parameters at nominal
-        charge.  Points still infeasible after ``rounds`` resamples are kept."""
+        below ``feasible_u_max``, the manual bypasses allowed by ``bypass_openings``) for
+        the environment's parameters at nominal charge; ``sch["bypass"]`` records the
+        openings the points need.  Points still infeasible after ``rounds`` resamples are
+        kept."""
         cfg, pl, rng = self.cfg, self.plant, self.rng
         pts, k_act = sch["points"], sch["k"]
+        sch["bypass"] = np.zeros((len(idx), pts.shape[1], 2))
         for j in range(pts.shape[1]):
             todo = np.flatnonzero(k_act > j)
             for _ in range(rounds):
                 if len(todo) == 0:
                     break
                 q = pts[todo, j, :]
-                res = solve_steady_state(pl, q[:, 0], q[:, 1], self._superheat(q[:, 0], q[:, 2]), q[:, 4],
-                                         P_i=q[:, 3], fill=0.4, idx=idx[todo])
-                bad = ~(self._clear_of_trips(res, idx[todo]) & (res["u"] < cfg.feasible_u_max).all(1))
+                bad = ~self._feasible(q, idx[todo])
+                bad &= ~self._with_bypass(q, idx, todo, bad, sch["bypass"][:, j])
                 if not bad.any():
                     break
                 new = cfg.envelope.sample(rng, int(bad.sum()), pl.props, self.params, pl.T_wi[idx[todo[bad]]])
@@ -535,6 +606,7 @@ class HGBPVecEnv:
             r_track=r_track, r_bonus=r_bonus, r_action=r_action, r_flood=r_flood, r_Td=r_Td,
             r_idle=r_idle, r_blocked=r_blocked, r_shut=r_shut, r_point=r_point, r_done=r_done,
             u_cmd=self.u_cmd.copy(), setpoint=self.sp.copy(), t=self.t_ep.copy(), line=self.line.copy(),
+            bypass=self.bypass, bypass_needed=self.sched_bypass[np.arange(self.n), self.k].copy(),
         )
         done = terminated | truncated
         if done.any():

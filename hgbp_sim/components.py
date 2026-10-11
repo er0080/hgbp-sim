@@ -75,6 +75,33 @@ def kv_to_C(Kv):
     return Kv * KV_TO_C
 
 
+# A manual bypass is a full-port ball valve, throttled by hand: roughly equal percentage
+BYPASS_CODE, BYPASS_R = CHAR_EQPCT, 50.0
+
+
+@_vec
+def train_kv(u, Kv, code, R, Kv2, split, Kv_bp, b):
+    """Effective Kv of a valve train: the control valve ``Kv`` with a parallel small valve
+    ``Kv2`` in split range on one command ``u`` (the small valve opens over [0, split], the
+    large one over [split, 1]; with ``Kv2`` = 0 the large valve alone over [0, 1]), plus a
+    manual bypass ``Kv_bp`` at opening ``b``.  Parallel conductances add."""
+    return train_C(u, Kv, code, R, Kv2, split, Kv_bp, b) / KV_TO_C
+
+
+@njit(cache=True, inline="always")
+def train_C(u, Kv, code, R, Kv2, split, Kv_bp, b):
+    """Flow coefficient C (as kv_to_C) of a valve train; see ``train_kv``."""
+    u = min(max(u, 0.0), 1.0)
+    if Kv2 > 0.0:
+        C = (Kv2 * KV_TO_C * valve_fraction(min(u / split, 1.0), code, R)
+             + Kv * KV_TO_C * valve_fraction(max((u - split) / (1.0 - split), 0.0), code, R))
+    else:
+        C = Kv * KV_TO_C * valve_fraction(u, code, R)
+    if Kv_bp > 0.0 and b > 0.0:
+        C += Kv_bp * KV_TO_C * valve_fraction(b, BYPASS_CODE, BYPASS_R)
+    return C
+
+
 @njit(cache=True, inline="always")
 def _series_share(C, rho_up, C_hx, rho_hx):
     """Share of a series pair's pressure drop taken by the valve (coefficient

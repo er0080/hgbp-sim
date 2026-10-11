@@ -81,6 +81,15 @@ compressor is started automatically and stopped after the last point.
   pressure. Given points skip the feasibility filter. The rest of the episode
   (parameters, charge, ambient, water, start) is drawn as usual; `line` marks episodes
   run across the line.
+* **Valve trains and manual bypasses:** the discharge and suction pressure valves can be
+  trains (`Kv_dpv2`, `dpv_split`, `Kv_dpv_bp` and the same for `spv`): a smaller control
+  valve in parallel, driven in split range on the valve's one command, and a manual bypass
+  (a full-port ball valve) at an opening the technician sets with `env.set_bypass(idx,
+  dpv=..., spv=...)`. With `bypass_openings`, points the control valves cannot hold are
+  accepted when one of those openings brings them back in range; `info["bypass_needed"]`
+  gives the openings the current point needs (the label for a bypass advisory) and
+  `info["bypass"]` the openings now. A warm start at such a point begins with them open;
+  every test starts with the bypasses closed otherwise.
 * **Start modes:** `warm` (equilibrium at the first point or another one, from the
   steady-state solver), `cold` (equalized stand at ambient, compressor off, optionally
   some liquid migrated to the suction side) or `random`. `cold_valves` sets the idle
