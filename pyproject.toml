@@ -21,7 +21,7 @@ dev = ["pytest>=7", "CoolProp>=6.6", "gymnasium>=0.29", "matplotlib>=3.7", "scip
 include = ["hgbp_sim*"]
 
 [tool.setuptools.package-data]
-hgbp_sim = ["data/*.npz"]
+hgbp_sim = ["data/*.npz", "kernel/cuda/*.cu"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

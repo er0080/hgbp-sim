@@ -37,3 +37,6 @@ webui/frontend/dist/
 
 # uv (the project installs with pip; a local uv run creates this)
 uv.lock
+
+# benchmark and experiment outputs
+runs/
