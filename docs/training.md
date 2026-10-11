@@ -50,7 +50,11 @@ compressor is started automatically and stopped after the last point.
     (`Envelope.polygon`, the manufacturer's R410A map);
   * RGT of 65 °F for 30 % of the points, otherwise -10 to 35 °C, with the superheat it
     implies between 5 and 50 K;
-  * 35-75 Hz (the nominal speed is taken as 60 Hz).
+  * the drive: a share `p_line` of the episodes runs across the line (no VFD, as most
+    nameplate tests): every point at one line frequency (`line_hz`, 50 or 60 Hz), the motor
+    accelerating at `ramp_N` (about a second to speed). The others run on the VFD at
+    35-75 Hz per point, ramping at `ramp_N_vfd` (the stand's 5 Hz/s). The nominal speed is
+    taken as 60 Hz; `info["line"]` tells the drive.
 * **Liquid pressure setpoint:** the geometric mean of the suction and discharge pressures,
   but at least the saturation pressure 6 K above the cooling water inlet (40 °F, down to
   38 °F: `T_wi_range`).
@@ -75,7 +79,8 @@ compressor is started automatically and stopped after the last point.
   `Envelope.point(props, T_evap, T_cond, RGT, N, T_wi)` builds a point from saturated
   suction and discharge temperatures, RGT (°C) and speed (rpm), with the clamped liquid
   pressure. Given points skip the feasibility filter. The rest of the episode
-  (parameters, charge, ambient, water, start) is drawn as usual.
+  (parameters, charge, ambient, water, start) is drawn as usual; `line` marks episodes
+  run across the line.
 * **Start modes:** `warm` (equilibrium at the first point or another one, from the
   steady-state solver), `cold` (equalized stand at ambient, compressor off, optionally
   some liquid migrated to the suction side) or `random`. `cold_valves` sets the idle

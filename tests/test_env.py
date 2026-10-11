@@ -218,3 +218,20 @@ def test_cold_start_valve_positions():
     env = HGBPVecEnv(2, EnvConfig(start_mode="cold", cold_valves=(0.0, 0.0, 0.0, 0.0), noise=False), seed=12)
     assert np.allclose(env.u_cmd, 0.0) and np.allclose(env.plant.x[:, HGBPPlant.UV], 0.0)
     assert not env._permissives().any()                    # closed valves block the start
+
+
+def test_line_and_vfd_episodes():
+    """Across the line: every point at one line frequency, the motor's own ramp; on the VFD:
+    speeds from the envelope, the drive's ramp."""
+    cfg = EnvConfig(stand=STAND, start_mode="warm", p_line=0.5, k_points=(3, 3), noise=False)
+    env = HGBPVecEnv(24, cfg, seed=13)
+    N_nom, p = env.params.N_nom, env.plant.p
+    line = env.line
+    assert 0 < line.sum() < 24
+    N = env.sched_points[:, :3, 4]
+    assert np.all(np.isin(np.round(N[line] / N_nom * 60.0, 6), [50.0, 60.0]))
+    assert np.all(N[line] == N[line][:, :1])                       # one speed for the whole test
+    assert np.allclose(p.ramp_N[line], 3550.0, rtol=0.35) and np.allclose(p.ramp_N[~line], p.ramp_N_vfd[~line])
+    assert np.all(p.ramp_N_vfd < 400.0)
+    warm = env.state == ST_RUNNING
+    assert np.allclose(env.plant.outputs()["N"][line & warm], N[line & warm, 0], rtol=1e-3)
