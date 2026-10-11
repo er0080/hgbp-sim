@@ -330,7 +330,8 @@ template <class R> __device__ __forceinline__ R water_valve_flow(R C, R dP, R rh
 }
 template <class R> __device__ R churchill_f(R Re, R rel_rough) {
     Re = pmax(Re, 1.0);
-    R A = m_pow(-2.457 * m_log(m_pow(7.0 / Re, 0.9) + 0.27 * rel_rough), 16.0);
+    // an even power: of the magnitude (the same value; fast-math pow is NaN for a negative base)
+    R A = m_pow(m_abs(2.457 * m_log(m_pow(7.0 / Re, 0.9) + 0.27 * rel_rough)), 16.0);
     R B = m_pow(37530.0 / Re, 16.0);
     return 8.0 * m_pow(m_pow(8.0 / Re, 12.0) + m_pow(A + B, -1.5), 1.0 / 12.0);
 }

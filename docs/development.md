@@ -65,6 +65,10 @@ Where the time goes:
   pseudo-time march. A point without an equilibrium is given up once its residual stops
   moving.
 
+**GPU prototype.** `kernel/cuda_step.py` runs the step on an NVIDIA GPU, in double, mixed or single
+precision. Nothing in the package uses it. [gpu-benchmark.md](gpu-benchmark.md) has its speed and
+accuracy against this kernel. Its tests are opt-in: `HGBP_CUDA_TESTS=1 pytest tests/test_cuda_step.py`.
+
 ## Property tables
 
 R410A, R454B, R454C and R134a tables ship in `hgbp_sim/data/`. Any other CoolProp fluid is tabulated on
@@ -81,6 +85,7 @@ hgbp_sim/
   plant.py         HGBPPlant: a batch of stands (states, parameters, inputs), cold start, sensors, trips
   steady_state.py  equilibrium solver
   kernel/          the compiled model: property lookups, right-hand side, integrator, solver
+  kernel/cuda/     benchmark prototype: the step in CUDA C++ (kernel/cuda_step.py; docs/gpu-benchmark.md)
   control.py       PID and the four-loop BaselineController
   scenarios.py     operating envelope, named test points, schedules
   env.py           HGBPVecEnv (batched) and HGBPEnv (gymnasium)

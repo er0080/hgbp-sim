@@ -119,7 +119,7 @@ def replay_gpu(rec, tab, snap, U, N, dt, checkpoints, mode, **kw):
 def outputs(pl, x, u, N, snap):
     with np.errstate(all="ignore"):
         _, a = pl.rhs(np.nan_to_num(x, nan=1.0), u, N, snap["T_amb"], snap["T_wi"], want_aux=True)
-    return {k: np.asarray(a[k]) for k in OUTS}
+    return {k: np.asarray(a[k]) for k in OUTS + ("N", "x_out", "cond_flood")}
 
 
 def q(v):
@@ -142,6 +142,20 @@ def compare(pl, xr, xg, u, N, snap):
     for k in OUTS:
         diff = np.abs(a_g[k] - a_r[k])[finite]
         d[k] = q(diff / (1e5 if k.startswith("P") else 1.0))       # bar / K
+    run = finite & (a_r["N"] > 1.0)        # compressor running in the reference
+    d["running"] = int(run.sum())
+    d["running_only"] = {k: q(np.abs(a_g[k] - a_r[k])[run] / (1e5 if k.startswith("P") else 1.0))
+                         for k in ("P_s", "P_d", "T_d", "SH")}
+    # stands whose trajectories have separated (beyond sensor resolution), and where they are
+    sep = ~finite | (np.abs(a_g["P_s"] - a_r["P_s"]) > 1e3) | (np.abs(a_g["P_d"] - a_r["P_d"]) > 1e3) \
+        | (np.abs(a_g["SH"] - a_r["SH"]) > 0.1) | (np.abs(a_g["T_d"] - a_r["T_d"]) > 0.1)
+    d["separated"] = int(sep.sum())
+    d["separated_idx"] = np.flatnonzero(sep)[:50].tolist()
+    if sep.any():       # the separated stands in the reference
+        d["separated_ref"] = dict(
+            running=float((a_r["N"][sep] > 1.0).mean()), started_cold=float((snap["x"][sep, L.IX["N"]] < 1.0).mean()),
+            liquid_at_compressor=float((a_r["x_out"][sep] < 0.999).mean()), SH=q(a_r["SH"][sep]),
+            P_d_bar=q(a_r["P_d"][sep] / 1e5), cond_flood=float((a_r["cond_flood"][sep] > 0.0).mean()))
     M = lambda x: x[:, L.IX["M_s"]] + x[:, L.IX["M_d"]] + x[:, L.IX["M_i"]]
     U_ = lambda x: x[:, L.IX["U_s"]] + x[:, L.IX["U_d"]] + x[:, L.IX["U_i"]]
     d["rel_mass_vs_ref"] = q((np.abs(M(xg) - M(xr)) / M(xr))[finite])
@@ -156,6 +170,17 @@ def mass(x):
 def drift(x0, x):
     """Relative change of the total refrigerant mass since the start (per stand)."""
     return q(np.abs(mass(x) - mass(x0)) / mass(x0))
+
+
+def mode_opts(a, mode):
+    """GPU options of a mode name such as fp64, fp64-nofmad, fp32-fast (fast math)."""
+    opts = gpu_opts(a)
+    base, *flags = mode.split("-")
+    if "nofmad" in flags:
+        opts["fmad"] = False
+    if "fast" in flags:
+        opts["fastmath"] = True
+    return base, opts
 
 
 def gpu_opts(a):
@@ -183,7 +208,8 @@ def run_compare(a, env, snap, U, N, checkpoints, name, extra=None):
                cpu_mass_drift={c: drift(snap["x"], ref[c]) for c in checkpoints}, modes={})
     print(f"cpu replay {res['cpu_time']:.1f} s", flush=True)
     for mode in a.modes.split(","):
-        out, info = replay_gpu(rec, tab, snap, U, N, dt, checkpoints, mode, **gpu_opts(a))
+        base, opts = mode_opts(a, mode)
+        out, info = replay_gpu(rec, tab, snap, U, N, dt, checkpoints, base, **opts)
         r = dict(gpu_time=info["time"], substeps_per_step=float(info["substeps"].mean() / len(U)),
                  retry1=int(info["retry1"].sum()), retry2=int(info["retry2"].sum()),
                  suction_unconverged=int(info["suction_unconverged"].sum()),
@@ -279,7 +305,7 @@ def cmd_throughput(a):
             el = time.perf_counter() - t0
             res["cpu"][n] = dict(time=el, steps_per_s=n * a.steps / el, substeps_per_step=tot / (n * a.steps))
             print(f"cpu n={n}: {n * a.steps / el:,.0f} env-steps/s", flush=True)
-        for mode in a.modes.split(","):
+        for mode in [m for m in a.modes.split(",") if m]:
             for block in [int(b) for b in a.blocks.split(",")]:
                 for sort in ([False, True] if a.sort else [False]):
                     opts = gpu_opts(a)
