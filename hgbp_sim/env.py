@@ -127,6 +127,9 @@ class EnvConfig:
     start_delay: tuple = (5.0, 30.0)     # automatic start: delay before the run request [s]
     p_warm_at_setpoint: float = 0.5      # warm start exactly at first point (else at a random point)
     cold_liquid_in_suction: tuple = (0.0, 0.1)   # share of the liquid migrated to the suction side, per cold start
+    cold_valves: tuple | None = None     # valve positions of the idle stand at a cold start (None: the
+                                         # baseline controller's rest positions; a stand whose shutdown
+                                         # procedure closes every valve: (0, 0, 0, 0))
     action_mode: str = "incremental"     # "absolute" | "incremental"
     max_rate: float = 0.05               # incremental: max command change per step
     start_stop_action: bool = False      # 5th action = run request
@@ -329,7 +332,8 @@ class HGBPVecEnv:
         cold_idx = idx[cold]
         if len(cold_idx):
             mc = len(cold_idx)
-            u0 = np.broadcast_to(self.expert.u_off, (mc, 4))
+            u0 = np.broadcast_to(self.expert.u_off if cfg.cold_valves is None
+                                 else np.asarray(cfg.cold_valves, float), (mc, 4))
             liq = rng.uniform(*cfg.cold_liquid_in_suction, mc)
             pl.cold_start(cold_idx, T_amb=pl.T_amb[cold_idx], u_pos=u0, liquid_in_suction=liq)
             self.u_cmd[cold_idx] = u0
