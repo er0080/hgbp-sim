@@ -270,3 +270,46 @@ def test_points_needing_the_bypass():
     assert np.abs(info["error"][i, :3]).max() < 0.5                  # in tolerance with the bypass open
     env.set_bypass([i], dpv=0.0, spv=0.0)
     assert np.allclose(env.bypass[i], 0.0)
+
+
+def _clone_pair(start_mode):
+    cfg = EnvConfig(episode_time=600.0, start_mode=start_mode, noise=False, k_points=(2, 2), hold_time=(60.0, 60.0),
+                    auto_reset=False)
+    a = HGBPVecEnv(3, cfg, seed=1)
+    b = HGBPVecEnv(5, cfg, seed=2)
+    rng = np.random.default_rng(0)
+    for _ in range(80):
+        a.step(rng.uniform(-0.3, 0.3, (3, a.act_dim)))
+    return a, b, rng
+
+
+def test_restored_stands_run_as_the_original():
+    """A stand copied into another environment (two copies of it) follows the original
+    exactly, step for step, without sensor noise: plant, parameters, interlock, schedule."""
+    for start_mode in ("warm", "cold"):
+        a, b, rng = _clone_pair(start_mode)
+        b.restore([0, 4], a.snapshot([1]), rows=[0, 0])
+        for k in ("sp", "sched_points", "t_ep", "k", "u_cmd"):
+            assert np.array_equal(getattr(b, k)[[0, 4]], getattr(a, k)[[1, 1]]), k
+        assert np.array_equal(b.state[[0, 4]], a.state[[1, 1]])
+        for _ in range(200):
+            act = rng.uniform(-0.3, 0.3, a.act_dim)
+            a.step(np.tile(act, (3, 1)))
+            b.step(np.tile(act, (5, 1)))
+            assert np.allclose(b.plant.x[[0, 4]], a.plant.x[[1, 1]], rtol=1e-12, atol=1e-12)
+        assert np.array_equal(b.state[[0, 4]], a.state[[1, 1]])
+        assert np.allclose(b.meas["P_s"][[0, 4]], a.meas["P_s"][1])
+
+
+def test_snapshot_rows_and_layout():
+    a, b, _ = _clone_pair("warm")
+    s = a.snapshot([0, 2])
+    assert s["n_rows"] == 2
+    with pytest.raises(ValueError):
+        b.restore([0, 1, 2], s)
+    s["arrays"].pop(next(iter(s["arrays"])))
+    with pytest.raises(ValueError):
+        b.restore([0, 1], s)
+    x = b.plant.x.copy()
+    b.restore([3], a.snapshot([2]))
+    assert np.array_equal(b.plant.x[[0, 1, 2, 4]], x[[0, 1, 2, 4]])     # the other stands untouched
