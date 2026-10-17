@@ -71,6 +71,7 @@ from .defaults import controller_settings, load_defaults
 from .interlock import ST_OFF, ST_RUNNING, ST_STARTING, ST_STOPPING, STATE_NAMES, Interlock, permissives
 from .params import PlantParams
 from .plant import HGBPPlant
+from .properties import RefrigerantTables
 from .scenarios import POINT_FIELDS, Envelope, sample_schedule
 from .steady_state import solve_steady_state
 
@@ -462,6 +463,56 @@ class HGBPVecEnv:
     def bypass(self) -> np.ndarray:
         """Manual bypass openings now, (n, 2): discharge and suction train."""
         return np.stack([self.plant.p.dpv_bp, self.plant.p.spv_bp], 1).copy()
+
+    # ------------------------------------------------------- snapshot/restore
+    def _stand_arrays(self):
+        """Every array that holds one row per stand, as (path, array): the environment's
+        bookkeeping, the plant's state, parameters and cached outputs, the interlock, the
+        expert's loops and the last readings.  The order is fixed; rows are edited in place,
+        so views (the parameter record's) stay valid."""
+        n = self.n
+        skip = (RefrigerantTables, EnvConfig, PlantParams, np.random.Generator)
+
+        def walk(obj, path, depth=0):
+            items = obj.items() if isinstance(obj, dict) else vars(obj).items()
+            for k, v in items:
+                if k == "_rec":                 # the parameter record: its fields are views of the attributes
+                    continue
+                p = path + (k,)
+                if isinstance(v, np.ndarray):
+                    if v.ndim and v.shape[0] == n:
+                        yield p, v
+                elif depth < 3 and isinstance(v, dict):
+                    yield from walk(v, p, depth + 1)
+                elif depth < 3 and type(v).__module__.startswith("hgbp_sim") and not isinstance(v, skip):
+                    yield from walk(v, p, depth + 1)
+
+        self.plant.outputs()                    # the cached outputs exist (a no-op after a step)
+        yield from walk(self, ())
+
+    def snapshot(self, idx) -> dict:
+        """The whole state of the stands ``idx`` (copies), for :meth:`restore` into this or
+        another environment with the same configuration and stand definition: the plant's
+        state, its parameters (randomized per stand), the actuators, the interlock, the
+        schedule and timers, the expert's loops and the last readings.  The random generator
+        is shared by all stands and is not part of it: a restored stand's future noise differs
+        from the original's (with ``noise=False`` the two run alike)."""
+        idx = np.atleast_1d(np.asarray(idx))
+        return {"n_rows": len(idx), "arrays": {p: a[idx].copy() for p, a in self._stand_arrays()}}
+
+    def restore(self, idx, snap: dict, rows=None) -> None:
+        """Set the stands ``idx`` to the snapshot's rows ``rows`` (default: in order;
+        ``rows=[0] * k`` copies one stand into ``k``)."""
+        idx = np.atleast_1d(np.asarray(idx))
+        rows = np.arange(snap["n_rows"]) if rows is None else np.atleast_1d(np.asarray(rows))
+        if len(rows) != len(idx):
+            raise ValueError(f"{len(idx)} stands but {len(rows)} snapshot rows")
+        mine = dict(self._stand_arrays())
+        if set(snap["arrays"]) != set(mine):
+            diff = sorted(set(snap["arrays"]) ^ set(mine))
+            raise ValueError(f"the snapshot is of a different environment layout: {diff[:5]}")
+        for p, a in mine.items():
+            a[idx] = snap["arrays"][p][rows]
 
     def _filter_feasible(self, sch, idx, N_line=None, rounds: int = 3) -> None:
         """Replace scheduled points that have no equilibrium (with all valves

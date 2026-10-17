@@ -103,6 +103,14 @@ compressor is started automatically and stopped after the last point.
 * **Randomized per episode:** plant parameters, ambient and water temperature, the charge
   (`charge_range`, plus a share `p_charge_extreme` of episodes in
   `charge_extreme_range`) and the cold-start liquid distribution.
+* **Snapshot and restore:** `env.snapshot(idx)` copies the whole state of stands `idx`:
+  the plant's state and its per-stand parameters, the actuators, the interlock, the schedule
+  and timers, the baseline loops and the last readings. `env2.restore(idx2, snap, rows=...)`
+  sets other stands to it, in the same environment or in another one with the same
+  configuration and stand definition (`rows=[0] * k` makes `k` copies of one stand). This is
+  for planners and rollouts that branch from a state. The random generator is shared by the
+  batch and is not part of the snapshot, so a copy's sensor noise differs from the original's.
+  Without noise, a copy runs exactly as the original.
 
 ## Reward
 
