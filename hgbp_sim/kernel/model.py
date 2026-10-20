@@ -278,6 +278,21 @@ def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid, h_o
 
 # ----------------------------------------------------------------- RHS
 @njit(cache=True)
+def liquid_choke_ratio(tab, p, P1, T_l):
+    """Valve 3's largest effective pressure drop over its inlet pressure: f_choke_liq, or (stv_choke)
+    IEC 60534's F_L^2 (P1 - F_F P_v) / P1 with P_v the vapor pressure of the liquid at its temperature
+    ``T_l`` (Newton on the saturation line from P1)."""
+    if p.stv_choke < 0.5:
+        return p.f_choke_liq
+    P_v = P1
+    for _ in range(4):
+        T1 = kp.sat(tab, P_v).T_l
+        dTdP = (kp.sat(tab, P_v * 1.001).T_l - T1) / (P_v * 0.001)
+        P_v = min(max(P_v - (T1 - T_l) / max(dTdP, 1e-9), 0.2 * P1), P1)
+    return min(max(p.stv_FL * p.stv_FL * (P1 - p.stv_FF * P_v) / P1, 0.02), 1.0)
+
+
+@njit(cache=True)
 def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out):
     """Time derivative ``dx`` of state ``x``; returns the fastest local rate [1/s]
     (for the step size control).  Writes the bypass gas side enthalpies of this
@@ -448,9 +463,10 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     mu_qo = mixture_viscosity(x_c[n - 1], mu_l_s, mu_v_s)
     C3 = kv_to_C(p.Kv_stv) * f3
     P_3dn = P_tee - head_sum
+    f_ch3 = liquid_choke_ratio(tab, p, P_i, S_co.T)
     seg = ws[8, :n]
     # liquid line, quench line, quench side, outlet leg at the valve-alone flow
-    m0 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], p.f_choke_liq, p.eps_valve, 0.0, 1.0)
+    m0 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], f_ch3, p.eps_valve, 0.0, 1.0)
     _, q_in, q_out = _quench_drops(p, m0, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s, mu_v_s,
                                    sigma_s, seg)
     seg_sum = 0.0
@@ -459,7 +475,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     dP0 = (_pipe(p.D_liq, p.t_liq, p.L_liq, p.K_liq, m0, rho_co, mu_co, 1.0)
            + _pipe(p.D_q, p.t_q, p.L_q, p.K_q, m0, rho_3, mu_3, 1.0) + q_in + seg_sum + q_out
            + _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, m0, rho_c[n - 1], mu_qo, 0.5))
-    mdot_3 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], p.f_choke_liq, p.eps_valve,
+    mdot_3 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], f_ch3, p.eps_valve,
                                  _equiv_C(m0, dP0, rho_3), rho_3)
     fwd3 = mdot_3 >= 0.0
     q_dist, q_in, q_out = _quench_drops(p, mdot_3, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s,

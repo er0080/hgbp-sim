@@ -15,7 +15,7 @@ from .layout import (A_M_cl, A_M_film, A_M_g, A_M_s, A_Q_sg, A_T_co, A_T_d, A_T_
                      A_ll_fill, A_mdot_2, A_mdot_3, A_mdot_c, A_mdot_drn, A_mdot_lv, A_rec_level, A_x_l1, A_y_liq, MX,
                      NX, X_HG, X_HQ, X_H_D, X_H_I, X_H_L, X_MM, X_M_I, X_M_L, X_N, X_P_D, X_P_I, X_P_S, X_TCW, X_TMW,
                      X_TM_CO, X_TM_D, X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_T_WL, X_U1, X_U_I, X_WM)
-from .model import NS, _softplus, pool_density, rhs
+from .model import NS, _softplus, liquid_choke_ratio, pool_density, rhs
 
 # outer unknowns (Levenberg-Marquardt): u1..u4, h_d, T_sw, T_dw, T_sh, T_rw, condenser walls
 # T_cw0.., the condenser water loop T_wl; then the receiver pool's enthalpy h_L (brought to rest at every evaluation, see
@@ -124,7 +124,8 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
     g2 = gas_valve_flow_s(1.0, P_i, P_s, rho_g, S.rho, p.kappa, p.xT, p.eps_valve, 0.0, 1.0)
     z[1] = invert_train(mdot_2 / max(g2 * kv_to_C(1.0), 1e-12), p.Kv_spv, p.spv_code, p.spv_R,
                         p.Kv_spv2, p.spv_split, p.Kv_spv_bp, p.spv_bp)
-    l3 = liquid_valve_flow_s(1.0, P_i, P_s, sati.rho_l, S.rho, p.f_choke_liq, p.eps_valve, 0.0, 1.0)
+    l3 = liquid_valve_flow_s(1.0, P_i, P_s, sati.rho_l, S.rho, liquid_choke_ratio(tab, p, P_i, sati.T_l - 3.0),
+                             p.eps_valve, 0.0, 1.0)
     z[2] = invert_characteristic(mdot_3 / max(l3 * kv_to_C(p.Kv_stv), 1e-12), p.stv_code, p.stv_R)
     # condenser duty and water flow (bisection on the effectiveness relation; the
     # refrigerant condensing at the saturation temperature, plate resistances in series)

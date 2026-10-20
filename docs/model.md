@@ -225,10 +225,19 @@ warm-up seen on real stands.
   * **Condenser:** `alpha_w0` 278. This is effective: the stand runs about 10 K between the
     mixed water and the condensing temperature at 37 kW.
   * **Bleed piping:** `Kv_wpipe` 30.
-  * **Valves:** still the nameplate sizes. At that point the model runs the valves at 30, 45 and
-    18 %, against the stand's 37, 58 and 29 %. The stand matches only with effective Kv 1.3, 3.5 and
-    0.64 (against 6.3, 6.3 and 1.0). Those sizes would also change which points the stand can reach,
-    so they wait on the valves' arrangement on the stand (the split ranges, the line losses).
+  * **Valves** (all three are the same make; their datasheet's sizing tables):
+    * **Valves 1 and 2:** the small parallel valves are out of service on the stand (`Kv_dpv2`,
+      `Kv_spv2` 0). At nameplate Kv the model then runs them at 42 and 63 %, against the stand's 37
+      and 58 %.
+    * **Valve 3 chokes.** The datasheet's expansion capacities barely change with the pressure drop.
+      Liquid arriving 2 K subcooled flashes in the valve and passes far less than Kv sqrt(rho dP)
+      says. `stv_choke` 1 limits the effective drop to F_L^2 (P1 - F_F P_v), with P_v the liquid's
+      vapor pressure. F_L and F_F are fitted to the table (R134a and R32, 2.4 % RMS against the
+      constant 0.7 P1 cap's 6-50 % excess).
+    * **The quench's position at 45/130:** at the nameplate Kv 1.0 the model runs valve 3 at 21 %,
+      against the stand's 29 %. The valves' kvs-reduction switches are confirmed off (100 %). The
+      remaining gap is on the liquid side ahead of the valve (a drop that brings the liquid nearer
+      its vapor pressure) or in the quench flow the suction needs.
   * **Still off:** in a 45/130 → 59/150 transition, the model's suction gas heats about twice
     as fast as the stand's measured RGT.
 * Actuators: first-order lag and slew-rate limit.

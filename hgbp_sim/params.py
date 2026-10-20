@@ -221,6 +221,11 @@ class PlantParams:
     xT: float = 0.70            # gas valve pressure-drop ratio at which the flow chokes (ISA xT)
     eps_valve: float = 2e3      # numerical smoothing of valve flow near zero pressure drop [Pa]
     f_choke_liq: float = 0.7    # largest effective pressure-drop ratio for flashing liquid in valve 3 (liquid choking)
+    stv_choke: float = 0.0      # valve 3's liquid choking: 0 at f_choke_liq x the inlet pressure; 1 as IEC 60534 from the
+                                # liquid's vapor pressure, F_L^2 (P1 - F_F P_v): liquid that arrives a few kelvin
+                                # subcooled flashes in the valve and passes far less than its Kv says
+    stv_FL: float = 1.416       # valve 3's effective F_L and F_F: fitted to the stand valves' (MVL661) expansion capacity table
+    stv_FF: float = 0.882       # (KE, R134a and R32, 2 K subcooling: 2.4 % RMS); effective, they lump the two-phase flow
 
     # -------------------------------------------------------------- sensors
     tau_T: float = 4.0          # temperature sensor time constant [s]
