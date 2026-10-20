@@ -29,10 +29,11 @@ from .layout import (A_M_L, A_M_cl, A_M_d, A_M_film, A_M_g, A_M_i, A_M_q_liq, A_
                      A_dP_mog, A_dP_moq, A_dP_mq, A_dP_mq_ch, A_dP_q, A_dP_q_dist, A_dP_q_in, A_dP_q_out, A_dP_qc,
                      A_dP_suc, A_dx, A_eta_s, A_eta_v, A_fill_i, A_h2, A_h2_ad, A_h_2f, A_h_3f, A_h_L, A_h_c, A_h_cin,
                      A_h_co, A_h_d, A_h_g, A_h_go, A_h_i, A_h_l1, A_h_l2, A_h_q, A_ll_fill, A_mdot_1, A_mdot_2,
-                     A_mdot_3, A_mdot_c, A_mdot_cr, A_mdot_drn, A_mdot_lv, A_mdot_w, A_mm, A_rec_level, A_rho_s, A_u1,
+                     A_mdot_3, A_mdot_c, A_mdot_cr, A_mdot_drn, A_mdot_lv, A_mdot_w, A_mdot_whx, A_mm, A_rec_level, A_rho_s, A_u1,
+                     A_T_win,
                      A_x_c, A_x_i, A_x_l1, A_x_l2, A_x_out, A_x_q, A_x_qo, A_y_liq, MX, NX, X_HG, X_HQ, X_H_D, X_H_I,
                      X_H_L, X_MM, X_M_D, X_M_I, X_M_L, X_M_S, X_N, X_P_D, X_P_I, X_P_S, X_TCW, X_TMW, X_TM_CO, X_TM_D,
-                     X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_U1, X_U_D, X_U_I, X_U_S, X_WM)
+                     X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_T_WL, X_U1, X_U_D, X_U_I, X_U_S, X_WM)
 # (layout's X_* state and A_* output indices are compile-time constants in the kernel)
 
 G = 9.81                    # gravity [m/s^2]
@@ -277,6 +278,21 @@ def _condenser(p, tab, P, s, T_w, f_fl, h_hot, h_vap, T_iv, m_hot, Q, h_mid, h_o
 
 # ----------------------------------------------------------------- RHS
 @njit(cache=True)
+def liquid_choke_ratio(tab, p, P1, T_l):
+    """Valve 3's largest effective pressure drop over its inlet pressure: f_choke_liq, or (stv_choke)
+    IEC 60534's F_L^2 (P1 - F_F P_v) / P1 with P_v the vapor pressure of the liquid at its temperature
+    ``T_l`` (Newton on the saturation line from P1)."""
+    if p.stv_choke < 0.5:
+        return p.f_choke_liq
+    P_v = P1
+    for _ in range(4):
+        T1 = kp.sat(tab, P_v).T_l
+        dTdP = (kp.sat(tab, P_v * 1.001).T_l - T1) / (P_v * 0.001)
+        P_v = min(max(P_v - (T1 - T_l) / max(dTdP, 1e-9), 0.2 * P1), P1)
+    return min(max(p.stv_FL * p.stv_FL * (P1 - p.stv_FF * P_v) / P1, 0.02), 1.0)
+
+
+@njit(cache=True)
 def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out):
     """Time derivative ``dx`` of state ``x``; returns the fastest local rate [1/s]
     (for the step size control).  Writes the bypass gas side enthalpies of this
@@ -447,9 +463,10 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     mu_qo = mixture_viscosity(x_c[n - 1], mu_l_s, mu_v_s)
     C3 = kv_to_C(p.Kv_stv) * f3
     P_3dn = P_tee - head_sum
+    f_ch3 = liquid_choke_ratio(tab, p, P_i, S_co.T)
     seg = ws[8, :n]
     # liquid line, quench line, quench side, outlet leg at the valve-alone flow
-    m0 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], p.f_choke_liq, p.eps_valve, 0.0, 1.0)
+    m0 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], f_ch3, p.eps_valve, 0.0, 1.0)
     _, q_in, q_out = _quench_drops(p, m0, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s, mu_v_s,
                                    sigma_s, seg)
     seg_sum = 0.0
@@ -458,7 +475,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     dP0 = (_pipe(p.D_liq, p.t_liq, p.L_liq, p.K_liq, m0, rho_co, mu_co, 1.0)
            + _pipe(p.D_q, p.t_q, p.L_q, p.K_q, m0, rho_3, mu_3, 1.0) + q_in + seg_sum + q_out
            + _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, m0, rho_c[n - 1], mu_qo, 0.5))
-    mdot_3 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], p.f_choke_liq, p.eps_valve,
+    mdot_3 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], f_ch3, p.eps_valve,
                                  _equiv_C(m0, dP0, rho_3), rho_3)
     fwd3 = mdot_3 >= 0.0
     q_dist, q_in, q_out = _quench_drops(p, mdot_3, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s,
@@ -496,15 +513,28 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     Q_rw = Q_rwL + Q_rwV
     dT_rw = (p.rec_UA_a * (T_amb - T_rw) - Q_rw) / p.C_rw
 
-    # ---- condenser, water side: the plant loop's supply-to-return difference drives the
-    # water through valve 4, the piping and the condenser in series
+    # ---- condenser, water side.  Once through: the plant loop's supply-to-return difference
+    # drives the water through valve 4, the piping and the condenser in series.  Run-around
+    # loop (w_loop): a pump circulates w_loop_mdot through the condenser; the supply enters at
+    # the pump's suction and valve 4 bleeds the condenser's outlet water to the return (the
+    # plant loop's difference across valve 4 and the bleed piping), so the condenser takes the
+    # loop's mixed water, T_wl
     f_w = valve_fraction(u4, p.w_code, p.w_R)
     C_cw = kv_to_C(p.cond_Kv_w)
-    mdot_w = water_valve_flow(series_C3(kv_to_C(p.Kv_w) * f_w, C_cw, kv_to_C(p.Kv_wpipe)),
-                              p.P_w_sup - p.P_w_ret, p.rho_w)
-    dP_cw = hx_drop(mdot_w, C_cw, p.rho_w)
-    Cw = mdot_w * p.cp_w
-    UA_w = p.alpha_w0 * p.cond_A * max(mdot_w / p.mdot_w_ref, 1e-6) ** 0.8
+    T_wl = x[X_T_WL]
+    if p.w_loop > 0.5:
+        mdot_hx = p.w_loop_mdot
+        mdot_w = min(water_valve_flow(series_C3(kv_to_C(p.Kv_w) * f_w, kv_to_C(p.Kv_wpipe), 1e30),
+                                      p.P_w_sup - p.P_w_ret, p.rho_w), mdot_hx)
+        T_win = T_wl
+    else:
+        mdot_w = water_valve_flow(series_C3(kv_to_C(p.Kv_w) * f_w, C_cw, kv_to_C(p.Kv_wpipe)),
+                                  p.P_w_sup - p.P_w_ret, p.rho_w)
+        mdot_hx = mdot_w
+        T_win = T_wi
+    dP_cw = hx_drop(mdot_hx, C_cw, p.rho_w)
+    Cw = mdot_hx * p.cp_w
+    UA_w = p.alpha_w0 * p.cond_A * max(mdot_hx / p.mdot_w_ref, 1e-6) ** 0.8
     T_co = S_co.T                                     # liquid line at valve 3
     SC = sat_i.T_l - T_co
     h_co = h_cv_out
@@ -556,7 +586,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
 
     # ---- condenser, walls -> water: counterflow, the water rising from S1 (bottom) to S2
     # through the wall cells
-    T_wat = T_wi
+    T_wat = T_win
     Q_ww = 0.0
     T_wc, dT_cw = ws[15, :n], ws[16, :n]
     eps_w = 1.0 - math.exp(-UA_w / n / max(Cw, 1e-9))
@@ -569,7 +599,13 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
         Q_scj = Q_sc * o_sc[j] / max(o_sum, 1e-12)
         dT_cw[j] = (Q_c[j] + Q_scj - Q_wj + (p.UA_ca / n) * (T_amb - T_cw[j])) / (p.C_cw / n)
     Q_w = Q_ww                                       # water duty
-    T_wo = T_wat if Cw > 1e-9 else T_wi
+    T_wo = T_wat if Cw > 1e-9 else T_win
+    # the loop's water: the condenser's duty and the pump's heat in, the bleed's excess over the
+    # supply out (once through, the state follows the supply)
+    if p.w_loop > 0.5:
+        dT_wl = (Q_w + p.w_pump_heat - mdot_w * p.cp_w * (T_wo - T_wi)) / (p.w_loop_M * p.cp_w)
+    else:
+        dT_wl = T_wi - T_wl
 
     # ---- mixing exchanger, gas side: quasi-steady march from S1 (bottom cell n-1)
     # up to S2 against the plate walls; the gas does not condense (walls below
@@ -755,6 +791,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     for j in range(n):
         dx[X_TCW + j] = dT_cw[j]
     dx[X_T_SH], dx[X_N] = dT_sh, dN
+    dx[X_T_WL] = dT_wl
     dx[X_U1] = actuator_rate(u1, u_cmd[0], p.tau_dpv, p.rate_dpv)
     dx[X_U1 + 1] = actuator_rate(u2, u_cmd[1], p.tau_spv, p.rate_spv)
     dx[X_U1 + 2] = actuator_rate(u3, u_cmd[2], p.tau_stv, p.rate_stv)
@@ -840,6 +877,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     a[A_N] = N
     for k in range(4):
         a[A_u1 + k] = x[X_U1 + k]
+    a[A_T_win], a[A_mdot_whx] = T_win, mdot_hx
     M_i = M_C + M_L
     a[A_M_s], a[A_M_g], a[A_M_d], a[A_M_i], a[A_M_tot] = M_s, M_g, M_d, M_i, M_s + M_d + M_i
     a[A_Tm_s], a[A_Tm_d], a[A_Tm_co], a[A_mm], a[A_Wm] = Tm_s, Tm_d, Tm_co, mm, Wm

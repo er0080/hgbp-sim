@@ -195,8 +195,57 @@ warm-up seen on real stands.
 * Every valve is sized by its `Kv` (m³/h of water at 1 bar), as the hardware is
   specified: $`\dot m = \frac{K_v}{36000} f(u) \sqrt{\rho \, \Delta P}`$, with a linear,
   equal-percentage or quick-opening characteristic $`f(u)`$.
-* Valve 4 is in series with the condenser water side and the plant piping, driven by the
-  water loop's supply-to-return difference (1.5 barg / 0.35 barg).
+* The condenser's water, in one of two arrangements (`w_loop`):
+  * **Once through** (0, the default): valve 4 is in series with the condenser water side and
+    the plant piping, driven by the plant loop's supply-to-return difference (1.5 barg /
+    0.35 barg), and the condenser takes the supply.
+  * **Run-around loop** (1, the stand's): a pump circulates `w_loop_mdot` through the
+    condenser. The facility's supply enters at the pump's suction, and valve 4 (in series with
+    the bleed piping, `Kv_wpipe`) passes the condenser's outlet water to the facility's return.
+    The stand's chilled-water loop holds 20 psid between supply and return (`P_w_sup -
+    P_w_ret`).
+    * **The loop as a state:** one well-mixed volume of `w_loop_M` (pump, piping, condenser
+      water side). The condenser's duty and the pump's heat (`w_pump_heat`) go in, and the
+      bleed's excess over the supply goes out. The condenser takes the loop's mixed water,
+      `T_wl`, and the stand's water inlet sensor, on the condenser's inlet, reads it
+      (`measure()["T_wi"]`); `T_wi` as an input stays the facility's supply.
+    * **The time constant** is the loop's water over the bleed: about a minute at the stand's
+      usual openings. Closing valve 4 heats the loop for minutes, and the liquid pressure
+      follows. That lag is what the once-through arrangement left out.
+    * **Fitted to the stand's logs (2026-10-19):** the inlet temperature against valve 4's
+      position and the compressor power gives 36 kg of water (0.5 K RMS over 6 h). Valve 4 is
+      the stand's Kv 12, equal percentage. The pump's flow, 7.7 kg/s (123 gpm), is where its
+      curve (95 ft at shut-off, 65 ft at 150 gpm) meets the condenser's water side and some
+      loop piping.
+* **The stand definition's first calibration** (2026-10-20, the 45/130 °F point the stand held
+  for hours: power, discharge temperature, volume flow, the water inlet and the four valve
+  positions):
+  * **Compressor:** `eta_s0` 0.637, `eta_v0` 0.977 and `eta_motor` 0.95. The stand's
+    compressor is an older one with many hours on it.
+  * **Condenser:** `alpha_w0` 278. This is effective: the stand runs about 10 K between the
+    mixed water and the condensing temperature at 37 kW.
+  * **Bleed piping:** `Kv_wpipe` 30.
+  * **Valves** (all three are the same make; their datasheet's sizing tables):
+    * **Valves 1 and 2:** the small parallel valves are out of service on the stand (`Kv_dpv2`,
+      `Kv_spv2` 0). At nameplate Kv the model then runs them at 42 and 63 %, against the stand's 37
+      and 58 %.
+    * **Valve 3 chokes.** The datasheet's expansion capacities barely change with the pressure drop.
+      Liquid arriving 2 K subcooled flashes in the valve and passes far less than Kv sqrt(rho dP)
+      says.
+      * **The law:** `stv_choke` 1 limits the effective drop to F_L^2 (P1 - F_F P_v), with P_v the
+        liquid's vapor pressure.
+      * **Fitted to the R410A table** (the datasheet's 2019 edition): F_L 0.593, F_F 0, so the drop
+        is capped at 0.35 P1, at 6.1 % RMS. The constant 0.7 P1 cap was 35 % off.
+      * **Other refrigerants:** the 2021 edition's R134a and R32 tables fit at F_L 1.416, F_F 0.882.
+    * **The quench's position at 45/130:** at the nameplate Kv 1.0, the R410A law runs valve 3 at
+      20.5 %, against the stand's 29 % (the kvs-reduction switches are confirmed at 100 %; the
+      sight glass is clear).
+      * **The editions disagree:** where they overlap (R134a, choked), the 2021 edition rates the
+        same valve at about 0.83 of the 2019 one. That alone would put the valve near 25 %.
+      * **The rest** is within the valve's ±3 % full-scale accuracy and 3 % hysteresis.
+      * **The stand definition** takes valve 3's effective Kv from the stand: 0.707.
+  * **Still off:** in a 45/130 → 59/150 transition, the model's suction gas heats about twice
+    as fast as the stand's measured RGT.
 * Actuators: first-order lag and slew-rate limit.
 
 ### Sensors and trips
@@ -207,10 +256,16 @@ warm-up seen on real stands.
   flow (`Vdot`), the mass flow reading at the vapor density of the measured suction
   pressure and temperature.
 * Trips: high discharge pressure, high discharge temperature, low / high suction pressure,
-  high suction gas temperature. The defaults are the stand's hard limits: 700 psia (48.3 bar),
-  320 °F (160 °C), a 30 psia (2.07 bar) minimum suction pressure and 104 °F (40 °C) at the
-  suction-line flow meter's inlet (`T_s_max`: its aluminium lobes expand into the steel
-  housing above it). `HGBPPlant.HARD_TRIPS` lists them.
+  high suction gas temperature, high liquid pressure. The defaults are the stand's hard
+  limits:
+  * 700 psia (48.3 bar) on the discharge pressure;
+  * 320 °F (160 °C) on the discharge temperature;
+  * a 30 psia (2.07 bar) minimum suction pressure;
+  * 104 °F (40 °C) at the suction-line flow meter's inlet (`T_s_max`: its aluminium lobes
+    expand into the steel housing above it);
+  * 350 psia (24.13 bar) on the liquid pressure (`P_i_max`).
+
+  `HGBPPlant.HARD_TRIPS` lists them.
 * Flags: liquid at the compressor (floodback), quench liquid leaving the mixing exchanger,
   no liquid seal (undercharge), receiver full and condenser flooding (overcharge).
 * The liquid line sensor reads the receiver pool's temperature with its lag. While the pool

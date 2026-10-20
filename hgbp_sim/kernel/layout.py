@@ -20,7 +20,7 @@ STATE_NAMES = tuple(["P_s"] + [f"h_q{j}" for j in range(MX)] + ["h_l1", "h_l2"]
                     + ["T_rw", "T_sh", "N",
                        "u1", "u2", "u3", "u4", "Tm_s", "Tm_d", "mm", "Wm", "Tm_co",
                        "M_s", "M_d", "M_i", "U_s", "U_d", "U_i", "M_L"]
-                    + [f"h_g{j}" for j in range(MX)])
+                    + [f"h_g{j}" for j in range(MX)] + ["T_wl"])
 IX = {k: i for i, k in enumerate(STATE_NAMES)}
 NX = len(STATE_NAMES)
 X_P_S = IX["P_s"]
@@ -37,6 +37,7 @@ X_U1 = IX["u1"]                     # u1..u4
 X_TM_S, X_TM_D, X_MM, X_WM, X_TM_CO = IX["Tm_s"], IX["Tm_d"], IX["mm"], IX["Wm"], IX["Tm_co"]
 X_M_S, X_M_D, X_M_I, X_U_S, X_U_D, X_U_I = IX["M_s"], IX["M_d"], IX["M_i"], IX["U_s"], IX["U_d"], IX["U_i"]
 X_HG = IX["h_g0"]
+X_T_WL = IX["T_wl"]                 # the condenser water loop (w_loop; once through it follows the supply)
 
 # -------------------------------------------------------------- parameters
 # Valve flow characteristics as the kernel takes them
@@ -99,7 +100,7 @@ AUX_FIELDS = (
     ("W_el", 1), ("W_shaft", 1), ("Pr", 1), ("eta_v", 1), ("eta_s", 1),
     ("Q_r", 1), ("Q_w", 1), ("Q_sc", 1), ("Q_sg", 1), ("Q_dg", 1), ("Q_rw", 1), ("T_wo", 1),
     ("T_sw", 1), ("T_dw", 1), ("T_cw", 1), ("T_rw", 1), ("T_sh", 1), ("N", 1),
-    ("u1", 1), ("u2", 1), ("u3", 1), ("u4", 1),
+    ("u1", 1), ("u2", 1), ("u3", 1), ("u4", 1), ("T_win", 1), ("mdot_whx", 1),
     ("M_s", 1), ("M_g", 1), ("M_d", 1), ("M_i", 1), ("M_tot", 1),
     ("Tm_s", 1), ("Tm_d", 1), ("Tm_co", 1), ("mm", 1), ("Wm", 1),
     ("dx", NX),

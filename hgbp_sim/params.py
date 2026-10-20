@@ -168,6 +168,13 @@ class PlantParams:
     P_w_sup: float = 1.5e5      # cooling water supply pressure, gauge [Pa]
     P_w_ret: float = 0.35e5     # cooling water return pressure, gauge; supply minus return drives the water through valve 4, the piping and the condenser [Pa]
     Kv_wpipe: float = 12.0      # cooling water piping, fittings and strainer between supply and return, outside valve 4 and the condenser (estimate) [m^3/h]
+    w_loop: float = 0.0         # the condenser's water arrangement: 0 once through (supply -> valve 4 -> condenser -> return);
+                                # 1 a run-around loop: a pump circulates w_loop_mdot through the condenser, the supply
+                                # enters at the pump's suction and valve 4 (with Kv_wpipe) bleeds the condenser's outlet
+                                # water to the return, so the condenser sees the loop's mixed temperature
+    w_loop_mdot: float = 4.0    # run-around loop: the pump's flow through the condenser (estimate) [kg/s]
+    w_loop_M: float = 36.0      # run-around loop: water in the loop, well mixed (pump, piping, condenser water side) [kg]
+    w_pump_heat: float = 0.0    # run-around loop: the pump's heat into the loop water [W]
 
     # ------------------------------------------------------------ pipe walls
     UA_sg: float = 40.0         # suction line wall -> refrigerant conductance [W/K]
@@ -214,6 +221,12 @@ class PlantParams:
     xT: float = 0.70            # gas valve pressure-drop ratio at which the flow chokes (ISA xT)
     eps_valve: float = 2e3      # numerical smoothing of valve flow near zero pressure drop [Pa]
     f_choke_liq: float = 0.7    # largest effective pressure-drop ratio for flashing liquid in valve 3 (liquid choking)
+    stv_choke: float = 0.0      # valve 3's liquid choking: 0 at f_choke_liq x the inlet pressure; 1 as IEC 60534 from the
+                                # liquid's vapor pressure, F_L^2 (P1 - F_F P_v): liquid that arrives a few kelvin
+                                # subcooled flashes in the valve and passes far less than its Kv says
+    stv_FL: float = 0.593       # valve 3's effective F_L and F_F: fitted to the stand valves' (MVL661) R410A expansion capacity
+    stv_FF: float = 0.0         # table (KE, 2 K subcooling, 6.1 % RMS: the drop capped at 0.35 P1); effective values that lump
+                                # the two-phase flow (the edition's R134a and R32 tables fit at 1.416, 0.882)
 
     # -------------------------------------------------------------- sensors
     tau_T: float = 4.0          # temperature sensor time constant [s]
@@ -232,6 +245,7 @@ class PlantParams:
     T_d_max: float = 160.0 + 273.15  # high discharge temperature trip, the stand's 320 degF hard limit [K]
     T_s_max: float = 40.0 + 273.15   # high suction gas temperature trip: the suction-line flow meter's inlet, its
                                      # 104 degF hard limit (the lobes expand into the housing) [K]
+    P_i_max: float = 24.13e5    # high liquid pressure trip (receiver / liquid line), 350 psia [Pa]
     y_flood: float = 0.005      # liquid mass share at the compressor suction port counted as floodback
 
     # ------------------------------------------------- baseline control aid
@@ -265,6 +279,7 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
     "tau_T": 0.3, "tau_m": 0.3,
     # (added last: the draws above stay as they were)
     "Kv_dpv2": 0.15, "Kv_spv2": 0.15, "Kv_dpv_bp": 0.15, "Kv_spv_bp": 0.15,
+    "w_loop_M": 0.3, "w_loop_mdot": 0.2,
 }
 
 
@@ -380,7 +395,7 @@ _GROUPS = [
 # next cold / warm start
 _REQUIRE_INIT = {"fluid", "charge", "cold_liquid_in_suction", "V_comp_suc", "V_comp_dis",
                  "cond_n_plates", "cond_V_ch", "cond_mass", "rec_V", "rec_dip", "rec_mass",
-                 "mx_n_plates", "mx_V_ch", "mx_A", "mx_mass", "cond_A", "rho_w", "cp_w"} \
+                 "mx_n_plates", "mx_V_ch", "mx_A", "mx_mass", "cond_A", "rho_w", "cp_w", "w_loop"} \
     | {f"{a}_{k}" for a in ("D", "t", "L") for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")}
 # Editable range (min, max) enforced by the UI and by LiveStand.set_params.
 # Parameters that are not listed are unconstrained.
@@ -390,6 +405,7 @@ _RANGES: dict[str, tuple[float, float]] = {
     "dpv_split": (0.05, 0.95), "spv_split": (0.05, 0.95), "dpv_bp": (0.0, 1.0), "spv_bp": (0.0, 1.0),
     "Kv_stv": (0.01, 200.0), "Kv_w": (0.01, 200.0),
     "P_w_sup": (0.2e5, 10e5), "P_w_ret": (0.0, 9e5),
+    "w_loop": (0.0, 1.0), "w_loop_mdot": (0.05, 50.0), "w_loop_M": (1.0, 2000.0), "w_pump_heat": (0.0, 2e4),
     "cond_Kv_r": (0.1, 500.0), "cond_Kv_w": (0.1, 500.0), "mx_Kv_g": (0.1, 500.0), "mx_Kv_dist": (0.1, 500.0),
     "mx_beta": (20.0, 70.0), "mx_b": (0.5e-3, 5e-3), "mx_W": (0.02, 0.5), "mx_phi": (1.0, 1.5),
     "mx_d_port": (0.005, 0.2), "mx_d_S34": (0.005, 0.2),
