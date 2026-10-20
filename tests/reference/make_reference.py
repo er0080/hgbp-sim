@@ -102,6 +102,8 @@ def scenarios(pkg):
         p = PlantParams(**params)
         if hasattr(p, "T_s_max"):          # the reference predates the suction gas trip: the PI loops' cold start
             p.T_s_max = 1e9                # passes 40 degC at the suction for a while
+        if hasattr(p, "P_i_max"):          # ... and the liquid pressure trip (the water valve closed in the trip
+            p.P_i_max = 1e12               # scenario tripped on the discharge side)
         st = LiveStand(p, seed=0)
         st.noise = False
         return st

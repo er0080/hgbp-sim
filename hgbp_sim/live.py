@@ -594,7 +594,7 @@ class LiveStand:
                         high_T_d_warning=f(aux["T_d"]) > f(p.T_d_max) - 15.0,
                         high_P_d_warning=f(aux["P_d"]) > 0.9 * f(p.P_d_max)),
             limits=dict(P_d_max=f(p.P_d_max) / 1e5, P_s_min=f(p.P_s_min) / 1e5, P_s_max=f(p.P_s_max) / 1e5,
-                        T_d_max=f(p.T_d_max) - C2K, T_s_max=f(p.T_s_max) - C2K),
+                        T_d_max=f(p.T_d_max) - C2K, T_s_max=f(p.T_s_max) - C2K, P_i_max=f(p.P_i_max) / 1e5),
             charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=self._nominal_charge(),
                         pending_kg=self.charge_pending, rate_kg_s=self.charge_rate),
             ph=ph, ph_paths=compression_paths(self.props, ph),

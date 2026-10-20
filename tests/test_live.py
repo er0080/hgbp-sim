@@ -99,8 +99,9 @@ def test_live_stand_operation():
         s = st.step()
         if s["compressor"]["tripped"]:
             break
-    # (with the stand's 700 psia / 320 degF limits the discharge temperature may trip first)
-    assert s["compressor"]["tripped"] and {"high_P_d", "high_T_d"} & set(s["compressor"]["trip_reasons"])
+    # (the liquid pressure's 350 psia trips first; with the stand's 700 psia / 320 degF limits the
+    # discharge temperature may come before the discharge pressure)
+    assert s["compressor"]["tripped"] and {"high_P_i", "high_P_d", "high_T_d"} & set(s["compressor"]["trip_reasons"])
     for _ in range(160):           # 40 s
         s = st.step()
     assert s["compressor"]["state"] == "OFF"

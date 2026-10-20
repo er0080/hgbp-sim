@@ -187,6 +187,7 @@ class HGBPPlant:
     H_L, M_L = L.X_H_L, L.X_M_L                     # receiver liquid pool
     TCW = slice(L.X_TCW, L.X_TCW + MX)
     T_SH, N_ = L.X_T_SH, L.X_N
+    T_WL = L.X_T_WL
     U1, U2, U3, U4 = L.X_U1, L.X_U1 + 1, L.X_U1 + 2, L.X_U1 + 3
     UV = slice(U1, U4 + 1)
     TM_S, TM_D, MM, WM, TM_CO = L.X_TM_S, L.X_TM_D, L.X_MM, L.X_WM, L.X_TM_CO
@@ -487,6 +488,7 @@ class HGBPPlant:
         x[:, self.M_L], x[:, self.H_L] = M_pool, sat["h_l"]
         for i in (self.T_SW, self.T_DW, self.T_RW, self.T_SH, self.TM_S, self.TM_D, self.TM_CO):
             x[:, i] = T_amb
+        x[:, self.T_WL] = self.T_wi[idx]                 # an idle stand's water loop holds the supply
         u_pos = np.zeros((m, self.NU)) if u_pos is None else np.broadcast_to(np.asarray(u_pos, float), (m, self.NU))
         x[:, self.UV] = u_pos
         self._sync_mass(x, idx)
@@ -535,11 +537,13 @@ class HGBPPlant:
                     SH=T_s - T_sat_s, SC=T_sat_i - T_co, T_sat_s=T_sat_s, T_sat_i=T_sat_i,
                     mdot=mdot, Vdot=mdot / rho_m,
                     W=W, N=a["N"], u1=a["u1"], u2=a["u2"], u3=a["u3"], u4=a["u4"],
-                    T_wi=self.T_wi.copy(), T_wo=a["T_wo"] + z(p.sig_T), T_amb=self.T_amb.copy(),
+                    # the condenser's water inlet: the supply, or with a run-around loop its mixed water
+                    T_wi=np.where(p.w_loop > 0.5, a["T_win"] + z(p.sig_T), self.T_wi),
+                    T_wo=a["T_wo"] + z(p.sig_T), T_amb=self.T_amb.copy(),
                     rec_level=a["rec_level"].copy())          # sight glass (read by eye, no noise)
 
     # --------------------------------------------------------------- checks
-    HARD_TRIPS = ("high_P_d", "low_P_s", "high_P_s", "high_T_d", "high_T_s")   # stop the compressor
+    HARD_TRIPS = ("high_P_d", "low_P_s", "high_P_s", "high_T_d", "high_T_s", "high_P_i")   # stop the compressor
 
     def trips(self) -> dict:
         """Hard trips and soft condition flags (boolean arrays)."""
@@ -551,6 +555,7 @@ class HGBPPlant:
             high_P_s=a["P_s"] > p.P_s_max,
             high_T_d=a["T_d"] > p.T_d_max,
             high_T_s=a["T_s"] > p.T_s_max,              # the suction-line flow meter's inlet
+            high_P_i=a["P_i"] > p.P_i_max,              # liquid pressure (receiver, liquid line)
             floodback=a["y_liq"] > p.y_flood,           # liquid reaching the compressor
             mixer_wet=a["x_qo"] < 1.0,                  # quench liquid leaving the mixing exchanger
             no_liquid_seal=a["ll_fill"] < 0.5,          # undercharged: receiver below the dip tube

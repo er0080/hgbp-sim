@@ -56,8 +56,9 @@ compressor is started automatically and stopped after the last point.
     35-75 Hz per point, ramping at `ramp_N_vfd` (the stand's 5 Hz/s). The nominal speed is
     taken as 60 Hz; `info["line"]` tells the drive.
 * **Liquid pressure setpoint:** the geometric mean of the suction and discharge pressures,
-  but at least the saturation pressure 6 K above the cooling water inlet (40 °F, down to
-  38 °F: `T_wi_range`).
+  but at least the saturation pressure 6 K above the cooling water supply (40 °F, down to
+  38 °F: `T_wi_range`). With the stand's run-around water loop (`w_loop`, docs/model.md) the
+  observation's water inlet (`T_wi`) is the condenser's mixed inlet, well above the supply.
 * **Feasibility:** points that fail the filters are resampled. The filters are an estimated
   discharge temperature, and an equilibrium at nominal charge with every valve below 95 %
   and a margin to the trips (10 K on discharge temperature, 1 bar on the pressures). Warm

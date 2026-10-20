@@ -33,6 +33,16 @@ def _plant_for(sc):
     return HGBPPlant(PlantParams(), n=1)
 
 
+def _pad_states(X, T_wi):
+    """States recorded before the condenser water loop's state (appended last): the loop at the
+    supply, as the once-through arrangement holds it."""
+    X = np.asarray(X, float)
+    out = np.zeros((X.shape[0], HGBPPlant.NX))
+    out[:, :X.shape[1]] = X
+    out[:, HGBPPlant.T_WL] = T_wi
+    return out
+
+
 def _rel_err(a, b):
     """Error relative to each value, floored at 1e-6 of the column's largest magnitude."""
     a, b = np.asarray(a, float), np.asarray(b, float)
@@ -44,12 +54,14 @@ def _rel_err(a, b):
 def test_rhs_matches_reference_pointwise(sc):
     pl = _plant_for(sc)
     pp = pl.params_subset(_ref(sc, "pt_env"))
-    X = _ref(sc, "pt_x")
+    nx = _ref(sc, "pt_x").shape[1]
+    X = _pad_states(_ref(sc, "pt_x"), _ref(sc, "pt_Twi"))
     args = (_ref(sc, "pt_u"), _ref(sc, "pt_N"), _ref(sc, "pt_Tamb"), _ref(sc, "pt_Twi"))
     dx, a = pl.rhs(X, *args, want_aux=True, p=pp)
     dxh = pl.rhs(X, *args, p=pp, hold_P_s=True)
-    assert _rel_err(dx, _ref(sc, "pt_dx")).max() < 1e-9
-    assert _rel_err(dxh, _ref(sc, "pt_dxh")).max() < 1e-9
+    assert _rel_err(dx[:, :nx], _ref(sc, "pt_dx")).max() < 1e-9
+    assert _rel_err(dxh[:, :nx], _ref(sc, "pt_dxh")).max() < 1e-9
+    assert np.abs(dx[:, HGBPPlant.T_WL]).max() == 0.0          # once through, the loop's state rests at the supply
     for k in mr.AUX_POINT:
         assert _rel_err(a[k], _ref(sc, f"pt_aux_{k}")).max() < 1e-9, k
 
@@ -95,6 +107,6 @@ def test_steady_state_matches_reference(case, steady):
     # used to iterate together and now iterate on their own (same tolerance, other path)
     tol_u, tol_x = (1e-9, 1e-9) if len(ok) == 1 else (1e-4, 1e-3)
     assert np.abs(new("u") - g("u"))[ok].max() < tol_u
-    assert _rel_err(new("x"), g("x"))[ok].max() < tol_x
+    assert _rel_err(new("x")[:, :g("x").shape[1]], g("x"))[ok].max() < tol_x
     for k in ("P_s", "P_d", "P_i", "M_tot"):
         assert _rel_err(new(f"aux_{k}"), g(f"aux_{k}"))[ok].max() < 1e-6, k

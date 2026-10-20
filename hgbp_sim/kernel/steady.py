@@ -14,25 +14,26 @@ from . import props as kp
 from .layout import (A_M_cl, A_M_film, A_M_g, A_M_s, A_Q_sg, A_T_co, A_T_d, A_T_s, A_W_el, A_h_2f, A_h_3f, A_h_g,
                      A_ll_fill, A_mdot_2, A_mdot_3, A_mdot_c, A_mdot_drn, A_mdot_lv, A_rec_level, A_x_l1, A_y_liq, MX,
                      NX, X_HG, X_HQ, X_H_D, X_H_I, X_H_L, X_MM, X_M_I, X_M_L, X_N, X_P_D, X_P_I, X_P_S, X_TCW, X_TMW,
-                     X_TM_CO, X_TM_D, X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_U1, X_U_I, X_WM)
+                     X_TM_CO, X_TM_D, X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_T_WL, X_U1, X_U_I, X_WM)
 from .model import NS, _softplus, pool_density, rhs
 
 # outer unknowns (Levenberg-Marquardt): u1..u4, h_d, T_sw, T_dw, T_sh, T_rw, condenser walls
-# T_cw0..; then the receiver pool's enthalpy h_L (brought to rest at every evaluation, see
+# T_cw0.., the condenser water loop T_wl; then the receiver pool's enthalpy h_L (brought to rest at every evaluation, see
 # residual) and the condensing zone's mass, settled between the rounds (settle_pool); the
 # pool holds the rest of the charge up to a full receiver (or fills it to the given level)
-NZL = 9 + MX
+NZL = 10 + MX
+IZ_WL = 9 + MX
 NZ = NZL + 2
 IZ_HL, IZ_M = NZL, NZL + 1
-ZSCALE = np.array([1.0, 1.0, 1.0, 1.0, 2e4] + [10.0] * (4 + MX) + [2e4, 1.0])
+ZSCALE = np.array([1.0, 1.0, 1.0, 1.0, 2e4] + [10.0] * (5 + MX) + [2e4, 1.0])
 # residuals: suction side mass [kg/s] and energy [W] balance, dT_sw, dP_d, dh_d, dT_dw, the
 # intermediate section's mass [kg/s] and energy [W] balance (as a whole: the drain between
-# its zones is the pool's business), dT_rw, dT_sh, dT_cw0..
-RSCALE = np.array([1e-3, 100.0, 0.1, 1e3, 1e2, 0.1, 1e-3, 100.0, 0.1, 0.1] + [0.1] * MX)
-NR = 10 + MX
-RES_IDX = (X_T_SW, X_P_D, X_H_D, X_T_DW, X_M_I, X_U_I, X_T_RW, X_T_SH) + tuple(X_TCW + j for j in range(MX))
-ZLO = np.array([1e-3] * 4 + [-np.inf] + [150.0] * (4 + MX) + [-np.inf, 1e-6])
-ZHI = np.array([1.0] * 4 + [np.inf] + [600.0] * (4 + MX) + [np.inf, 1e4])
+# its zones is the pool's business), dT_rw, dT_sh, dT_cw0.., dT_wl
+RSCALE = np.array([1e-3, 100.0, 0.1, 1e3, 1e2, 0.1, 1e-3, 100.0, 0.1, 0.1] + [0.1] * MX + [0.01])
+NR = 11 + MX
+RES_IDX = (X_T_SW, X_P_D, X_H_D, X_T_DW, X_M_I, X_U_I, X_T_RW, X_T_SH) + tuple(X_TCW + j for j in range(MX)) + (X_T_WL,)
+ZLO = np.array([1e-3] * 4 + [-np.inf] + [150.0] * (5 + MX) + [-np.inf, 1e-6])
+ZHI = np.array([1.0] * 4 + [np.inf] + [600.0] * (5 + MX) + [np.inf, 1e4])
 SETTLE_RELAX = 0.3     # relaxation of the pool enthalpy in settle_pool (pool enthalpy eliminated)
 POOL_TOL_M, POOL_TOL_H = 1e-5, 1.0     # receiver pool at rest: |dM_L/dt| [kg/s], |dh_L/dt| [J/kg/s]
 NP = 2 * MX           # exchanger profile: quench cell enthalpies, wall temperatures
@@ -130,22 +131,38 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
     Q = mdot_3 * (h_d - h_l)
     UA_r = p.alpha_r_2ph * p.cond_A
     UA_w, Cw = 1.0, 1.0
-    lo, hi = 1e-4, 1.0
-    for _ in range(40):
-        mid = 0.5 * (lo + hi)                                 # installed flow fraction f(u4)
-        mdot_w = water_valve_flow(series_C3(kv_to_C(p.Kv_w) * mid, kv_to_C(p.cond_Kv_w), kv_to_C(p.Kv_wpipe)),
-                                  p.P_w_sup - p.P_w_ret, p.rho_w)
-        Cw = mdot_w * p.cp_w
-        UA_w = p.alpha_w0 * p.cond_A * (mdot_w / p.mdot_w_ref) ** 0.8
-        Qw = (1.0 - math.exp(-UA_w * UA_r / (UA_w + UA_r) / Cw)) * Cw * (sati.T_l - T_wi)
-        if Qw > Q:
-            hi = mid
-        else:
-            lo = mid
-    z[3] = invert_characteristic(0.5 * (lo + hi), p.w_code, p.w_R)
+    T_in = T_wi
+    if p.w_loop > 0.5:
+        # run-around loop: the pump's flow through the condenser sets its inlet below the
+        # condensing temperature; valve 4 bleeds what carries the duty off above the supply
+        Cw = p.w_loop_mdot * p.cp_w
+        UA_w = p.alpha_w0 * p.cond_A * (p.w_loop_mdot / p.mdot_w_ref) ** 0.8
+        eps = 1.0 - math.exp(-UA_w * UA_r / (UA_w + UA_r) / Cw)
+        T_in = max(sati.T_l - Q / max(eps * Cw, 1e-9), T_wi + 1.0)
+        T_out = T_in + Q / Cw
+        m_b = min((Q + p.w_pump_heat) / (p.cp_w * max(T_out - T_wi, 0.5)), p.w_loop_mdot)
+        C_need = m_b / math.sqrt(p.rho_w * max(p.P_w_sup - p.P_w_ret, 1.0))
+        C_p = kv_to_C(p.Kv_wpipe)
+        C_v = 1.0 / math.sqrt(max(1.0 / max(C_need, 1e-30) ** 2 - 1.0 / C_p ** 2, 1e-30))
+        z[3] = invert_characteristic(C_v / kv_to_C(p.Kv_w), p.w_code, p.w_R)
+    else:
+        lo, hi = 1e-4, 1.0
+        for _ in range(40):
+            mid = 0.5 * (lo + hi)                                 # installed flow fraction f(u4)
+            mdot_w = water_valve_flow(series_C3(kv_to_C(p.Kv_w) * mid, kv_to_C(p.cond_Kv_w), kv_to_C(p.Kv_wpipe)),
+                                      p.P_w_sup - p.P_w_ret, p.rho_w)
+            Cw = mdot_w * p.cp_w
+            UA_w = p.alpha_w0 * p.cond_A * (mdot_w / p.mdot_w_ref) ** 0.8
+            Qw = (1.0 - math.exp(-UA_w * UA_r / (UA_w + UA_r) / Cw)) * Cw * (sati.T_l - T_wi)
+            if Qw > Q:
+                hi = mid
+            else:
+                lo = mid
+        z[3] = invert_characteristic(0.5 * (lo + hi), p.w_code, p.w_R)
+    z[IZ_WL] = T_in
     # wall cells (top -> bottom) between the condensing refrigerant and the water rising
     # from the bottom
-    T_wat = T_wi
+    T_wat = T_in
     for j in range(n - 1, -1, -1):
         dTw = (1.0 - math.exp(-UA_w * UA_r / (UA_w + UA_r) / n / Cw)) * (sati.T_l - T_wat)
         T_m = T_wat + 0.5 * dTw
@@ -193,6 +210,7 @@ def build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill,
     x[X_T_SW], x[X_T_DW], x[X_T_SH], x[X_T_RW] = z[5], z[6], z[7], z[8]
     for j in range(n):
         x[X_TCW + j] = z[9 + j]
+    x[X_T_WL] = z[IZ_WL]
     x[X_P_D], x[X_H_D] = P_d, z[4]
     x[X_P_I] = P_i
     x[X_N] = N

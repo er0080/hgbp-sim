@@ -195,8 +195,27 @@ warm-up seen on real stands.
 * Every valve is sized by its `Kv` (m³/h of water at 1 bar), as the hardware is
   specified: $`\dot m = \frac{K_v}{36000} f(u) \sqrt{\rho \, \Delta P}`$, with a linear,
   equal-percentage or quick-opening characteristic $`f(u)`$.
-* Valve 4 is in series with the condenser water side and the plant piping, driven by the
-  water loop's supply-to-return difference (1.5 barg / 0.35 barg).
+* The condenser's water, in one of two arrangements (`w_loop`):
+  * **Once through** (0, the default): valve 4 is in series with the condenser water side and
+    the plant piping, driven by the plant loop's supply-to-return difference (1.5 barg /
+    0.35 barg), and the condenser takes the supply.
+  * **Run-around loop** (1, the stand's): a pump circulates `w_loop_mdot` through the
+    condenser. The facility's supply enters at the pump's suction, and valve 4 (in series with
+    the bleed piping, `Kv_wpipe`) passes the condenser's outlet water to the facility's return.
+    The stand's chilled-water loop holds 20 psid between supply and return (`P_w_sup -
+    P_w_ret`).
+    * **The loop as a state:** one well-mixed volume of `w_loop_M` (pump, piping, condenser
+      water side). The condenser's duty and the pump's heat (`w_pump_heat`) go in, and the
+      bleed's excess over the supply goes out. The condenser takes the loop's mixed water,
+      `T_wl`, and the stand's water inlet sensor, on the condenser's inlet, reads it
+      (`measure()["T_wi"]`); `T_wi` as an input stays the facility's supply.
+    * **The time constant** is the loop's water over the bleed: about a minute at the stand's
+      usual openings. Closing valve 4 heats the loop for minutes, and the liquid pressure
+      follows. That lag is what the once-through arrangement left out.
+    * **Fitted to the stand's logs (2026-10-19):** the inlet temperature against valve 4's
+      position and the compressor power gives 36 kg of water and an equal-percentage valve 4 of
+      effective Kv 11.3 m³/h at 20 psid (0.5 K RMS over 6 h). The pump's flow, 2 kg/s, is an
+      estimate.
 * Actuators: first-order lag and slew-rate limit.
 
 ### Sensors and trips
@@ -207,10 +226,16 @@ warm-up seen on real stands.
   flow (`Vdot`), the mass flow reading at the vapor density of the measured suction
   pressure and temperature.
 * Trips: high discharge pressure, high discharge temperature, low / high suction pressure,
-  high suction gas temperature. The defaults are the stand's hard limits: 700 psia (48.3 bar),
-  320 °F (160 °C), a 30 psia (2.07 bar) minimum suction pressure and 104 °F (40 °C) at the
-  suction-line flow meter's inlet (`T_s_max`: its aluminium lobes expand into the steel
-  housing above it). `HGBPPlant.HARD_TRIPS` lists them.
+  high suction gas temperature, high liquid pressure. The defaults are the stand's hard
+  limits:
+  * 700 psia (48.3 bar) on the discharge pressure;
+  * 320 °F (160 °C) on the discharge temperature;
+  * a 30 psia (2.07 bar) minimum suction pressure;
+  * 104 °F (40 °C) at the suction-line flow meter's inlet (`T_s_max`: its aluminium lobes
+    expand into the steel housing above it);
+  * 350 psia (24.13 bar) on the liquid pressure (`P_i_max`).
+
+  `HGBPPlant.HARD_TRIPS` lists them.
 * Flags: liquid at the compressor (floodback), quench liquid leaving the mixing exchanger,
   no liquid seal (undercharge), receiver full and condenser flooding (overcharge).
 * The liquid line sensor reads the receiver pool's temperature with its lag. While the pool

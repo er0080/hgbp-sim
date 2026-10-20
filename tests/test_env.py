@@ -326,3 +326,41 @@ def test_suction_gas_temperature_trip():
     _, _, term, _, info = env.step(np.zeros((4, env.act_dim)))
     assert np.array_equal(info["trips"]["high_T_s"], [True, True, False, False])
     assert np.array_equal(term, [True, True, False, False]) and np.array_equal(info["tripped"], term)
+
+
+def test_run_around_water_loop():
+    """The stand's condenser water: a pump's loop, the supply made up at its suction and valve 4
+    bleeding the condenser's outlet water to the return.  At rest the bleed carries the duty off
+    above the supply; the condenser takes the loop's mixed water, which the sensor reads; closing
+    valve 4 heats the loop over about its water mass over the bleed."""
+    cfg = EnvConfig(stand=STAND, start_mode="warm", p_warm_at_setpoint=1.0, randomize_params=False, noise=False,
+                    T_wi_range=(4.0, 4.0), auto_reset=False, k_points=(1, 1), p_charge_extreme=0.0)
+    env = HGBPVecEnv(2, cfg, seed=2)
+    p = env.plant.p
+    assert np.all(p.w_loop == 1.0)
+    o = env.plant.outputs()
+    T_sup = 4.0 + 273.15
+    assert np.all(env.state == ST_RUNNING)
+    assert np.allclose(o["mdot_whx"], p.w_loop_mdot)
+    assert np.all(o["T_win"] > T_sup + 2.0)                       # mixed above the supply
+    assert np.allclose(o["Q_w"] + p.w_pump_heat, o["mdot_w"] * p.cp_w * (o["T_wo"] - T_sup), rtol=1e-3)
+    assert np.allclose(env.meas["T_wi"], o["T_win"])
+    tau = p.w_loop_M / o["mdot_w"]                                # [s] the loop's time constant
+    assert np.all((tau > 30.0) & (tau < 600.0))
+    T0, P0 = o["T_win"].copy(), o["P_i"].copy()
+    a = np.zeros((2, env.act_dim))
+    a[:, 3] = -1.0                                                # valve 4 closing at its rate
+    for _ in range(int(60.0 / cfg.dt_ctrl)):
+        _, _, _, _, info = env.step(a)
+    o = env.plant.outputs()
+    assert np.all(o["T_win"] > T0 + 3.0) and np.all(o["P_i"] > P0)
+
+
+def test_liquid_pressure_trip():
+    cfg = EnvConfig(stand=STAND, start_mode="warm", p_warm_at_setpoint=1.0, noise=False, auto_reset=False)
+    env = HGBPVecEnv(3, cfg, seed=3)
+    assert np.allclose(env.plant.p.P_i_max, 24.13e5)
+    _, _, _, _, info = env.step(np.zeros((3, env.act_dim)))
+    env.plant.p.P_i_max[0] = info["true"]["P_i"][0] - 1e4
+    _, _, term, _, info = env.step(np.zeros((3, env.act_dim)))
+    assert info["trips"]["high_P_i"][0] and term[0] and not term[1:].any()
