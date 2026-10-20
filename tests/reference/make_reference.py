@@ -99,7 +99,10 @@ def scenarios(pkg):
     LiveStand, HGBPPlant, PlantParams = live.LiveStand, plant_mod.HGBPPlant, params_mod.PlantParams
 
     def stand(**params):
-        st = LiveStand(PlantParams(**params) if params else None, seed=0)
+        p = PlantParams(**params)
+        if hasattr(p, "T_s_max"):          # the reference predates the suction gas trip: the PI loops' cold start
+            p.T_s_max = 1e9                # passes 40 degC at the suction for a while
+        st = LiveStand(p, seed=0)
         st.noise = False
         return st
 

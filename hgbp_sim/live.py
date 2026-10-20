@@ -442,7 +442,7 @@ class LiveStand:
         aux = pl.step(dt, u_cmd=u[None, :], N_cmd=il["N_cmd"], T_amb=self.T_amb, T_wi=self.T_wi)
         p.charge[0] = pl.conserved_mass()[0]
         trips = pl.trips()
-        hard = [k for k in ("high_P_d", "low_P_s", "high_P_s", "high_T_d") if bool(trips[k][0])]
+        hard = [k for k in pl.HARD_TRIPS if bool(trips[k][0])]
         if hard and not self.interlock.tripped[0]:
             self.interlock.tripped[:] = True
             self.run_request = False
@@ -594,7 +594,7 @@ class LiveStand:
                         high_T_d_warning=f(aux["T_d"]) > f(p.T_d_max) - 15.0,
                         high_P_d_warning=f(aux["P_d"]) > 0.9 * f(p.P_d_max)),
             limits=dict(P_d_max=f(p.P_d_max) / 1e5, P_s_min=f(p.P_s_min) / 1e5, P_s_max=f(p.P_s_max) / 1e5,
-                        T_d_max=f(p.T_d_max) - C2K),
+                        T_d_max=f(p.T_d_max) - C2K, T_s_max=f(p.T_s_max) - C2K),
             charge=dict(kg=float(pl.conserved_mass()[0]), nominal_kg=self._nominal_charge(),
                         pending_kg=self.charge_pending, rate_kg_s=self.charge_rate),
             ph=ph, ph_paths=compression_paths(self.props, ph),

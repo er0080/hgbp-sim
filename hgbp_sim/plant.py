@@ -539,6 +539,8 @@ class HGBPPlant:
                     rec_level=a["rec_level"].copy())          # sight glass (read by eye, no noise)
 
     # --------------------------------------------------------------- checks
+    HARD_TRIPS = ("high_P_d", "low_P_s", "high_P_s", "high_T_d", "high_T_s")   # stop the compressor
+
     def trips(self) -> dict:
         """Hard trips and soft condition flags (boolean arrays)."""
         a = self.outputs()
@@ -548,6 +550,7 @@ class HGBPPlant:
             low_P_s=a["P_s"] < p.P_s_min,
             high_P_s=a["P_s"] > p.P_s_max,
             high_T_d=a["T_d"] > p.T_d_max,
+            high_T_s=a["T_s"] > p.T_s_max,              # the suction-line flow meter's inlet
             floodback=a["y_liq"] > p.y_flood,           # liquid reaching the compressor
             mixer_wet=a["x_qo"] < 1.0,                  # quench liquid leaving the mixing exchanger
             no_liquid_seal=a["ll_fill"] < 0.5,          # undercharged: receiver below the dip tube

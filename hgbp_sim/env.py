@@ -588,7 +588,7 @@ class HGBPVecEnv:
         r_idle = -cfg.w_idle * idle * cfg.start_stop_action
         r_blocked = -cfg.w_blocked_start * blocked
         r_shut = -cfg.w_run_in_shutdown * (~self.run_required & running)
-        tripped = trips["high_P_d"] | trips["low_P_s"] | trips["high_P_s"] | trips["high_T_d"]
+        tripped = np.any([trips[k] for k in HGBPPlant.HARD_TRIPS], axis=0)
         r_trip = -cfg.trip_penalty * tripped
         if not cfg.terminate_on_trip:
             self.interlock.tripped |= tripped
