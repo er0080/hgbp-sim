@@ -231,13 +231,19 @@ warm-up seen on real stands.
       and 58 %.
     * **Valve 3 chokes.** The datasheet's expansion capacities barely change with the pressure drop.
       Liquid arriving 2 K subcooled flashes in the valve and passes far less than Kv sqrt(rho dP)
-      says. `stv_choke` 1 limits the effective drop to F_L^2 (P1 - F_F P_v), with P_v the liquid's
-      vapor pressure. F_L and F_F are fitted to the table (R134a and R32, 2.4 % RMS against the
-      constant 0.7 P1 cap's 6-50 % excess).
-    * **The quench's position at 45/130:** at the nameplate Kv 1.0 the model runs valve 3 at 21 %,
-      against the stand's 29 %. The valves' kvs-reduction switches are confirmed off (100 %). The
-      remaining gap is on the liquid side ahead of the valve (a drop that brings the liquid nearer
-      its vapor pressure) or in the quench flow the suction needs.
+      says.
+      * **The law:** `stv_choke` 1 limits the effective drop to F_L^2 (P1 - F_F P_v), with P_v the
+        liquid's vapor pressure.
+      * **Fitted to the R410A table** (the datasheet's 2019 edition): F_L 0.593, F_F 0, so the drop
+        is capped at 0.35 P1, at 6.1 % RMS. The constant 0.7 P1 cap was 35 % off.
+      * **Other refrigerants:** the 2021 edition's R134a and R32 tables fit at F_L 1.416, F_F 0.882.
+    * **The quench's position at 45/130:** at the nameplate Kv 1.0, the R410A law runs valve 3 at
+      20.5 %, against the stand's 29 % (the kvs-reduction switches are confirmed at 100 %; the
+      sight glass is clear).
+      * **The editions disagree:** where they overlap (R134a, choked), the 2021 edition rates the
+        same valve at about 0.83 of the 2019 one. That alone would put the valve near 25 %.
+      * **The rest** is within the valve's ±3 % full-scale accuracy and 3 % hysteresis.
+      * **The stand definition** takes valve 3's effective Kv from the stand: 0.707.
   * **Still off:** in a 45/130 → 59/150 transition, the model's suction gas heats about twice
     as fast as the stand's measured RGT.
 * Actuators: first-order lag and slew-rate limit.

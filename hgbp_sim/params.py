@@ -224,8 +224,9 @@ class PlantParams:
     stv_choke: float = 0.0      # valve 3's liquid choking: 0 at f_choke_liq x the inlet pressure; 1 as IEC 60534 from the
                                 # liquid's vapor pressure, F_L^2 (P1 - F_F P_v): liquid that arrives a few kelvin
                                 # subcooled flashes in the valve and passes far less than its Kv says
-    stv_FL: float = 1.416       # valve 3's effective F_L and F_F: fitted to the stand valves' (MVL661) expansion capacity table
-    stv_FF: float = 0.882       # (KE, R134a and R32, 2 K subcooling: 2.4 % RMS); effective, they lump the two-phase flow
+    stv_FL: float = 0.593       # valve 3's effective F_L and F_F: fitted to the stand valves' (MVL661) R410A expansion capacity
+    stv_FF: float = 0.0         # table (KE, 2 K subcooling, 6.1 % RMS: the drop capped at 0.35 P1); effective values that lump
+                                # the two-phase flow (the edition's R134a and R32 tables fit at 1.416, 0.882)
 
     # -------------------------------------------------------------- sensors
     tau_T: float = 4.0          # temperature sensor time constant [s]
