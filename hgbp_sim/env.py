@@ -128,6 +128,10 @@ class EnvConfig:
     start_delay: tuple = (5.0, 30.0)     # automatic start: delay before the run request [s]
     p_warm_at_setpoint: float = 0.5      # warm start exactly at first point (else at a random point)
     cold_liquid_in_suction: tuple = (0.0, 0.1)   # share of the liquid migrated to the suction side, per cold start
+    cold_loop_share: tuple = (0.0, 0.0)   # run-around water loop (w_loop) at a cold start: its standing water a share
+                                         # of the way from the supply to ambient, per cold start (0: the supply)
+    cold_eq_below: tuple = (0.0, 0.0)     # the charge's equalized saturation temperature at a cold start, below ambient [K]
+                                         # (the condenser's water holding the water-cooled side cooler), per cold start
     p_line: float = 0.0                  # share of episodes run across the line (no VFD): every point at one
                                          # line frequency, the motor at ramp_N; the others run on the VFD
                                          # (speed per point from the envelope, at ramp_N_vfd)
@@ -367,7 +371,12 @@ class HGBPVecEnv:
             u0 = np.broadcast_to(self.expert.u_off if cfg.cold_valves is None
                                  else np.asarray(cfg.cold_valves, float), (mc, 4))
             liq = rng.uniform(*cfg.cold_liquid_in_suction, mc)
-            pl.cold_start(cold_idx, T_amb=pl.T_amb[cold_idx], u_pos=u0, liquid_in_suction=liq)
+            lo, hi = cfg.cold_loop_share                 # drawn only for a range (the stream stays as it was)
+            wl = rng.uniform(lo, hi, mc) if hi > lo else np.full(mc, float(lo))
+            lo, hi = cfg.cold_eq_below
+            eq = rng.uniform(lo, hi, mc) if hi > lo else np.full(mc, float(lo))
+            pl.cold_start(cold_idx, T_amb=pl.T_amb[cold_idx], u_pos=u0, liquid_in_suction=liq, loop_share=wl,
+                          eq_below=eq)
             self.u_cmd[cold_idx] = u0
             self.start_at[cold_idx] = rng.uniform(*cfg.start_delay, mc)
             self.interlock.reset(cold_idx, running=False)

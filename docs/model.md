@@ -209,6 +209,10 @@ warm-up seen on real stands.
       bleed's excess over the supply goes out. The condenser takes the loop's mixed water,
       `T_wl`, and the stand's water inlet sensor, on the condenser's inlet, reads it
       (`measure()["T_wi"]`); `T_wi` as an input stays the facility's supply.
+    * **The pump runs with the compressor** (`w_pump_auto` 1, the stand's). While it stands,
+      valve 4's flow passes the condenser straight from the supply, the inlet sensor reads the
+      supply, and the loop's other water stands where it was. At a start the pump mixes that
+      water in: the stand's inlet reading jumps 6-13 K within about 10 s of every logged start.
     * **The time constant** is the loop's water over the bleed: about a minute at the stand's
       usual openings. Closing valve 4 heats the loop for minutes, and the liquid pressure
       follows. That lag is what the once-through arrangement left out.
@@ -246,6 +250,32 @@ warm-up seen on real stands.
       * **The stand definition** takes valve 3's effective Kv from the stand: 0.707.
   * **Still off:** in a 45/130 → 59/150 transition, the model's suction gas heats about twice
     as fast as the stand's measured RGT.
+* **The start, calibrated (2026-10-20)** against four logged starts: two under the stand's PID
+  loops, and two restarts driven by a learned controller. The stand's valve commands were
+  replayed open loop, compared over the first 10-180 s (open loop drifts later).
+  * **The idle stand at a cold start:** the environment draws two things per cold start. Both
+    default to 0, the earlier behaviour.
+    * **The charge equalizes below ambient** (`EnvConfig.cold_eq_below`, `cold_start(eq_below=)`).
+      The condenser's water holds the condenser, receiver and liquid line cooler than the room.
+      The stand read 18-24.5 °C saturation with its suction line at 26-28 °C. The vapor on the
+      suction and discharge sides is superheated to ambient, and their walls are at ambient.
+    * **The loop's standing water** (`EnvConfig.cold_loop_share`, `cold_start(loop_share=)`) is
+      a share of the way from the supply to ambient. The room warms it, or it is left from the
+      last run. The starts fit at 0.35-0.55. With the loop at the supply, the model's start ran
+      3-7 K low in SST and SDT, and its suction gas up to 18 K cool. A warm loop condenses
+      less, the discharge and the bypass's hot gas run higher, and the suction heats.
+  * **Discharge gas to the compressor shell:** `UA_gs` 100 W/K (from 40). The discharge
+    temperature's first minutes match: about 1 K RMS on the slower PID start, against 6-12 K.
+    The steady state hardly moves, since the shell settles near the gas.
+  * **Checked:** the learned controller's two restarts trip at the suction temperature limit
+    30-33 s after the start, where the stand's ended (41-43 °C at the stand's suction probe).
+    The 45/130 → 59/150 high liquid pressure trip still comes at 100-129 s (the stand: 96 s).
+  * **Still off:** on the slow PID start the stand's suction gas warms from 7 to 28 °C over
+    3 min at near-constant valve positions, while the model's stays near 17-21 °C. Scaling valve
+    3 does not fit both PID starts.
+    * The stand's suction probe sits near the compressor's suction port, and it read 37-42 °C
+      on the hot compressor before the restarts. Heat from the compressor's body into the
+      probe or the gas there is one candidate.
 * Actuators: first-order lag and slew-rate limit.
 
 ### Sensors and trips

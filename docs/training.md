@@ -93,7 +93,11 @@ compressor is started automatically and stopped after the last point.
   every test starts with the bypasses closed otherwise.
 * **Start modes:** `warm` (equilibrium at the first point or another one, from the
   steady-state solver), `cold` (equalized stand at ambient, compressor off, optionally
-  some liquid migrated to the suction side) or `random`. `cold_valves` sets the idle
+  some liquid migrated to the suction side) or `random`. At a cold start, `cold_eq_below`
+  equalizes the charge some kelvin below ambient (the condenser's water has kept the
+  water-cooled side cool). `cold_loop_share` puts a run-around loop's standing water part of
+  the way from the supply to ambient. Each is drawn per start; both default to 0
+  (docs/model.md, the start's calibration). `cold_valves` sets the idle
   stand's valve positions (default: the baseline controller's rest positions; the stand's
   shutdown procedure closes every valve, `(0, 0, 0, 0)`). Open the discharge and suction
   valves before the run request: the start permissives need them open.

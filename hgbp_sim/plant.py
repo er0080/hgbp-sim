@@ -390,7 +390,7 @@ class HGBPPlant:
 
     # -------------------------------------------------------- initialization
     def cold_start(self, idx=None, T_amb=None, u_pos=None, charge=None,
-                   liquid_in_suction=None) -> None:
+                   liquid_in_suction=None, loop_share=None, eq_below=None) -> None:
         """Equalized, compressor-off initial condition at ambient temperature.
 
         The total charge is distributed as saturated vapor in all volumes plus
@@ -399,8 +399,14 @@ class HGBPPlant:
         liquid has migrated to the suction side (compressor internal volume
         first, then suction line and mixing exchanger), as after a long off
         cycle.  If the charge is too small to reach saturation at ambient the
-        whole stand holds superheated vapor at a lower pressure.  Raises
-        ``ValueError`` if the charge does not fit into the stand.
+        whole stand holds superheated vapor at a lower pressure.  With ``eq_below``
+        [K] (default 0) the charge equalizes that far below ambient, where the
+        condenser's water has held the water-cooled side (condenser, receiver,
+        liquid line) cooler than the room: the vapor on the suction and discharge
+        sides is superheated to ambient, their walls at ambient.  A run-around
+        water loop (``w_loop``) holds water a share ``loop_share`` (default 0, the
+        supply) of the way from the supply to ambient.  Raises ``ValueError`` if
+        the charge does not fit into the stand.
         """
         idx = np.arange(self.n) if idx is None else np.atleast_1d(np.asarray(idx))
         if len(idx) == 0:
@@ -418,8 +424,10 @@ class HGBPPlant:
         V_tot = p.V_s + p.V_d + p.V_i
         n = self.MX
 
-        P_eq = pr.P_sat(T_amb)
+        T_eq = T_amb - (0.0 if eq_below is None else np.broadcast_to(np.asarray(eq_below, float), (m,)))
+        P_eq = pr.P_sat(T_eq)
         sat = pr.sat(P_eq)
+        h_amb = np.maximum(pr.h_PT(P_eq, T_amb), sat["h_v"])   # vapor at the equalized pressure, warmed to ambient
         rho_v, rho_l = sat["rho_v"], sat["rho_l"]
         # liquid mass accounting for the vapor volume it displaces
         M_liq = np.maximum((charge - rho_v * V_tot) / (1.0 - rho_v / rho_l), 0.0)
@@ -450,12 +458,13 @@ class HGBPPlant:
             hl, hv = (sat["h_l"][:, None], sat["h_v"][:, None]) if np.ndim(M_l) == 2 else (sat["h_l"], sat["h_v"])
             return hl + xq * (hv - hl)
 
-        h_vap = sat["h_v"] + 300.0
-        # suction side vapor at saturation (in equilibrium with walls at ambient)
-        H = np.where(M_ls > 0.0, h_mix(M_ls, p.V_sc), sat["h_v"][:, None])
+        h_vap = np.maximum(sat["h_v"] + 300.0, h_amb)
+        # suction side vapor in equilibrium with walls at ambient (saturated when the charge
+        # equalizes at ambient)
+        H = np.where(M_ls > 0.0, h_mix(M_ls, p.V_sc), h_amb[:, None])
         h_i = np.where(M_li > 0.0, h_mix(M_li, p.V_i), h_vap)
         h_d = h_vap
-        Hg = np.repeat(sat["h_v"][:, None], n, axis=1)
+        Hg = np.repeat(h_amb[:, None], n, axis=1)
         P = P_eq.copy()
 
         # --- dry stand: superheated vapor at the pressure holding the charge
@@ -479,16 +488,20 @@ class HGBPPlant:
         x = np.zeros((m, self.NX))
         x[:, self.P_S], x[:, self.HS], x[:, self.HG] = P, H, Hg
         x[:, self.TMW] = T_amb[:, None]
-        x[:, self.TCW] = T_amb[:, None]
+        x[:, self.TCW] = T_eq[:, None]                   # the water-cooled side at the equalized temperature
         x[:, self.P_D], x[:, self.H_D] = P, h_d
         x[:, self.P_I], x[:, self.H_I] = P, h_i
         # the intermediate section's liquid sits in the receiver pool (what it cannot hold
         # stays in the condensing zone, flooding the condenser)
         M_pool = np.where(wet, np.minimum(M_li, 0.98 * rho_l * (p.rec_V + p.V_lines["liq"])), 0.0)
         x[:, self.M_L], x[:, self.H_L] = M_pool, sat["h_l"]
-        for i in (self.T_SW, self.T_DW, self.T_RW, self.T_SH, self.TM_S, self.TM_D, self.TM_CO):
+        for i in (self.T_SW, self.T_DW, self.T_SH, self.TM_S, self.TM_D):
             x[:, i] = T_amb
-        x[:, self.T_WL] = self.T_wi[idx]                 # an idle stand's water loop holds the supply
+        x[:, self.T_RW], x[:, self.TM_CO] = T_eq, T_eq
+        # the idle stand's water loop (w_loop): a share ``loop_share`` (default 0) of the way from
+        # the supply to ambient, its standing water warmed by the room or left from the last run
+        f_wl = 0.0 if loop_share is None else np.broadcast_to(np.asarray(loop_share, float), (m,))
+        x[:, self.T_WL] = self.T_wi[idx] + f_wl * (T_amb - self.T_wi[idx])
         u_pos = np.zeros((m, self.NU)) if u_pos is None else np.broadcast_to(np.asarray(u_pos, float), (m, self.NU))
         x[:, self.UV] = u_pos
         self._sync_mass(x, idx)

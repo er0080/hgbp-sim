@@ -86,7 +86,7 @@ The exact limits depend on the operating point, because the vapor inventory does
 
 ## 5. Cold start
 
-At a cold start (compressor off, stand equalized at ambient) the liquid sits in the
+At a cold start (compressor off, stand equalized at ambient, or `eq_below` under it) the liquid sits in the
 receiver; what it cannot hold stays in the condenser. A share `cold_liquid_in_suction` can be placed on the suction side instead
 (compressor first, then suction line and mixing exchanger), as after refrigerant migration
 during a long off cycle. A charge too small to reach saturation at ambient leaves the whole
