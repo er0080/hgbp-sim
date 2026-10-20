@@ -213,9 +213,24 @@ warm-up seen on real stands.
       usual openings. Closing valve 4 heats the loop for minutes, and the liquid pressure
       follows. That lag is what the once-through arrangement left out.
     * **Fitted to the stand's logs (2026-10-19):** the inlet temperature against valve 4's
-      position and the compressor power gives 36 kg of water and an equal-percentage valve 4 of
-      effective Kv 11.3 m³/h at 20 psid (0.5 K RMS over 6 h). The pump's flow, 2 kg/s, is an
-      estimate.
+      position and the compressor power gives 36 kg of water (0.5 K RMS over 6 h). Valve 4 is
+      the stand's Kv 12, equal percentage. The pump's flow, 7.7 kg/s (123 gpm), is where its
+      curve (95 ft at shut-off, 65 ft at 150 gpm) meets the condenser's water side and some
+      loop piping.
+* **The stand definition's first calibration** (2026-10-20, the 45/130 °F point the stand held
+  for hours: power, discharge temperature, volume flow, the water inlet and the four valve
+  positions):
+  * **Compressor:** `eta_s0` 0.637, `eta_v0` 0.977 and `eta_motor` 0.95. The stand's
+    compressor is an older one with many hours on it.
+  * **Condenser:** `alpha_w0` 278. This is effective: the stand runs about 10 K between the
+    mixed water and the condensing temperature at 37 kW.
+  * **Bleed piping:** `Kv_wpipe` 30.
+  * **Valves:** still the nameplate sizes. At that point the model runs the valves at 30, 45 and
+    18 %, against the stand's 37, 58 and 29 %. The stand matches only with effective Kv 1.3, 3.5 and
+    0.64 (against 6.3, 6.3 and 1.0). Those sizes would also change which points the stand can reach,
+    so they wait on the valves' arrangement on the stand (the split ranges, the line losses).
+  * **Still off:** in a 45/130 → 59/150 transition, the model's suction gas heats about twice
+    as fast as the stand's measured RGT.
 * Actuators: first-order lag and slew-rate limit.
 
 ### Sensors and trips

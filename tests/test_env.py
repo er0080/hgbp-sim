@@ -346,7 +346,7 @@ def test_run_around_water_loop():
     assert np.allclose(o["Q_w"] + p.w_pump_heat, o["mdot_w"] * p.cp_w * (o["T_wo"] - T_sup), rtol=1e-3)
     assert np.allclose(env.meas["T_wi"], o["T_win"])
     tau = p.w_loop_M / o["mdot_w"]                                # [s] the loop's time constant
-    assert np.all((tau > 30.0) & (tau < 600.0))
+    assert np.all((tau > 10.0) & (tau < 600.0))
     T0, P0 = o["T_win"].copy(), o["P_i"].copy()
     a = np.zeros((2, env.act_dim))
     a[:, 3] = -1.0                                                # valve 4 closing at its rate
