@@ -313,3 +313,16 @@ def test_snapshot_rows_and_layout():
     x = b.plant.x.copy()
     b.restore([3], a.snapshot([2]))
     assert np.array_equal(b.plant.x[[0, 1, 2, 4]], x[[0, 1, 2, 4]])     # the other stands untouched
+
+
+def test_suction_gas_temperature_trip():
+    """The suction-line flow meter's limit trips the stand like the other hard limits."""
+    cfg = EnvConfig(stand=STAND, start_mode="warm", p_warm_at_setpoint=1.0, noise=False, auto_reset=False)
+    env = HGBPVecEnv(4, cfg, seed=3)
+    assert np.allclose(env.plant.p.T_s_max, 40.0 + 273.15)
+    _, _, _, _, info = env.step(np.zeros((4, env.act_dim)))
+    assert not info["tripped"].any() and not info["trips"]["high_T_s"].any()
+    env.plant.p.T_s_max[:2] = info["true"]["T_s"][:2] - 1.0
+    _, _, term, _, info = env.step(np.zeros((4, env.act_dim)))
+    assert np.array_equal(info["trips"]["high_T_s"], [True, True, False, False])
+    assert np.array_equal(term, [True, True, False, False]) and np.array_equal(info["tripped"], term)

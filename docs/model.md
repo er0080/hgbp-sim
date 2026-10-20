@@ -206,9 +206,11 @@ warm-up seen on real stands.
   positive-displacement meter in the suction line: `measure()` also gives that volume
   flow (`Vdot`), the mass flow reading at the vapor density of the measured suction
   pressure and temperature.
-* Trips: high discharge pressure, high discharge temperature, low / high suction pressure.
-  The defaults are the stand's hard limits: 700 psia (48.3 bar), 320 °F (160 °C) and a
-  30 psia (2.07 bar) minimum suction pressure.
+* Trips: high discharge pressure, high discharge temperature, low / high suction pressure,
+  high suction gas temperature. The defaults are the stand's hard limits: 700 psia (48.3 bar),
+  320 °F (160 °C), a 30 psia (2.07 bar) minimum suction pressure and 104 °F (40 °C) at the
+  suction-line flow meter's inlet (`T_s_max`: its aluminium lobes expand into the steel
+  housing above it). `HGBPPlant.HARD_TRIPS` lists them.
 * Flags: liquid at the compressor (floodback), quench liquid leaving the mixing exchanger,
   no liquid seal (undercharge), receiver full and condenser flooding (overcharge).
 * The liquid line sensor reads the receiver pool's temperature with its lag. While the pool
@@ -319,7 +321,7 @@ variable-speed 355 cm³/rev semi-hermetic compressor on R410A.
 | pipe walls | `UA_sg`, `UA_sa`, `UA_dg`, `UA_da` |
 | valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w`, characteristics, `tau_*`, `rate_*`; trains of valves 1 and 2: `Kv_dpv2`, `dpv_split`, `Kv_dpv_bp`, `dpv_bp` (and `spv`) |
 | sensors | `tau_T`, `tau_m`, `tau_W`, `sig_*` |
-| limits | `P_d_max`, `P_s_min`, `P_s_max`, `T_d_max`, `y_flood` |
+| limits | `P_d_max`, `P_s_min`, `P_s_max`, `T_d_max`, `T_s_max`, `y_flood` |
 
 ## Calibrating to the real stand
 

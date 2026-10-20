@@ -230,6 +230,8 @@ class PlantParams:
     P_s_min: float = 2.068e5    # low suction pressure trip, the stand's 30 psia hard limit [Pa]
     P_s_max: float = 30e5       # high suction pressure trip [Pa]
     T_d_max: float = 160.0 + 273.15  # high discharge temperature trip, the stand's 320 degF hard limit [K]
+    T_s_max: float = 40.0 + 273.15   # high suction gas temperature trip: the suction-line flow meter's inlet, its
+                                     # 104 degF hard limit (the lobes expand into the housing) [K]
     y_flood: float = 0.005      # liquid mass share at the compressor suction port counted as floodback
 
     # ------------------------------------------------- baseline control aid
