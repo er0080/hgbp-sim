@@ -356,6 +356,39 @@ def test_run_around_water_loop():
     assert np.all(o["T_win"] > T0 + 3.0) and np.all(o["P_i"] > P0)
 
 
+def test_idle_loop_and_equalized_cold_start():
+    """The stand's cold start: the loop's pump runs with the compressor (the inlet sensor reads the
+    supply while it stands), the loop's standing water a share of the way to ambient, the charge
+    equalized below ambient with the suction vapor warmed to it."""
+    cfg = EnvConfig(stand=STAND, start_mode="cold", randomize_params=False, noise=False, auto_reset=False,
+                    T_wi_range=(4.0, 4.0), T_amb_range=(26.0, 26.0), k_points=(1, 1), p_charge_extreme=0.0,
+                    cold_loop_share=(0.5, 0.5), cold_eq_below=(6.0, 6.0), start_delay=(30.0, 30.0),
+                    cold_valves=(0.6, 0.5, 0.1, 0.3))
+    env = HGBPVecEnv(2, cfg, seed=3)
+    pl, pr = env.plant, env.props
+    assert np.all(pl.p.w_pump_auto == 1.0)
+    T_wl = pl.x[:, HGBPPlant.T_WL] - 273.15
+    assert np.allclose(T_wl, 4.0 + 0.5 * (26.0 - 4.0))
+    assert np.allclose(pr.T_sat(pl.x[:, HGBPPlant.P_S]) - 273.15, 20.0, atol=0.05)
+    assert np.all(pl.outputs()["SH"] > 4.0)                        # suction vapor warmed to ambient
+    for _ in range(int(10.0 / cfg.dt_ctrl)):                       # idle: the sensor reads the supply
+        env.step(np.zeros((2, env.act_dim)))
+    assert np.all(env.state == ST_OFF)
+    assert np.allclose(env.meas["T_wi"] - 273.15, 4.0, atol=0.05)
+    assert np.allclose(pl.x[:, HGBPPlant.T_WL] - 273.15, T_wl)    # the standing water holds
+    while not np.all(env.state == ST_RUNNING):
+        env.step(np.zeros((2, env.act_dim)))
+    for _ in range(int(3.0 / cfg.dt_ctrl)):
+        env.step(np.zeros((2, env.act_dim)))
+    assert np.all(env.meas["T_wi"] - 273.15 > 12.0)               # the pump mixes it in
+    # the defaults keep the earlier start: the loop at the supply, the charge at ambient
+    env0 = HGBPVecEnv(1, EnvConfig(stand=STAND, start_mode="cold", randomize_params=False, noise=False,
+                                   auto_reset=False, T_wi_range=(4.0, 4.0), T_amb_range=(26.0, 26.0),
+                                   k_points=(1, 1), p_charge_extreme=0.0), seed=3)
+    assert np.allclose(env0.plant.x[:, HGBPPlant.T_WL] - 273.15, 4.0)
+    assert np.allclose(pr.T_sat(env0.plant.x[:, HGBPPlant.P_S]) - 273.15, 26.0, atol=0.05)
+
+
 def test_liquid_pressure_trip():
     cfg = EnvConfig(stand=STAND, start_mode="warm", p_warm_at_setpoint=1.0, noise=False, auto_reset=False)
     env = HGBPVecEnv(3, cfg, seed=3)

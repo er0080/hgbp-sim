@@ -518,11 +518,14 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # loop (w_loop): a pump circulates w_loop_mdot through the condenser; the supply enters at
     # the pump's suction and valve 4 bleeds the condenser's outlet water to the return (the
     # plant loop's difference across valve 4 and the bleed piping), so the condenser takes the
-    # loop's mixed water, T_wl
+    # loop's mixed water, T_wl.  With w_pump_auto the pump runs with the compressor: while it
+    # stands, valve 4's flow passes the condenser from the supply (the sensor on its inlet reads
+    # the supply) and the loop's other water stands where it was
     f_w = valve_fraction(u4, p.w_code, p.w_R)
     C_cw = kv_to_C(p.cond_Kv_w)
     T_wl = x[X_T_WL]
-    if p.w_loop > 0.5:
+    pump = p.w_pump_auto < 0.5 or N > 0.05 * p.N_nom
+    if p.w_loop > 0.5 and pump:
         mdot_hx = p.w_loop_mdot
         mdot_w = min(water_valve_flow(series_C3(kv_to_C(p.Kv_w) * f_w, kv_to_C(p.Kv_wpipe), 1e30),
                                       p.P_w_sup - p.P_w_ret, p.rho_w), mdot_hx)
@@ -603,7 +606,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # the loop's water: the condenser's duty and the pump's heat in, the bleed's excess over the
     # supply out (once through, the state follows the supply)
     if p.w_loop > 0.5:
-        dT_wl = (Q_w + p.w_pump_heat - mdot_w * p.cp_w * (T_wo - T_wi)) / (p.w_loop_M * p.cp_w)
+        dT_wl = (Q_w + p.w_pump_heat - mdot_w * p.cp_w * (T_wo - T_wi)) / (p.w_loop_M * p.cp_w) if pump else 0.0
     else:
         dT_wl = T_wi - T_wl
 

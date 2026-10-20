@@ -175,6 +175,8 @@ class PlantParams:
     w_loop_mdot: float = 4.0    # run-around loop: the pump's flow through the condenser (estimate) [kg/s]
     w_loop_M: float = 36.0      # run-around loop: water in the loop, well mixed (pump, piping, condenser water side) [kg]
     w_pump_heat: float = 0.0    # run-around loop: the pump's heat into the loop water [W]
+    w_pump_auto: float = 0.0    # run-around loop: 1 the pump runs with the compressor (while it stands, valve 4's flow
+                                # passes the condenser from the supply and the loop's other water stands); 0 always on
 
     # ------------------------------------------------------------ pipe walls
     UA_sg: float = 40.0         # suction line wall -> refrigerant conductance [W/K]
@@ -405,7 +407,7 @@ _RANGES: dict[str, tuple[float, float]] = {
     "dpv_split": (0.05, 0.95), "spv_split": (0.05, 0.95), "dpv_bp": (0.0, 1.0), "spv_bp": (0.0, 1.0),
     "Kv_stv": (0.01, 200.0), "Kv_w": (0.01, 200.0),
     "P_w_sup": (0.2e5, 10e5), "P_w_ret": (0.0, 9e5),
-    "w_loop": (0.0, 1.0), "w_loop_mdot": (0.05, 50.0), "w_loop_M": (1.0, 2000.0), "w_pump_heat": (0.0, 2e4),
+    "w_loop": (0.0, 1.0), "w_pump_auto": (0.0, 1.0), "w_loop_mdot": (0.05, 50.0), "w_loop_M": (1.0, 2000.0), "w_pump_heat": (0.0, 2e4),
     "cond_Kv_r": (0.1, 500.0), "cond_Kv_w": (0.1, 500.0), "mx_Kv_g": (0.1, 500.0), "mx_Kv_dist": (0.1, 500.0),
     "mx_beta": (20.0, 70.0), "mx_b": (0.5e-3, 5e-3), "mx_W": (0.02, 0.5), "mx_phi": (1.0, 1.5),
     "mx_d_port": (0.005, 0.2), "mx_d_S34": (0.005, 0.2),
