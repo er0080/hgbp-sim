@@ -204,8 +204,8 @@ warm-up seen on real stands.
     the bleed piping, `Kv_wpipe`) passes the condenser's outlet water to the facility's return.
     The stand's chilled-water loop holds 20 psid between supply and return (`P_w_sup -
     P_w_ret`).
-    * **The loop as a state:** one well-mixed volume of `w_loop_M` (pump, piping, condenser
-      water side). The condenser's duty and the pump's heat (`w_pump_heat`) go in, and the
+    * **The loop as a state:** one well-mixed volume of `w_loop_M` (the pump's casing and the
+      loop's piping; the condenser's water side is in its cells' heat capacity, `C_cw`). The condenser's duty and the pump's heat (`w_pump_heat`) go in, and the
       bleed's excess over the supply goes out. The condenser takes the loop's mixed water,
       `T_wl`, and the stand's water inlet sensor, on the condenser's inlet, reads it
       (`measure()["T_wi"]`); `T_wi` as an input stays the facility's supply.
@@ -213,12 +213,16 @@ warm-up seen on real stands.
       valve 4's flow passes the condenser straight from the supply, the inlet sensor reads the
       supply, and the loop's other water stands where it was. At a start the pump mixes that
       water in: the stand's inlet reading jumps 6-13 K within about 10 s of every logged start.
-    * **The time constant** is the loop's water over the bleed: about a minute at the stand's
-      usual openings. Closing valve 4 heats the loop for minutes, and the liquid pressure
+    * **The time constant** is the loop's heat capacity, with the condenser's cells, over the
+      bleed's: 10-35 s at the stand's usual openings. Closing valve 4 heats the loop for minutes, and the liquid pressure
       follows. That lag is what the once-through arrangement left out.
-    * **Fitted to the stand's logs (2026-10-19):** the inlet temperature against valve 4's
-      position and the compressor power gives 36 kg of water (0.5 K RMS over 6 h). Valve 4 is
-      the stand's Kv 12, equal percentage. The pump's flow, 7.7 kg/s (123 gpm), is where its
+    * **Fitted to the stand's logs:** 9 kg of water, about 7 m of 1-1/2" steel pipe and the
+      pump's casing, with the condenser's cells (23.6 kJ/K, 3.7 kg of it water) 61 kJ/K in all.
+      The stand's step test (2026-10-31, valve 4 stepped 3 and 6 %) gives it, and the logged
+      inlet temperature against valve 4 and the compressor power agrees (four logs, 45 min to
+      5 h: 0.5-0.8 K RMS, flat from 60 to 100 kJ/K; 36 kg plus the cells, the first fit's
+      2026-10-19 value, which counted the condenser's water twice, 0.6-1.7 K). Valve 4 is the
+      stand's Kv 12, equal percentage. The pump's flow, 7.7 kg/s (123 gpm), is where its
       curve (95 ft at shut-off, 65 ft at 150 gpm) meets the condenser's water side and some
       loop piping.
 * **The stand definition's first calibration** (2026-10-20, the 45/130 °F point the stand held

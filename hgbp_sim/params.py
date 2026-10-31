@@ -173,7 +173,7 @@ class PlantParams:
                                 # enters at the pump's suction and valve 4 (with Kv_wpipe) bleeds the condenser's outlet
                                 # water to the return, so the condenser sees the loop's mixed temperature
     w_loop_mdot: float = 4.0    # run-around loop: the pump's flow through the condenser (estimate) [kg/s]
-    w_loop_M: float = 36.0      # run-around loop: water in the loop, well mixed (pump, piping, condenser water side) [kg]
+    w_loop_M: float = 36.0      # run-around loop: water in the loop outside the condenser, well mixed (pump casing, piping); the condenser's water is in C_cw [kg]
     w_pump_heat: float = 0.0    # run-around loop: the pump's heat into the loop water [W]
     w_pump_auto: float = 0.0    # run-around loop: 1 the pump runs with the compressor (while it stands, valve 4's flow
                                 # passes the condenser from the supply and the loop's other water stands); 0 always on

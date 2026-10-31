@@ -332,7 +332,7 @@ def test_run_around_water_loop():
     """The stand's condenser water: a pump's loop, the supply made up at its suction and valve 4
     bleeding the condenser's outlet water to the return.  At rest the bleed carries the duty off
     above the supply; the condenser takes the loop's mixed water, which the sensor reads; closing
-    valve 4 heats the loop over about its water mass over the bleed."""
+    valve 4 heats the loop over about its heat capacity (with the condenser's cells) over the bleed's."""
     cfg = EnvConfig(stand=STAND, start_mode="warm", p_warm_at_setpoint=1.0, randomize_params=False, noise=False,
                     T_wi_range=(4.0, 4.0), auto_reset=False, k_points=(1, 1), p_charge_extreme=0.0)
     env = HGBPVecEnv(2, cfg, seed=2)
@@ -345,8 +345,8 @@ def test_run_around_water_loop():
     assert np.all(o["T_win"] > T_sup + 2.0)                       # mixed above the supply
     assert np.allclose(o["Q_w"] + p.w_pump_heat, o["mdot_w"] * p.cp_w * (o["T_wo"] - T_sup), rtol=1e-3)
     assert np.allclose(env.meas["T_wi"], o["T_win"])
-    tau = p.w_loop_M / o["mdot_w"]                                # [s] the loop's time constant
-    assert np.all((tau > 10.0) & (tau < 600.0))
+    tau = (p.w_loop_M * p.cp_w + p.C_cw) / (o["mdot_w"] * p.cp_w)  # [s] the loop's time constant, the condenser's cells with it
+    assert np.all((tau > 5.0) & (tau < 600.0))
     T0, P0 = o["T_win"].copy(), o["P_i"].copy()
     a = np.zeros((2, env.act_dim))
     a[:, 3] = -1.0                                                # valve 4 closing at its rate
