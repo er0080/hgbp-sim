@@ -181,6 +181,9 @@ class PlantParams:
     # ------------------------------------------------------------ pipe walls
     UA_sg: float = 40.0         # suction line wall -> refrigerant conductance [W/K]
     UA_sa: float = 6.0          # suction line wall -> ambient conductance (insulated) [W/K]
+    suc_metal_mass: float = 0.0  # [kg] steel in the suction line between the mixer and the probe (a filter-drier's
+                                # shell and core, a positive-displacement flow meter's housing and lobes), lumped with
+                                # the line's wall: it holds the suction gas temperature back
     UA_dg: float = 40.0         # discharge line wall -> discharge gas conductance [W/K]
     UA_da: float = 3.0          # discharge line wall -> ambient conductance [W/K]
 

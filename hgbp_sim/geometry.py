@@ -98,7 +98,7 @@ def derive(p, n_cells: int) -> None:
     p.A_mx_cell = p.mx_A / n
     p.C_mw_cell = p.mx_mass * CP_SS / n
     p.C_cw = p.cond_mass * CP_SS + p.V_cond_w * p.rho_w * p.cp_w
-    p.C_sw = CP_CU * (tube_mass(*_line(p, "mo")) + tube_mass(*_line(p, "suc")))
+    p.C_sw = CP_CU * (tube_mass(*_line(p, "mo")) + tube_mass(*_line(p, "suc"))) + CP_STEEL * p.suc_metal_mass
     p.C_dw = CP_CU * tube_mass(*_line(p, "dis"))
     p.C_rw = p.rec_mass * CP_STEEL
 
