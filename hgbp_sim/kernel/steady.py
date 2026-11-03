@@ -106,8 +106,16 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
     """Physically motivated starting point for the equilibrium iteration."""
     n = MX
     S = kp.state(tab, P_s, h_s)
+    # the compressor and its shell: warmed by the compressed gas and the motor, cooled by the
+    # room and the intake gas (which the shell warms in turn: a few passes)
     T_sh0 = T_amb + 30.0
-    mdot_c, h2, _, T2_ad, _, _, _, _, Q_motor, _, _, _ = compressor_s(p, tab, P_s, h_s, S.s, S.rho, P_d, N, T_sh0)
+    for _ in range(4 if p.UA_ss > 0.0 else 1):
+        mdot_c, h2, _, T2_ad, _, _, _, _, Q_motor, _, _, _ = compressor_s(p, tab, P_s, h_s, S.s, S.rho, P_d, N, T_sh0)
+        C_g = mdot_c * p.cp_gas
+        eps_g = 1.0 - math.exp(-p.UA_gs / max(C_g, 1e-9))
+        eps_s = 1.0 - math.exp(-p.UA_ss / max(C_g, 1e-9))
+        T_sh0 = T_amb + (eps_g * C_g * (T2_ad - T_amb) + eps_s * C_g * (S.T - T_amb)
+                         + (1.0 - p.f_motor_gas) * Q_motor) / (p.UA_sha + (eps_g + eps_s) * C_g)
     h_d = h2 - 300.0
     D = kp.state(tab, P_d, h_d)
     sati = kp.sat(tab, P_i)
@@ -172,9 +180,7 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
     z[4] = h_d
     z[5] = (p.UA_sa * T_amb + p.UA_sg * S.T) / (p.UA_sa + p.UA_sg)
     z[6] = (p.UA_da * T_amb + p.UA_dg * D.T) / (p.UA_da + p.UA_dg)
-    C_g = mdot_c * p.cp_gas
-    eps_g = 1.0 - math.exp(-p.UA_gs / max(C_g, 1e-9))
-    z[7] = T_amb + (eps_g * C_g * (T2_ad - T_amb) + (1.0 - p.f_motor_gas) * Q_motor) / (p.UA_sha + eps_g * C_g)
+    z[7] = T_sh0
     z[8] = (p.rec_UA_a * T_amb + p.rec_UA_r * sati.T_l) / (p.rec_UA_a + p.rec_UA_r)
     z[IZ_HL], z[IZ_M] = h_l, 1.0                              # set by solve_one
     # mixing exchanger: quench side from the valve 3 outlet to the suction state, gas side
