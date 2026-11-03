@@ -435,8 +435,11 @@ superheat), 10 °C water, nominal charge 14.2 kg:
 ## Parameters
 
 All parameters are fields of `PlantParams` (`hgbp_sim/params.py`), in SI units; the web
-UI's Settings tab lists them with descriptions and units. Defaults describe the stand: a
-variable-speed 355 cm³/rev semi-hermetic compressor on R410A.
+UI's Settings tab lists them with descriptions and units. The built-in defaults describe a
+generic stand (a variable-speed 355 cm³/rev semi-hermetic compressor on R410A) and keep the
+reference trajectories fixed; new effects enter switched off. The real stand's calibrated values
+are in its stand definition, `webui/config/stand_defaults.json` (53 values differ from the
+built-in ones), which the web UI reads and `EnvConfig(stand=...)` loads.
 
 | group | parameters |
 |---|---|
