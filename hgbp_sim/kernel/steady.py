@@ -107,7 +107,7 @@ def initial_guess(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, prof):
     n = MX
     S = kp.state(tab, P_s, h_s)
     T_sh0 = T_amb + 30.0
-    mdot_c, h2, _, T2_ad, _, _, _, _, Q_motor, _, _ = compressor_s(p, tab, P_s, h_s, S.s, S.rho, P_d, N, T_sh0)
+    mdot_c, h2, _, T2_ad, _, _, _, _, Q_motor, _, _, _ = compressor_s(p, tab, P_s, h_s, S.s, S.rho, P_d, N, T_sh0)
     h_d = h2 - 300.0
     D = kp.state(tab, P_d, h_d)
     sati = kp.sat(tab, P_i)

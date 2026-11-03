@@ -282,8 +282,8 @@ def compressor_s(p, tab, P_s, h_s, s_s, rho_s, P_d, N, T_shell):
     """Quasi-steady compressor map with shell heat exchange (parameter record
     ``p``, property tables ``tab``).  Returns mass flow, discharge enthalpy,
     adiabatic discharge enthalpy and temperature, volumetric and isentropic
-    efficiency, shaft and electrical power, motor loss, gas -> shell heat and
-    pressure ratio (the order of ``COMPRESSOR_KEYS``)."""
+    efficiency, shaft and electrical power, motor loss, gas -> shell heat,
+    pressure ratio and shell -> intake gas heat (the order of ``COMPRESSOR_KEYS``)."""
     Nr = max(N, 0.0)
     Pr = max(P_d / P_s, 1.0)
     eta_v = min(max(p.eta_v0 - p.c_cl * (Pr ** (1.0 / p.kappa) - 1.0), 0.0), 1.0)
@@ -294,6 +294,16 @@ def compressor_s(p, tab, P_s, h_s, s_s, rho_s, P_d, N, T_shell):
     eta_s = min(max(eta_s, 0.25), 0.95)
     a = p.f_motor_gas * (1.0 / p.eta_motor - 1.0) / eta_s
     h_s1 = (h_s + a * h2s) / (1.0 + a)        # suction gas after motor heating
+    Q_ss = 0.0
+    if p.UA_ss > 0.0 and mdot > 1e-9:         # then by the body (UA_ss): the cylinders draw it warmer and lighter
+        S1 = kp.state(tab, P_s, h_s1)
+        C_s = mdot * p.cp_gas
+        q = (1.0 - math.exp(-p.UA_ss / C_s)) * C_s * (T_shell - S1.T) / mdot     # [J/kg]
+        Sb = kp.state(tab, P_s, h_s1 + q)
+        mdot = mdot * Sb.rho / S1.rho
+        Q_ss = mdot * q
+        h_s1 = h_s1 + q
+        h2s = max(kp.h_Ps_vapor(tab, P_d, Sb.s), h_s1)
     dh_ad = max(h2s - h_s1, 0.0) / eta_s
     h2_ad = h_s1 + dh_ad
     W_shaft = mdot * dh_ad
@@ -305,17 +315,17 @@ def compressor_s(p, tab, P_s, h_s, s_s, rho_s, P_d, N, T_shell):
     eps = 1.0 - math.exp(-p.UA_gs / max(C_g, 1e-9))
     Q_gs = eps * C_g * (T2_ad - T_shell)                # gas -> shell [W]
     h2 = h2_ad - (Q_gs / max(mdot, 1e-9) if mdot > 1e-9 else 0.0)
-    return mdot, h2, h2_ad, T2_ad, eta_v, eta_s, W_shaft, W_el, Q_motor, Q_gs, Pr
+    return mdot, h2, h2_ad, T2_ad, eta_v, eta_s, W_shaft, W_el, Q_motor, Q_gs, Pr, Q_ss
 
 
-COMPRESSOR_KEYS = ("mdot", "h2", "h2_ad", "T2_ad", "eta_v", "eta_s", "W_shaft", "W_el", "Q_motor", "Q_gs", "Pr")
+COMPRESSOR_KEYS = ("mdot", "h2", "h2_ad", "T2_ad", "eta_v", "eta_s", "W_shaft", "W_el", "Q_motor", "Q_gs", "Pr", "Q_ss")
 
 
 @njit(cache=True)
 def _compressor_array(rec, tab, P_s, h_s, s_s, rho_s, P_d, N, T_shell, out):
     for k in range(P_s.shape[0]):
         r = compressor_s(rec[k], tab, P_s[k], h_s[k], s_s[k], rho_s[k], P_d[k], N[k], T_shell[k])
-        for f in range(11):
+        for f in range(12):
             out[f, k] = r[f]
 
 
@@ -325,7 +335,7 @@ def compressor(p, props, P_s, h_s, s_s, rho_s, P_d, N, T_shell):
     rec = p.packed()
     a = [np.ascontiguousarray(np.broadcast_to(np.asarray(v, float), (len(rec),)))
          for v in (P_s, h_s, s_s, rho_s, P_d, N, T_shell)]
-    out = np.empty((11, len(rec)))
+    out = np.empty((12, len(rec)))
     _compressor_array(rec, props.tab, *a, out)
     return {k: out[i] for i, k in enumerate(COMPRESSOR_KEYS)}
 

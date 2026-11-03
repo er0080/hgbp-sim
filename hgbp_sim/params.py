@@ -51,6 +51,8 @@ class PlantParams:
     C_shell: float = 20e3       # compressor shell thermal capacity [J/K]
     UA_gs: float = 40.0         # discharge gas -> shell conductance [W/K]
     UA_sha: float = 8.0         # shell -> ambient conductance [W/K]
+    UA_ss: float = 0.0          # shell -> intake gas conductance: the body heats the gas on its way to the cylinders, which draw it
+                                # warmer and lighter, and the shell's heat capacity holds the intake back (0: none) [W/K]
     cp_gas: float = 1000.0      # vapor cp used for the discharge gas -> shell heat exchange [J/kg/K]
     tau_N: float = 0.5          # speed response time constant of motor and VFD [s]
     ramp_N: float = 300.0       # acceleration / deceleration limit of the motor [rpm/s] (across the line it
