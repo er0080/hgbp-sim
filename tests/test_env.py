@@ -130,6 +130,26 @@ def test_charge_is_randomized():
     assert np.allclose(info["true"]["charge"] / env.plant.nominal_charge(), f, rtol=1e-6)
 
 
+
+def test_stand_randomization_new_last():
+    """The suction side's new parameters vary on the stand, and the draws before them stay as they were."""
+    from hgbp_sim.defaults import load_defaults
+    from hgbp_sim.params import DEFAULT_RANDOMIZATION, PlantParams, randomize_params
+    p = PlantParams(**load_defaults(STAND, create=False)["plant"])
+    new = ("UA_ss", "suc_metal_mass")
+    assert list(DEFAULT_RANDOMIZATION)[-len(new):] == list(new)
+    old = {k: v for k, v in DEFAULT_RANDOMIZATION.items() if k not in new}
+    a = randomize_params(p, 64, np.random.default_rng(3))
+    b = randomize_params(p, 64, np.random.default_rng(3), old)
+    for k in old:
+        assert np.array_equal(getattr(a, k), getattr(b, k)), k
+    for k in new:
+        x = getattr(a, k) / getattr(p, k)
+        assert x.min() < 0.85 and x.max() > 1.15 and x.min() >= 1 / 1.3 - 1e-12 and x.max() <= 1.3 + 1e-12, k
+    env = HGBPVecEnv(8, EnvConfig(stand=STAND), seed=3)
+    assert np.ptp(env.plant.p.C_sw) > 1000.0                 # the suction line's heat capacity follows its metal
+
+
 def test_start_stop_interlock_and_dwell_completion():
     cfg = EnvConfig(start_mode="cold", start_stop_action=True, k_points=(1, 1), hold_time=(900.0, 900.0),
                     dwell_required=60.0, min_off_time=10.0, min_run_time=30.0, noise=False,

@@ -288,6 +288,7 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
     # (added last: the draws above stay as they were)
     "Kv_dpv2": 0.15, "Kv_spv2": 0.15, "Kv_dpv_bp": 0.15, "Kv_spv_bp": 0.15,
     "w_loop_M": 0.3, "w_loop_mdot": 0.2,
+    "UA_ss": 0.3, "suc_metal_mass": 0.3,
 }
 
 

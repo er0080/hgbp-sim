@@ -303,6 +303,8 @@ body, its suction gas cooling the motor, buffers the intake's temperature.
   * **The suction line's metal:** `suc_metal_mass` 17.7 kg (the filter-drier's and the flow
     meter's bodies, bare) with `UA_sg` 1280, so `C_sw` is 13 kJ/K. `UA_sa` is 12 W/K: the bare
     filter, the meter and about 8 ft of bare copper into the compressor's port.
+  * **Randomized** per episode like their neighbours: `UA_ss` and `suc_metal_mass` ±30 %
+    (log-uniform), added last to `DEFAULT_RANDOMIZATION` so the draws before them are unchanged.
   * **The exchanger stays as optimized:** counterflow (the quench in at the top, S3; the bypass
     gas in at the bottom, S1, as installed) with `mx_alpha_e` 1500. A smaller evaporating
     coefficient (300) fits the quench's step slightly better, but it moves the dry-out to the
