@@ -187,7 +187,9 @@ $`\eta_v = \eta_{v0} - c_\mathrm{cl} \left( \Pi^{1/\kappa} - 1 \right)`$ with pr
 pressure ratio and speed, motor/VFD efficiency with a share of the motor loss heating the
 suction gas, discharge gas to shell heat exchange, shell thermal mass and losses to
 ambient, VFD speed ramp and lag. The discharge temperature therefore shows the slow
-warm-up seen on real stands.
+warm-up seen on real stands. With `UA_ss` (0 by default) the shell also heats the intake
+gas on its way to the cylinders, which draw it at the warmer density: a low-side scroll's
+body, its suction gas cooling the motor, buffers the intake's temperature.
 
 ### Valves, actuators
 * Valves 1 and 2: ISA-style compressible flow with choking. Valve 3: incompressible,
@@ -204,8 +206,8 @@ warm-up seen on real stands.
     the bleed piping, `Kv_wpipe`) passes the condenser's outlet water to the facility's return.
     The stand's chilled-water loop holds 20 psid between supply and return (`P_w_sup -
     P_w_ret`).
-    * **The loop as a state:** one well-mixed volume of `w_loop_M` (pump, piping, condenser
-      water side). The condenser's duty and the pump's heat (`w_pump_heat`) go in, and the
+    * **The loop as a state:** one well-mixed volume of `w_loop_M` (the pump's casing and the
+      loop's piping; the condenser's water side is in its cells' heat capacity, `C_cw`). The condenser's duty and the pump's heat (`w_pump_heat`) go in, and the
       bleed's excess over the supply goes out. The condenser takes the loop's mixed water,
       `T_wl`, and the stand's water inlet sensor, on the condenser's inlet, reads it
       (`measure()["T_wi"]`); `T_wi` as an input stays the facility's supply.
@@ -213,12 +215,16 @@ warm-up seen on real stands.
       valve 4's flow passes the condenser straight from the supply, the inlet sensor reads the
       supply, and the loop's other water stands where it was. At a start the pump mixes that
       water in: the stand's inlet reading jumps 6-13 K within about 10 s of every logged start.
-    * **The time constant** is the loop's water over the bleed: about a minute at the stand's
-      usual openings. Closing valve 4 heats the loop for minutes, and the liquid pressure
+    * **The time constant** is the loop's heat capacity, with the condenser's cells, over the
+      bleed's: 10-35 s at the stand's usual openings. Closing valve 4 heats the loop for minutes, and the liquid pressure
       follows. That lag is what the once-through arrangement left out.
-    * **Fitted to the stand's logs (2026-10-19):** the inlet temperature against valve 4's
-      position and the compressor power gives 36 kg of water (0.5 K RMS over 6 h). Valve 4 is
-      the stand's Kv 12, equal percentage. The pump's flow, 7.7 kg/s (123 gpm), is where its
+    * **Fitted to the stand's logs:** 9 kg of water, about 7 m of 1-1/2" steel pipe and the
+      pump's casing, with the condenser's cells (23.6 kJ/K, 3.7 kg of it water) 61 kJ/K in all.
+      The stand's step test (2026-10-31, valve 4 stepped 3 and 6 %) gives it, and the logged
+      inlet temperature against valve 4 and the compressor power agrees (four logs, 45 min to
+      5 h: 0.5-0.8 K RMS, flat from 60 to 100 kJ/K; 36 kg plus the cells, the first fit's
+      2026-10-19 value, which counted the condenser's water twice, 0.6-1.7 K). Valve 4 is the
+      stand's Kv 12, equal percentage. The pump's flow, 7.7 kg/s (123 gpm), is where its
       curve (95 ft at shut-off, 65 ft at 150 gpm) meets the condenser's water side and some
       loop piping.
 * **The stand definition's first calibration** (2026-10-20, the 45/130 °F point the stand held
@@ -276,6 +282,44 @@ warm-up seen on real stands.
     * The stand's suction probe sits near the compressor's suction port, and it read 37-42 °C
       on the hot compressor before the restarts. Heat from the compressor's body into the
       probe or the gas there is one candidate.
+* **The second calibration (2026-11-02)**, fitted jointly to six open-loop step tests: 45/130 °F
+  (valve 4 stepped 3 and 6 %, 2026-10-31; valve 3, 2026-11-01) and 59/150 °F (valves 4, 1, 3 and
+  2 in turn, 2026-11-02, the stand recharged to its nominal charge). Each step is compared at 20,
+  60 and 240 s on the SST, SDT, liquid, suction gas, superheat and discharge temperature, along
+  with the equilibrium's valve positions. Against the stand definition before it, the steps' loss
+  falls from 8.7 to 0.57 (each dataset 0.07-0.13) and the steady valves' from 3.1 to 0.46.
+  * **Valve 3 unchoked** (`stv_choke` 0, `Kv_stv` 0.632, which keeps the openings): the choked
+    law left the quench's flow blind to the suction pressure, and the hot gas step then drove a
+    slow mode the stand does not show. In the installation the valve feeds the exchanger through
+    its distributor; the flashing two-phase flow there can take part of the drop, so the valve's
+    flow follows the suction pressure. The datasheet's law stays available (`stv_choke` 1).
+  * **Valves 1 and 2: `xT` 0.7 → 1.2**, an effective value above the ISA range. It closes the
+    6-9 % the model ran both trains more open at both points (59/150: 35/57 % against the
+    stand's 34/56).
+  * **The compressor's body** (a low-side scroll of about 144 kg, 5.5 dm³ of oil): `C_shell`
+    80 kJ/K, `UA_ss` 3000 W/K, `UA_gs` 0. It buffers the intake after a hot gas step, so the
+    pumped mass and the discharge temperature follow the suction gas weakly and slowly, as on
+    the stand. The same body on the discharge side instead (`UA_gs` 300, `UA_ss` 0) fits worse.
+  * **The suction line's metal:** `suc_metal_mass` 17.7 kg (the filter-drier's and the flow
+    meter's bodies, bare) with `UA_sg` 1280, so `C_sw` is 13 kJ/K. `UA_sa` is 12 W/K: the bare
+    filter, the meter and about 8 ft of bare copper into the compressor's port.
+  * **Randomized** per episode like their neighbours: `UA_ss` and `suc_metal_mass` ±30 %
+    (log-uniform), added last to `DEFAULT_RANDOMIZATION` so the draws before them are unchanged.
+  * **The exchanger stays as optimized:** counterflow (the quench in at the top, S3; the bypass
+    gas in at the bottom, S1, as installed) with `mx_alpha_e` 1500. A smaller evaporating
+    coefficient (300) fits the quench's step slightly better, but it moves the dry-out to the
+    exchanger's outlet and costs the transient margin of superheat at its outlet.
+  * **The steady discharge temperature** after the recharge: +3.3 K at 45/130 and −1.9 K at
+    59/150 (the first calibration: −0.8 and −5.6). The intake's heating raises it most where the
+    compressor's flow is small. At high lift (0/140, 10/150 °F) the model now reaches 156-160 °C,
+    10-15 K above the first calibration, past the warm starts' 150 °C margin. About 3-5 of the 69
+    points of a 10 °F grid (water 4-25 °C) lose their warm start there, or where valve 4 runs out
+    of travel at −10 °F SST. The stand has not been logged at high lift.
+  * **Still off:** in the first minute after a valve 3 step the stand's suction gas moves about
+    twice as fast as the model's. The stand's discharge temperature follows the suction gas
+    about one to one between the two points, the model's about 0.75. A closer discharge
+    temperature needs the compressor's measured map (its AHRI 540 coefficients) in place of the
+    generic efficiencies; left for now.
 * Actuators: first-order lag and slew-rate limit.
 
 ### Sensors and trips
@@ -354,7 +398,9 @@ the quench dries out. The solver therefore alternates:
    and wall dynamics, then a Newton polish.
 
 The rounds repeat until the liquid held on the suction side stops changing, typically
-3-6 rounds and about 30 ms per stand.
+3-6 rounds and about 30 ms per stand. The first guess takes the compressor's shell from its
+own balance; with `UA_ss` set, the shell and the intake gas it heats are iterated a few
+times first (from the room plus 30 K, the guess left half the stand's envelope unsolved).
 
 With a full receiver, the pool's temperature sets its density and so how much liquid floods
 the condenser, and the flooding feeds back on the pool's subcooling. If the first attempt
@@ -391,20 +437,23 @@ superheat), 10 °C water, nominal charge 14.2 kg:
 ## Parameters
 
 All parameters are fields of `PlantParams` (`hgbp_sim/params.py`), in SI units; the web
-UI's Settings tab lists them with descriptions and units. Defaults describe the stand: a
-variable-speed 355 cm³/rev semi-hermetic compressor on R410A.
+UI's Settings tab lists them with descriptions and units. The built-in defaults describe a
+generic stand (a variable-speed 355 cm³/rev semi-hermetic compressor on R410A) and keep the
+reference trajectories fixed; new effects enter switched off. The real stand's calibrated values
+are in its stand definition, `webui/config/stand_defaults.json` (53 values differ from the
+built-in ones), which the web UI reads and `EnvConfig(stand=...)` loads.
 
 | group | parameters |
 |---|---|
-| compressor | `V_disp`, `N_nom`, `eta_v0`, `c_cl`, `eta_s0`, `a_s`, `Pr_opt`, `eta_motor`, `f_motor_gas`, `C_shell`, `UA_gs`, `UA_sha`, `ramp_N`, `V_comp_suc`, `V_comp_dis`, `comp_x_min` |
+| compressor | `V_disp`, `N_nom`, `eta_v0`, `c_cl`, `eta_s0`, `a_s`, `Pr_opt`, `eta_motor`, `f_motor_gas`, `C_shell`, `UA_gs`, `UA_sha`, `UA_ss`, `ramp_N`, `V_comp_suc`, `V_comp_dis`, `comp_x_min` |
 | piping | `D_*`, `t_*`, `L_*`, `K_*` for the discharge, header, bypass, quench, exchanger outlet, suction, drain and liquid lines |
 | charge | `charge`, `cold_liquid_in_suction` |
 | condenser | `cond_n_plates`, `cond_V_ch`, `cond_A`, `cond_mass`, `alpha_r_2ph`, `alpha_r_1ph`, `alpha_sc`, `cond_sc_film`, `alpha_w0`, `mdot_w_ref`, `UA_ca`, `cond_tau_drain` |
 | receiver | `rec_V`, `rec_dip`, `rec_mass`, `rec_UA_r`, `rec_UA_rv`, `rec_UA_a`, `rec_UA_lv`, `rec_tau_flash` |
 | mixing exchanger | `mx_n_plates`, `mx_V_ch`, `mx_A`, `mx_mass`, `mx_alpha_g0`, `mx_alpha_e`, `mx_alpha_v0`, `mx_mdot_g_ref`, `mx_mdot_q_ref`, `mx_UA_a`, `tee_tau_evap` |
 | pressure drops | `cond_Kv_r`, `cond_Kv_w`, `mx_Kv_g`, `mx_Kv_dist`, quench-side plate geometry (`mx_beta`, `mx_b`, `mx_W`, `mx_phi`, `mx_d_port`, `mx_d_S34`), `cond_H`, `mx_H`, `P_w_sup`, `P_w_ret`, `Kv_wpipe` |
-| pipe walls | `UA_sg`, `UA_sa`, `UA_dg`, `UA_da` |
-| valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w`, characteristics, `tau_*`, `rate_*`; trains of valves 1 and 2: `Kv_dpv2`, `dpv_split`, `Kv_dpv_bp`, `dpv_bp` (and `spv`) |
+| pipe walls | `UA_sg`, `UA_sa`, `suc_metal_mass`, `UA_dg`, `UA_da` |
+| valves | `Kv_dpv`, `Kv_spv`, `Kv_stv`, `Kv_w`, characteristics, `xT`, `stv_choke`, `stv_FL`, `stv_FF`, `f_choke_liq`, `tau_*`, `rate_*`; trains of valves 1 and 2: `Kv_dpv2`, `dpv_split`, `Kv_dpv_bp`, `dpv_bp` (and `spv`) |
 | sensors | `tau_T`, `tau_m`, `tau_W`, `sig_*` |
 | limits | `P_d_max`, `P_s_min`, `P_s_max`, `T_d_max`, `T_s_max`, `y_flood` |
 

@@ -331,7 +331,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # 1 - comp_x_min liquid by mass, more liquid collects in the shell
     h_cin = max(h_l2, h_ls + p.comp_x_min * (h_vs - h_ls))
     Cin = kp.state(tab, P_s, h_cin)
-    mdot_c, h2, h2_ad, T2_ad, eta_v, eta_s, W_shaft, W_el, Q_motor, Q_gs, Pr_c = compressor_s(
+    mdot_c, h2, h2_ad, T2_ad, eta_v, eta_s, W_shaft, W_el, Q_motor, Q_gs, Pr_c, Q_ss = compressor_s(
         p, tab, P_s, h_cin, Cin.s, Cin.rho, P_d, N, T_sh)
 
     # ---- intermediate section: the condensing zone (header, condenser, drain and the
@@ -762,7 +762,7 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     x_out = 1.0 - y_liq if y_liq > 0.0 else c_x[n]
 
     # ---- compressor shell
-    dT_sh = (Q_gs + (1.0 - p.f_motor_gas) * Q_motor - p.UA_sha * (T_sh - T_amb)) / p.C_shell
+    dT_sh = (Q_gs + (1.0 - p.f_motor_gas) * Q_motor - Q_ss - p.UA_sha * (T_sh - T_amb)) / p.C_shell
 
     # ---- lumped volumes with their own pressure
     dm_d = mdot_c - mdot_1

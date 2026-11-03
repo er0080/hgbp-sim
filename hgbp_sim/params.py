@@ -51,6 +51,8 @@ class PlantParams:
     C_shell: float = 20e3       # compressor shell thermal capacity [J/K]
     UA_gs: float = 40.0         # discharge gas -> shell conductance [W/K]
     UA_sha: float = 8.0         # shell -> ambient conductance [W/K]
+    UA_ss: float = 0.0          # shell -> intake gas conductance: the body heats the gas on its way to the cylinders, which draw it
+                                # warmer and lighter, and the shell's heat capacity holds the intake back (0: none) [W/K]
     cp_gas: float = 1000.0      # vapor cp used for the discharge gas -> shell heat exchange [J/kg/K]
     tau_N: float = 0.5          # speed response time constant of motor and VFD [s]
     ramp_N: float = 300.0       # acceleration / deceleration limit of the motor [rpm/s] (across the line it
@@ -99,6 +101,7 @@ class PlantParams:
 
     # -------------------------------------------------------------- charge
     charge: float | None = None  # total refrigerant mass; empty = nominal charge for this stand [kg]
+    charge_nominal: float | None = None  # the stand's nominal (nameplate) charge; empty = the reference charge, nominal_charge() [kg]
     cold_liquid_in_suction: float = 0.0  # share of the liquid on the suction side at a cold start (migrated into compressor and mixer; rest in the receiver)
 
     # ---------------------------------------------- condenser (brazed plate)
@@ -173,7 +176,7 @@ class PlantParams:
                                 # enters at the pump's suction and valve 4 (with Kv_wpipe) bleeds the condenser's outlet
                                 # water to the return, so the condenser sees the loop's mixed temperature
     w_loop_mdot: float = 4.0    # run-around loop: the pump's flow through the condenser (estimate) [kg/s]
-    w_loop_M: float = 36.0      # run-around loop: water in the loop, well mixed (pump, piping, condenser water side) [kg]
+    w_loop_M: float = 36.0      # run-around loop: water in the loop outside the condenser, well mixed (pump casing, piping); the condenser's water is in C_cw [kg]
     w_pump_heat: float = 0.0    # run-around loop: the pump's heat into the loop water [W]
     w_pump_auto: float = 0.0    # run-around loop: 1 the pump runs with the compressor (while it stands, valve 4's flow
                                 # passes the condenser from the supply and the loop's other water stands); 0 always on
@@ -181,6 +184,9 @@ class PlantParams:
     # ------------------------------------------------------------ pipe walls
     UA_sg: float = 40.0         # suction line wall -> refrigerant conductance [W/K]
     UA_sa: float = 6.0          # suction line wall -> ambient conductance (insulated) [W/K]
+    suc_metal_mass: float = 0.0  # [kg] steel in the suction line between the mixer and the probe (a filter-drier's
+                                # shell and core, a positive-displacement flow meter's housing and lobes), lumped with
+                                # the line's wall: it holds the suction gas temperature back
     UA_dg: float = 40.0         # discharge line wall -> discharge gas conductance [W/K]
     UA_da: float = 3.0          # discharge line wall -> ambient conductance [W/K]
 
@@ -282,6 +288,7 @@ DEFAULT_RANDOMIZATION: dict[str, float] = {
     # (added last: the draws above stay as they were)
     "Kv_dpv2": 0.15, "Kv_spv2": 0.15, "Kv_dpv_bp": 0.15, "Kv_spv_bp": 0.15,
     "w_loop_M": 0.3, "w_loop_mdot": 0.2,
+    "UA_ss": 0.3, "suc_metal_mass": 0.3,
 }
 
 
@@ -395,7 +402,7 @@ _GROUPS = [
 ]
 # structural parameters (volumes and heat capacities follow from them): applied at the
 # next cold / warm start
-_REQUIRE_INIT = {"fluid", "charge", "cold_liquid_in_suction", "V_comp_suc", "V_comp_dis",
+_REQUIRE_INIT = {"fluid", "charge", "charge_nominal", "cold_liquid_in_suction", "V_comp_suc", "V_comp_dis",
                  "cond_n_plates", "cond_V_ch", "cond_mass", "rec_V", "rec_dip", "rec_mass",
                  "mx_n_plates", "mx_V_ch", "mx_A", "mx_mass", "cond_A", "rho_w", "cp_w", "w_loop"} \
     | {f"{a}_{k}" for a in ("D", "t", "L") for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")}

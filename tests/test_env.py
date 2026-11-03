@@ -130,6 +130,26 @@ def test_charge_is_randomized():
     assert np.allclose(info["true"]["charge"] / env.plant.nominal_charge(), f, rtol=1e-6)
 
 
+
+def test_stand_randomization_new_last():
+    """The suction side's new parameters vary on the stand, and the draws before them stay as they were."""
+    from hgbp_sim.defaults import load_defaults
+    from hgbp_sim.params import DEFAULT_RANDOMIZATION, PlantParams, randomize_params
+    p = PlantParams(**load_defaults(STAND, create=False)["plant"])
+    new = ("UA_ss", "suc_metal_mass")
+    assert list(DEFAULT_RANDOMIZATION)[-len(new):] == list(new)
+    old = {k: v for k, v in DEFAULT_RANDOMIZATION.items() if k not in new}
+    a = randomize_params(p, 64, np.random.default_rng(3))
+    b = randomize_params(p, 64, np.random.default_rng(3), old)
+    for k in old:
+        assert np.array_equal(getattr(a, k), getattr(b, k)), k
+    for k in new:
+        x = getattr(a, k) / getattr(p, k)
+        assert x.min() < 0.85 and x.max() > 1.15 and x.min() >= 1 / 1.3 - 1e-12 and x.max() <= 1.3 + 1e-12, k
+    env = HGBPVecEnv(8, EnvConfig(stand=STAND), seed=3)
+    assert np.ptp(env.plant.p.C_sw) > 1000.0                 # the suction line's heat capacity follows its metal
+
+
 def test_start_stop_interlock_and_dwell_completion():
     cfg = EnvConfig(start_mode="cold", start_stop_action=True, k_points=(1, 1), hold_time=(900.0, 900.0),
                     dwell_required=60.0, min_off_time=10.0, min_run_time=30.0, noise=False,
@@ -332,7 +352,7 @@ def test_run_around_water_loop():
     """The stand's condenser water: a pump's loop, the supply made up at its suction and valve 4
     bleeding the condenser's outlet water to the return.  At rest the bleed carries the duty off
     above the supply; the condenser takes the loop's mixed water, which the sensor reads; closing
-    valve 4 heats the loop over about its water mass over the bleed."""
+    valve 4 heats the loop over about its heat capacity (with the condenser's cells) over the bleed's."""
     cfg = EnvConfig(stand=STAND, start_mode="warm", p_warm_at_setpoint=1.0, randomize_params=False, noise=False,
                     T_wi_range=(4.0, 4.0), auto_reset=False, k_points=(1, 1), p_charge_extreme=0.0)
     env = HGBPVecEnv(2, cfg, seed=2)
@@ -345,8 +365,8 @@ def test_run_around_water_loop():
     assert np.all(o["T_win"] > T_sup + 2.0)                       # mixed above the supply
     assert np.allclose(o["Q_w"] + p.w_pump_heat, o["mdot_w"] * p.cp_w * (o["T_wo"] - T_sup), rtol=1e-3)
     assert np.allclose(env.meas["T_wi"], o["T_win"])
-    tau = p.w_loop_M / o["mdot_w"]                                # [s] the loop's time constant
-    assert np.all((tau > 10.0) & (tau < 600.0))
+    tau = (p.w_loop_M * p.cp_w + p.C_cw) / (o["mdot_w"] * p.cp_w)  # [s] the loop's time constant, the condenser's cells with it
+    assert np.all((tau > 5.0) & (tau < 600.0))
     T0, P0 = o["T_win"].copy(), o["P_i"].copy()
     a = np.zeros((2, env.act_dim))
     a[:, 3] = -1.0                                                # valve 4 closing at its rate
@@ -397,3 +417,18 @@ def test_liquid_pressure_trip():
     env.plant.p.P_i_max[0] = info["true"]["P_i"][0] - 1e4
     _, _, term, _, info = env.step(np.zeros((3, env.act_dim)))
     assert info["trips"]["high_P_i"][0] and term[0] and not term[1:].any()
+
+
+def test_stand_nominal_charge():
+    """A stated nominal charge (charge_nominal) is the stand's: the plant's default charge and
+    nominal_charge(), and the environment's charge factors apply to it."""
+    from hgbp_sim import HGBPPlant, PlantParams
+    ref = HGBPPlant(PlantParams(), n=2).nominal_charge()
+    pl = HGBPPlant(PlantParams(charge_nominal=16.33), n=2)
+    assert np.allclose(pl.nominal_charge(), 16.33) and np.allclose(pl.p.charge, 16.33)
+    assert not np.allclose(ref, 16.33)
+    cfg = EnvConfig(stand=STAND, randomize_params=False, noise=False, auto_reset=False, charge_range=(0.5, 0.5),
+                    p_charge_extreme=0.0)
+    env = HGBPVecEnv(2, cfg, seed=4)
+    assert np.allclose(env.plant.p.charge, 0.5 * env.plant.nominal_charge())
+    assert np.allclose(env.plant.nominal_charge(), env.plant.params.charge_nominal or ref)
