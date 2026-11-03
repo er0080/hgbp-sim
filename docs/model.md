@@ -315,7 +315,9 @@ body, its suction gas cooling the motor, buffers the intake's temperature.
     of travel at −10 °F SST. The stand has not been logged at high lift.
   * **Still off:** in the first minute after a valve 3 step the stand's suction gas moves about
     twice as fast as the model's. The stand's discharge temperature follows the suction gas
-    about one to one between the two points, the model's about 0.75.
+    about one to one between the two points, the model's about 0.75. A closer discharge
+    temperature needs the compressor's measured map (its AHRI 540 coefficients) in place of the
+    generic efficiencies; left for now.
 * Actuators: first-order lag and slew-rate limit.
 
 ### Sensors and trips
