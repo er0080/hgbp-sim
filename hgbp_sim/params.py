@@ -142,6 +142,7 @@ class PlantParams:
     mx_mdot_g_ref: float = 0.5  # bypass gas flow at which mx_alpha_g0 applies [kg/s]
     mx_alpha_e: float = 1500.0  # plate -> evaporating quench heat transfer coefficient at mx_mdot_q_ref; scales with flow^0.5 [W/m^2/K]
     mx_alpha_v0: float = 250.0  # plate -> quench vapor (after dry-out) heat transfer coefficient at mx_mdot_q_ref; scales with flow^0.8 [W/m^2/K]
+    mx_gas_down: float = 0.0     # 1: the bypass gas enters at the top, beside the quench's inlet (parallel flow); 0: at the bottom (counterflow)
     mx_mdot_q_ref: float = 0.13  # quench flow at which mx_alpha_e and mx_alpha_v0 apply [kg/s]
     mx_UA_a: float = 2.0        # mixing exchanger -> ambient conductance (insulated) [W/K]
     tee_tau_evap: float = 0.3   # evaporation time constant of liquid droplets from the quench outlet in the gas downstream of the tee [s]

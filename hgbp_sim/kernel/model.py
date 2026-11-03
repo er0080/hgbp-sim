@@ -619,7 +619,8 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     Q_g, T_gc, rho_gc = ws[17, :n], ws[18, :n], ws[19, :n]
     Q_g_sum = 0.0
     T_up = kp.T_vapor(tab, P_s, hg)
-    for j in range(n - 1, -1, -1):
+    for k in range(n):
+        j = k if p.mx_gas_down > 0.5 else n - 1 - k     # from the gas inlet: top cell 0 (parallel) or bottom (counter)
         Tw_eff = max(T_mw[j], T_sat_s)
         # vapor at the wall temperature (linearized from the dew point; an effectiveness target)
         h_eq = h_vs + sat_s.cp_v * max(Tw_eff - sat_s.T_v, 0.0)
