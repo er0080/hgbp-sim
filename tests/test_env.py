@@ -397,3 +397,18 @@ def test_liquid_pressure_trip():
     env.plant.p.P_i_max[0] = info["true"]["P_i"][0] - 1e4
     _, _, term, _, info = env.step(np.zeros((3, env.act_dim)))
     assert info["trips"]["high_P_i"][0] and term[0] and not term[1:].any()
+
+
+def test_stand_nominal_charge():
+    """A stated nominal charge (charge_nominal) is the stand's: the plant's default charge and
+    nominal_charge(), and the environment's charge factors apply to it."""
+    from hgbp_sim import HGBPPlant, PlantParams
+    ref = HGBPPlant(PlantParams(), n=2).nominal_charge()
+    pl = HGBPPlant(PlantParams(charge_nominal=16.33), n=2)
+    assert np.allclose(pl.nominal_charge(), 16.33) and np.allclose(pl.p.charge, 16.33)
+    assert not np.allclose(ref, 16.33)
+    cfg = EnvConfig(stand=STAND, randomize_params=False, noise=False, auto_reset=False, charge_range=(0.5, 0.5),
+                    p_charge_extreme=0.0)
+    env = HGBPVecEnv(2, cfg, seed=4)
+    assert np.allclose(env.plant.p.charge, 0.5 * env.plant.nominal_charge())
+    assert np.allclose(env.plant.nominal_charge(), env.plant.params.charge_nominal or ref)

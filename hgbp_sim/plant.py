@@ -219,6 +219,12 @@ class HGBPPlant:
         self.randomize_spec = randomize_spec
         # environments in parallel on numba's thread pool (NUMBA_NUM_THREADS); default: when n > 1
         self.parallel = parallel
+        # the stand's nominal charge over the reference charge of its unrandomized volumes (1: none stated)
+        self._charge_scale = 1.0
+        if self.params.charge_nominal is not None:
+            base = sample_params(self.params, 1, self.rng, None, False)
+            derive(base, self.MX)
+            self._charge_scale = float(self.params.charge_nominal) / float(nominal_charge(base, self.props)[0])
         self.p = sample_params(self.params, self.n, self.rng, randomize_spec, randomize)
         self._prepare(self.p)
         self.x = np.zeros((self.n, self.NX))
@@ -237,7 +243,7 @@ class HGBPPlant:
     def _prepare(self, p) -> None:
         derive(p, self.MX)
         if p.charge is None:
-            p.charge = nominal_charge(p, self.props)
+            p.charge = self._charge_scale * nominal_charge(p, self.props)
 
     def params_subset(self, idx, repeat: int = 1):
         """Parameter namespace restricted to environments ``idx`` (optionally
@@ -278,8 +284,10 @@ class HGBPPlant:
                     getattr(self.p, k)[kk][idx] = vv
 
     def nominal_charge(self, idx=None):
+        """The nominal charge [kg]: the stand's own (``charge_nominal``), scaled with randomized
+        volumes, or the reference charge."""
         p = self.p if idx is None else self.params_subset(idx)
-        return nominal_charge(p, self.props)
+        return self._charge_scale * nominal_charge(p, self.props)
 
     def _suction_cells(self, P_s, H):
         """Properties of the dynamic suction side cells (P_s shared)."""

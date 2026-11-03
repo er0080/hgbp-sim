@@ -7,9 +7,12 @@ it at a set rate.
 
 ## 1. The nominal charge
 
-The simulator does not compute an *optimal* charge. It computes a **nominal reference
-charge**: the refrigerant mass the stand holds at one fixed, typical operating condition
-with the receiver partly filled. It is used in three places:
+The simulator does not compute an *optimal* charge. Its **nominal charge** is the stand's own,
+`charge_nominal` [kg], when the stand definition states it (the stand's nameplate charge), and
+otherwise a **reference charge**: the refrigerant mass the stand holds at one fixed, typical
+operating condition with the receiver partly filled (section 2). A stated nominal charge
+scales with the volumes when they are randomized (the ratio to the reference charge of the
+unrandomized volumes is kept). The nominal charge is used in three places:
 
 * **Plant parameter `charge`.** Left empty (`null` in the defaults file, blank on the
   Settings tab), the stand is charged with the nominal charge. The Settings tab, the
@@ -97,3 +100,13 @@ stand with superheated vapor at a lower pressure.
 Enter the stand's known charge in `charge` (defaults file or Settings tab). To make
 "nominal" mean something else, change the reference condition of `nominal_charge()`
 (section 2).
+
+## The stand's charge (2026-11-02)
+
+The stand's nominal charge is 36 lb of R410A (16.33 kg, `charge_nominal` in the stand
+definition), against a reference charge of 17.05 kg. A check of the inventory: after a slow leak
+the stand's liquid line sight glass ran 75-80 % full at 59/150 degF (saturated suction and
+discharge temperatures), and 21 lb (9.53 kg) was recovered from it. The model at that point empties
+its liquid line at 10.2 kg and shows a fill of 75-80 % at about 10.1 kg, within the refrigerant a
+recovery leaves behind. The hot corner is where the receiver's level is lowest, so a leak shows
+there first: with vapor in the liquid line the quench valve's feed is two-phase.

@@ -119,7 +119,7 @@ def _validate_plant_value(f, v):
         if v not in VALVE_CHARS:
             raise ValueError(f"{where}: {v!r} is not one of {', '.join(VALVE_CHARS)}")
         return v
-    if f.name == "charge" and v is None:
+    if f.name in ("charge", "charge_nominal") and v is None:
         return None
     return _num(v, where, _RANGES.get(f.name))
 

@@ -52,7 +52,7 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
     const values: Record<string, any> = {};
     for (const [k, s] of Object.entries(edits)) {
       const m = view.meta.find((x) => x.name === k)!;
-      values[k] = k === "charge" && s.trim() === "" ? null
+      values[k] = (k === "charge" || k === "charge_nominal") && s.trim() === "" ? null
         : m.kind === "float" ? Number(s) : m.kind === "bool" ? s === "true" : s;
     }
     try {
@@ -175,7 +175,7 @@ export default function SettingsTab({ snap }: { snap: Snapshot }) {
                         <input type="number" step="any" value={cur} className={m.name in edits || pending ? "pending" : ""}
                           min={m.min ?? undefined} max={m.max ?? undefined}
                           title={m.min != null || m.max != null ? `allowed range ${m.min} .. ${m.max}` : undefined}
-                          placeholder={m.name === "charge" ? "nominal" : String(m.default)}
+                          placeholder={m.name === "charge" ? "nominal" : m.name === "charge_nominal" ? "reference" : String(m.default)}
                           onChange={(e) => setEdits({ ...edits, [m.name]: e.target.value })} />
                       )}
                     </td>

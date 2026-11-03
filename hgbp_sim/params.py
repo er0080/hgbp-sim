@@ -99,6 +99,7 @@ class PlantParams:
 
     # -------------------------------------------------------------- charge
     charge: float | None = None  # total refrigerant mass; empty = nominal charge for this stand [kg]
+    charge_nominal: float | None = None  # the stand's nominal (nameplate) charge; empty = the reference charge, nominal_charge() [kg]
     cold_liquid_in_suction: float = 0.0  # share of the liquid on the suction side at a cold start (migrated into compressor and mixer; rest in the receiver)
 
     # ---------------------------------------------- condenser (brazed plate)
@@ -398,7 +399,7 @@ _GROUPS = [
 ]
 # structural parameters (volumes and heat capacities follow from them): applied at the
 # next cold / warm start
-_REQUIRE_INIT = {"fluid", "charge", "cold_liquid_in_suction", "V_comp_suc", "V_comp_dis",
+_REQUIRE_INIT = {"fluid", "charge", "charge_nominal", "cold_liquid_in_suction", "V_comp_suc", "V_comp_dis",
                  "cond_n_plates", "cond_V_ch", "cond_mass", "rec_V", "rec_dip", "rec_mass",
                  "mx_n_plates", "mx_V_ch", "mx_A", "mx_mass", "cond_A", "rho_w", "cp_w", "w_loop"} \
     | {f"{a}_{k}" for a in ("D", "t", "L") for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")}

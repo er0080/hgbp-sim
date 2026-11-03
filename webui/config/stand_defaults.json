@@ -127,6 +127,7 @@
     "L_liq": 3.4,
     "K_liq": 1.8,
     "charge": null,
+    "charge_nominal": 16.33,
     "cold_liquid_in_suction": 0.0,
     "cond_n_plates": 78.0,
     "cond_V_ch": 9.5e-05,

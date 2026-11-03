@@ -317,8 +317,8 @@ class LiveStand:
             if name not in meta:
                 continue
             m = meta[name]
-            if name == "charge" and val is None:
-                pass                                      # nominal charge
+            if name in ("charge", "charge_nominal") and val is None:
+                pass                                      # the nominal charge; the reference charge
             elif m["kind"] == "float":
                 val = clamp_to_range(name, float(val))
             elif m["kind"] == "bool":
