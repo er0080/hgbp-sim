@@ -9,6 +9,7 @@ Scripts in `examples/`:
 | `collect_dataset.py` | expert plus exploration noise data from the batched environment -> `.npz` |
 | `train_bc.py` | behaviour-cloning MLP (PyTorch) and closed-loop evaluation against the expert |
 | `benchmark.py` | speed of the live stand, the batched environment and the steady-state solver |
+| `mixer_liquid_map.py [--eps ...] [--SH-R ...] [--machine NAME=VD@RPM ...] [--set K=V ...]` | liquid leaving a fixed-effectiveness mixer and the effectiveness needed for a dry outlet across the envelope, from the stand's steady states (maps, CSV; [mixer-liquid-map.md](mixer-liquid-map.md)) |
 
 ## Direct plant access
 

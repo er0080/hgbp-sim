@@ -84,6 +84,7 @@ docker compose -f webui/docker-compose.yml up --build     # then open http://loc
 | [docs/controller-spec.md](docs/controller-spec.md) | specification for a neural-network controller |
 | [docs/web-ui.md](docs/web-ui.md) | operating the live stand, controller settings, defaults file, API |
 | [docs/examples.md](docs/examples.md) | example scripts and results |
+| [docs/mixer-liquid-map.md](docs/mixer-liquid-map.md) | where a poor quench mixer passes liquid across the envelope; the effectiveness needed for a dry outlet |
 | [docs/development.md](docs/development.md) | tests, the compiled kernel, reference data, code layout |
 
 ## License
