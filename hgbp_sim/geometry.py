@@ -17,6 +17,12 @@ S3-S4 side the smaller half (38).
 * mixing exchanger: quench (liquid from valve 3) on S3-S4, entering at S3 on
   top and leaving at S4 at the bottom; hot bypass gas on S1-S2, entering at S1
   at the bottom and leaving at S2 on top (counterflow)
+* suction exchanger (``mixer`` = 1, in place of the mixing exchanger): the stream from
+  the tee rises through S1-S2 (pass 1), a jumper takes it to S3, and it falls through
+  S3-S4 (pass 2), counterflow to pass 1.  Pass 1 takes the mixing exchanger's quench cells
+  (the bypass and quench lines and the tee join its inlet cell), pass 2 its gas cells (the
+  jumper joins its inlet cell), and the outlet piping is split between the tee leg and
+  the S4 leg.
 """
 from __future__ import annotations
 
@@ -83,9 +89,27 @@ def derive(p, n_cells: int) -> None:
     one = np.ones((len(np.atleast_1d(p.V_d)), 1))
     Vq = (p.V_mx_q / n)[:, None] * np.ones((1, n))
     Vq[:, 0] += vol["q"]                         # quench line joins the first (top) cell
-    p.V_sc = np.concatenate([Vq, p.V_L1[:, None] * one, p.V_L2[:, None] * one], axis=1)
     Vg = (p.V_mx_g / n)[:, None] * np.ones((1, n))
     Vg[:, n - 1] += vol["bp"]                    # bypass line joins the bottom (inlet) cell
+
+    # --- suction exchanger (mixer = 1): replaces the mixing exchanger's cells
+    bA, bB = phe_channels(p.bx_n_plates)
+    p.bx_nch1, p.bx_nch2 = bA, bB                # pass 1 (S1-S2), pass 2 (S3-S4) channels
+    V_ch = p.bx_b * p.bx_W * p.bx_L
+    A_ch = 2.0 * p.bx_phi * p.bx_L * p.bx_W      # wall area of one channel (both faces)
+    p.A_b1_cell, p.A_b2_cell = bA * A_ch / n, bB * A_ch / n
+    p.bx_A = np.maximum(p.bx_n_plates - 2.0, 1.0) * p.bx_phi * p.bx_L * p.bx_W   # heating surface
+    V_jmp = 0.25 * np.pi * p.bx_d_conn ** 2 * p.bx_L_jmp
+    Vb1 = (bA * V_ch / n)[:, None] * np.ones((1, n))
+    Vb1[:, 0] += vol["q"] + vol["bp"] + 0.5 * vol["mo"]     # tee, its lines and the inlet leg
+    Vb2 = (bB * V_ch / n)[:, None] * np.ones((1, n))
+    Vb2[:, n - 1] += V_jmp                       # the jumper joins pass 2's inlet cell
+    bx = (np.asarray(p.mixer, float) > 0.5) * np.ones_like(p.V_d)
+    w = bx[:, None]
+    Vq = w * Vb1 + (1.0 - w) * Vq
+    Vg = w * Vb2 + (1.0 - w) * Vg
+    p.V_L1 = p.V_L1 - bx * 0.5 * vol["mo"]      # the outlet leg S4 -> suction line
+    p.V_sc = np.concatenate([Vq, p.V_L1[:, None] * one, p.V_L2[:, None] * one], axis=1)
     p.V_gc = Vg
     p.V_s = p.V_sc.sum(axis=1) + p.V_gc.sum(axis=1)
 
@@ -96,7 +120,7 @@ def derive(p, n_cells: int) -> None:
 
     # --- heat capacities
     p.A_mx_cell = p.mx_A / n
-    p.C_mw_cell = p.mx_mass * CP_SS / n
+    p.C_mw_cell = np.where(bx > 0.5, p.bx_mass, p.mx_mass) * CP_SS / n
     p.C_cw = p.cond_mass * CP_SS + p.V_cond_w * p.rho_w * p.cp_w
     p.C_sw = CP_CU * (tube_mass(*_line(p, "mo")) + tube_mass(*_line(p, "suc"))) + CP_STEEL * p.suc_metal_mass
     p.C_dw = CP_CU * tube_mass(*_line(p, "dis"))

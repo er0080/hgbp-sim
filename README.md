@@ -80,6 +80,7 @@ docker compose -f webui/docker-compose.yml up --build     # then open http://loc
 | [docs/model.md](docs/model.md) | the stand model: hardware, structure, numerics, parameters, limitations |
 | [docs/pressure-drop.md](docs/pressure-drop.md) | exchanger and line pressure drops and their coefficients |
 | [docs/charge.md](docs/charge.md) | refrigerant charge and the nominal charge |
+| [docs/suction-exchanger.md](docs/suction-exchanger.md) | the alternative mixer: a tee and a series brazed plate suction exchanger, its model and sizing |
 | [docs/training.md](docs/training.md) | training environment, reward, baseline controller, throughput |
 | [docs/controller-spec.md](docs/controller-spec.md) | specification for a neural-network controller |
 | [docs/web-ui.md](docs/web-ui.md) | operating the live stand, controller settings, defaults file, API |

@@ -42,6 +42,8 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
   const rec = clamp01(t.rec_level), flood = clamp01(t.cond_flood);
   const flashing = t.mdot_lv < -1.0;                    // the receiver pool flashes [g/s]
   const xq: number[] = t.x_q ?? [], Tq: number[] = t.T_q ?? [], Tg: number[] = t.T_g ?? [];
+  const xg: number[] = t.x_g ?? [];
+  const bx = (t.mixer ?? 0) > 0.5;                     // tee and series suction exchanger (mixer 1)
   const xc: number[] = t.x_c ?? [], Tc: number[] = t.T_c ?? [], Twc: number[] = t.T_wc ?? [];
   // refrigerant cell: quality while two-phase, temperature as vapor or liquid
   const cellText = (x: number, T: number) => (x >= 0 && x < 1 ? `x ${fmt(x, 2)}` : `${u.fmt("T", T, 0)}°`);
@@ -59,6 +61,7 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
   const BX = 370;                                       // bypass line x
   const LX = 660;                                       // liquid line riser x
   const TX = 280, TY = 440;                             // tee
+  const QIN_X = 420, TB_Y = MX.y + MX.h + 30;           // suction exchanger: the tee of bypass and quench lines
   const OUT_Y = MX.y - 25;                              // gas outlet run to the tee
   const WX = 975;                                       // water pipe x
   const W_IN = CB + 28, W_OUT = CD.y - 20;              // water supply run to S1, return run from S2
@@ -99,13 +102,23 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
           <polyline points={`${WCX},${CD.y} ${WCX},${W_OUT} ${WX},${W_OUT} ${WX},14`} className="pipe water" />
           {/* condensate drain S4 -> receiver; liquid line: receiver -> valve 3 -> mixing exchanger S3 (top) */}
           <line x1={RX} y1={CB} x2={RX} y2={REC.y + 8} className="pipe liq" />
-          <polyline points={`${REC.x + 10},${liquidY} ${LX},${liquidY} ${LX},${MX.y - 45} ${QX},${MX.y - 45} ${QX},${MX.y}`} className="pipe liq" />
-          {/* bypass: header -> valve 2 -> mixing exchanger S1 (bottom) */}
-          <polyline points={`${BX},${TOP} ${BX},${MB + 30} ${GX},${MB + 30} ${GX},${MB}`} className="pipe hot" />
-          {/* mixing exchanger outlets -> tee (the gas outlet hops over the bypass line) -> compressor */}
-          <path d={`M ${GX},${MX.y} V ${OUT_Y} H ${BX + HOP} A ${HOP} ${HOP} 0 0 0 ${BX - HOP},${OUT_Y} H ${TX} V ${TY}`} className="pipe suc" />
-          <polyline points={`${QX},${MB} ${QX},${TY} ${TX},${TY}`} className="pipe suc" />
-          <polyline points={`${TX},${TY} ${CX},${TY} ${CX},${CY + CR}`} className="pipe suc" />
+          {bx ? <>
+            {/* suction exchanger: liquid line -> valve 3 -> tee; bypass: header -> valve 2 -> tee;
+                tee -> S1 (bottom) -> pass 1 up -> S2 -> jumper -> S3 -> pass 2 down -> S4 -> compressor */}
+            <polyline points={`${REC.x + 10},${liquidY} ${LX},${liquidY} ${LX},${MX.y - 45} ${QIN_X},${MX.y - 45} ${QIN_X},${TB_Y}`} className="pipe liq" />
+            <polyline points={`${BX},${TOP} ${BX},${TB_Y} ${QIN_X},${TB_Y}`} className="pipe hot" />
+            <polyline points={`${QIN_X},${TB_Y} ${GX},${TB_Y} ${GX},${MB}`} className="pipe suc" />
+            <polyline points={`${GX},${MX.y} ${GX},${MX.y - 20} ${QX},${MX.y - 20} ${QX},${MX.y}`} className="pipe suc" />
+            <polyline points={`${QX},${MB} ${QX},${TY} ${CX},${TY} ${CX},${CY + CR}`} className="pipe suc" />
+          </> : <>
+            <polyline points={`${REC.x + 10},${liquidY} ${LX},${liquidY} ${LX},${MX.y - 45} ${QX},${MX.y - 45} ${QX},${MX.y}`} className="pipe liq" />
+            {/* bypass: header -> valve 2 -> mixing exchanger S1 (bottom) */}
+            <polyline points={`${BX},${TOP} ${BX},${MB + 30} ${GX},${MB + 30} ${GX},${MB}`} className="pipe hot" />
+            {/* mixing exchanger outlets -> tee (the gas outlet hops over the bypass line) -> compressor */}
+            <path d={`M ${GX},${MX.y} V ${OUT_Y} H ${BX + HOP} A ${HOP} ${HOP} 0 0 0 ${BX - HOP},${OUT_Y} H ${TX} V ${TY}`} className="pipe suc" />
+            <polyline points={`${QX},${MB} ${QX},${TY} ${TX},${TY}`} className="pipe suc" />
+            <polyline points={`${TX},${TY} ${CX},${TY} ${CX},${CY + CR}`} className="pipe suc" />
+          </>}
         </g>
 
         <Valve {...V.v1} open={m.u1} label="1 discharge press." />
@@ -174,37 +187,69 @@ export default function Schematic({ snap }: { snap: Snapshot }) {
         <text x={BX - 10} y={314} textAnchor="end">{u.fmtU("mdot", t.mdot_2)}</text>
         <text x={BX - 10} y={328} textAnchor="end" className="lbl">line ΔP {u.fmtU("dP", t.dP_bp)}</text>
 
-        <circle cx={TX} cy={TY} r={5} fill="#66bb6a" />
+        <circle cx={bx ? QIN_X : TX} cy={bx ? TB_Y : TY} r={5} fill="#66bb6a" />
 
-        {/* mixing exchanger: gas column (left, S1 bottom -> S2 top), quench column (right, S3 top -> S4 bottom) */}
-        <rect x={MX.x} y={MX.y} width={MX.w} height={MX.h} rx={6} className="vessel" />
-        {xq.map((x, j) => {
-          const wet = clamp01(1 - x);
-          const y = MX.y + j * cellH;
-          return (
-            <g key={j}>
-              <rect x={MX.x + MX.w / 2 + 1} y={y + 1} width={MX.w / 2 - 3} height={cellH - 2} className="liquid" style={{ opacity: 0.1 + 0.75 * wet }} />
-              <text x={MX.x + MX.w * 0.75} y={y + cellH / 2 + 4} textAnchor="middle">{cellText(x, Tq[j])}</text>
-              <text x={MX.x + MX.w * 0.25} y={y + cellH / 2 + 4} textAnchor="middle" className="lbl">{u.fmt("T", Tg[j], 0)}°</text>
-            </g>
-          );
-        })}
-        <line x1={MX.x + MX.w / 2} y1={MX.y + 4} x2={MX.x + MX.w / 2} y2={MB - 4} stroke="#90a4ae" strokeWidth={1} />
-        <text x={GX - 8} y={MB + 13} textAnchor="end" className="lbl">S1</text>
-        <text x={GX - 12} y={MX.y - 6} textAnchor="end" className="lbl">S2</text>
-        <text x={QX + 10} y={MX.y - 6} className="lbl">S3</text>
-        <text x={QX + 8} y={MB + 12} className="lbl">S4</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 30} className="lbl">mixing</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 44} className="lbl">exchanger</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 62}>{u.fmtU("heat", t.Q_mx)}</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 84} className="lbl">gas (S1 → S2)</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 98}>out {u.fmtU("T", t.T_go)}</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 112}>ΔP {u.fmtU("dP", t.dP_mg)}</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 132} className="lbl">quench (S3 → S4)</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 146} style={{ fill: t.x_qo < 1 ? "var(--bad)" : undefined }}>
-          out {t.x_qo < 1 ? `x ${fmt(t.x_qo, 2)}` : u.fmtU("T", t.T_qo)}</text>
-        <text x={MX.x + MX.w + 8} y={MX.y + 160}>ΔP {u.fmtU("dP", t.dP_mq)}</text>
+        {bx ? <>
+          {/* suction exchanger: pass 1 (left, S1 bottom -> S2 top), pass 2 (right, S3 top -> S4 bottom),
+              counterflow; each cell: the vapor share leaving it while it carries liquid, else its temperature */}
+          <rect x={MX.x} y={MX.y} width={MX.w} height={MX.h} rx={6} className="vessel" />
+          {xq.map((_, r) => {
+            const j = xq.length - 1 - r, y = MX.y + r * cellH;
+            return (
+              <g key={r}>
+                <rect x={MX.x + 2} y={y + 1} width={MX.w / 2 - 3} height={cellH - 2} className="liquid" style={{ opacity: 0.1 + 0.75 * clamp01(1 - xq[j]) }} />
+                <rect x={MX.x + MX.w / 2 + 1} y={y + 1} width={MX.w / 2 - 3} height={cellH - 2} className="liquid" style={{ opacity: 0.1 + 0.75 * clamp01(1 - (xg[j] ?? 1)) }} />
+                <text x={MX.x + MX.w * 0.25} y={y + cellH / 2 + 4} textAnchor="middle">{cellText(xq[j], Tq[j])}</text>
+                <text x={MX.x + MX.w * 0.75} y={y + cellH / 2 + 4} textAnchor="middle">{cellText(xg[j] ?? 1, Tg[j])}</text>
+              </g>
+            );
+          })}
+          <line x1={MX.x + MX.w / 2} y1={MX.y + 4} x2={MX.x + MX.w / 2} y2={MB - 4} stroke="#90a4ae" strokeWidth={1} />
+          <text x={GX - 8} y={MB + 13} textAnchor="end" className="lbl">S1</text>
+          <text x={GX - 12} y={MX.y - 6} textAnchor="end" className="lbl">S2</text>
+          <text x={QX + 10} y={MX.y - 6} className="lbl">S3</text>
+          <text x={QX + 8} y={MB + 12} className="lbl">S4</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 30} className="lbl">suction</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 44} className="lbl">exchanger</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 60} className="lbl">{fmt(t.A_bx, 2)} m² · ΔP {u.fmtU("dP", t.dP_bx)}</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 80} className="lbl">liquid in (tee)</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 94}>{fmt(t.y_bi * 100, 1)} %</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 114} className="lbl">out (S4)</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 128} style={{ fill: t.y_bo > 1e-3 ? "var(--bad)" : undefined }}>
+            {t.y_bo > 1e-4 ? `liquid ${fmt(t.y_bo * 100, 2)} %` : u.fmtU("T", t.T_go)}</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 142} className="lbl">{t.y_bo > 1e-4 ? `vapor ${u.fmtU("T", t.T_go)}` : "dry"}</text>
+          <text x={MX.x + 8} y={MX.y - 26} className="lbl">jumper</text>
+        </> : <>
+          {/* mixing exchanger: gas column (left, S1 bottom -> S2 top), quench column (right, S3 top -> S4 bottom) */}
+          <rect x={MX.x} y={MX.y} width={MX.w} height={MX.h} rx={6} className="vessel" />
+          {xq.map((x, j) => {
+            const wet = clamp01(1 - x);
+            const y = MX.y + j * cellH;
+            return (
+              <g key={j}>
+                <rect x={MX.x + MX.w / 2 + 1} y={y + 1} width={MX.w / 2 - 3} height={cellH - 2} className="liquid" style={{ opacity: 0.1 + 0.75 * wet }} />
+                <text x={MX.x + MX.w * 0.75} y={y + cellH / 2 + 4} textAnchor="middle">{cellText(x, Tq[j])}</text>
+                <text x={MX.x + MX.w * 0.25} y={y + cellH / 2 + 4} textAnchor="middle" className="lbl">{u.fmt("T", Tg[j], 0)}°</text>
+              </g>
+            );
+          })}
+          <line x1={MX.x + MX.w / 2} y1={MX.y + 4} x2={MX.x + MX.w / 2} y2={MB - 4} stroke="#90a4ae" strokeWidth={1} />
+          <text x={GX - 8} y={MB + 13} textAnchor="end" className="lbl">S1</text>
+          <text x={GX - 12} y={MX.y - 6} textAnchor="end" className="lbl">S2</text>
+          <text x={QX + 10} y={MX.y - 6} className="lbl">S3</text>
+          <text x={QX + 8} y={MB + 12} className="lbl">S4</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 30} className="lbl">mixing</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 44} className="lbl">exchanger</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 62}>{u.fmtU("heat", t.Q_mx)}</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 84} className="lbl">gas (S1 → S2)</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 98}>out {u.fmtU("T", t.T_go)}</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 112}>ΔP {u.fmtU("dP", t.dP_mg)}</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 132} className="lbl">quench (S3 → S4)</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 146} style={{ fill: t.x_qo < 1 ? "var(--bad)" : undefined }}>
+            out {t.x_qo < 1 ? `x ${fmt(t.x_qo, 2)}` : u.fmtU("T", t.T_qo)}</text>
+          <text x={MX.x + MX.w + 8} y={MX.y + 160}>ΔP {u.fmtU("dP", t.dP_mq)}</text>
 
+        </>}
         {/* suction line: probe at the compressor port */}
         <circle cx={CX} cy={CY + PROBE} r={6} fill="#263238" stroke="#cfd8dc" strokeWidth={1.5} />
         <text x={CX + 12} y={CY + PROBE - 4}>{u.fmtU("T", m.T_s)} · SH {u.fmtU("dT", m.SH)}</text>

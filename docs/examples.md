@@ -9,6 +9,7 @@ Scripts in `examples/`:
 | `collect_dataset.py` | expert plus exploration noise data from the batched environment -> `.npz` |
 | `train_bc.py` | behaviour-cloning MLP (PyTorch) and closed-loop evaluation against the expert |
 | `benchmark.py` | speed of the live stand, the batched environment and the steady-state solver |
+| `bphe_sizing.py [--stand F] [--F-wet ...] [--set K=V ...]` | suction exchanger candidates solved with the whole stand at 0/110 °F ([suction-exchanger.md](suction-exchanger.md)) |
 
 ## Direct plant access
 

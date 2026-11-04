@@ -15,7 +15,7 @@ from .layout import (A_M_cl, A_M_film, A_M_g, A_M_s, A_Q_sg, A_T_co, A_T_d, A_T_
                      A_ll_fill, A_mdot_2, A_mdot_3, A_mdot_c, A_mdot_drn, A_mdot_lv, A_rec_level, A_x_l1, A_y_liq, MX,
                      NX, X_HG, X_HQ, X_H_D, X_H_I, X_H_L, X_MM, X_M_I, X_M_L, X_N, X_P_D, X_P_I, X_P_S, X_TCW, X_TMW,
                      X_TM_CO, X_TM_D, X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_T_WL, X_U1, X_U_I, X_WM)
-from .model import NS, _softplus, liquid_choke_ratio, pool_density, rhs
+from .model import NS, _bx_alpha, _softplus, liquid_choke_ratio, pool_density, rhs
 
 # outer unknowns (Levenberg-Marquardt): u1..u4, h_d, T_sw, T_dw, T_sh, T_rw, condenser walls
 # T_cw0.., the condenser water loop T_wl; then the receiver pool's enthalpy h_L (brought to rest at every evaluation, see
@@ -380,13 +380,23 @@ def march_mixer(p, tab, x, u, N, T_amb, T_wi, plo, phi, max_steps, dx, a, hg, to
                 rest = False
         if rest:
             break
-        m3 = abs(a[A_mdot_3])
-        fq = max(m3 / p.mx_mdot_q_ref, 0.04)
-        UA_q = p.mx_alpha_e * p.A_mx_cell * math.sqrt(fq)                  # upper bound of the cell's UA
-        UA_g = p.mx_alpha_g0 * p.A_mx_cell * (
-            max(max(a[A_mdot_2], 0.0), 1e-3 * p.mx_mdot_g_ref) / p.mx_mdot_g_ref) ** 0.8
-        dt_T = cfl * p.C_mw_cell / (UA_g + UA_q)
         P_s = x[X_P_S]
+        if p.mixer > 0.5:
+            # suction exchanger: the stream of both valves through both passes; the cells'
+            # UA bounded by the liquid film's (both passes wetted) and the vapor's coefficient
+            m3 = abs(a[A_mdot_2]) + abs(a[A_mdot_3])
+            mu_v = kp.transport(tab, P_s)[1]
+            cp_v = min(max(kp.sat(tab, P_s).cp_v, 500.0), 5000.0)
+            a_v = _bx_alpha(p, m3, p.bx_nch1, mu_v, kp.k_vapor(tab, P_s), cp_v)
+            UA_q = (p.bx_alpha_e * p.bx_F_wet + a_v) * p.A_b1_cell
+            UA_g = (p.bx_alpha_e * p.bx_F_wet + a_v) * p.A_b2_cell
+        else:
+            m3 = abs(a[A_mdot_3])
+            fq = max(m3 / p.mx_mdot_q_ref, 0.04)
+            UA_q = p.mx_alpha_e * p.A_mx_cell * math.sqrt(fq)                  # upper bound of the cell's UA
+            UA_g = p.mx_alpha_g0 * p.A_mx_cell * (
+                max(max(a[A_mdot_2], 0.0), 1e-3 * p.mx_mdot_g_ref) / p.mx_mdot_g_ref) ** 0.8
+        dt_T = cfl * p.C_mw_cell / (UA_g + UA_q)
         for j in range(n):
             M_q = kp.state(tab, P_s, x[X_HQ + j]).rho * p.V_sc[j]
             dt_h = cfl * M_q / (m3 + UA_q / 1000.0)
@@ -523,14 +533,15 @@ def solve_one(p, tab, P_s, P_d, SH, N, P_i, charge, fill, use_fill, T_amb, T_wi,
     dx = np.empty(NX)
     hg = np.empty(MX)
     z0, prof0 = z.copy(), prof.copy()
-    ok, rn, it_total = solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T_wi, max_iter, tol,
-                                    rounds, z, zlo, zhi, prof, plo, phi, M_g, False, x, dx, a, hg)
-    if not ok and a[A_rec_level] > 0.95:
-        # a full receiver: its temperature sets how much floods the condenser, which feeds
-        # back on its subcooling; solve with the pool's enthalpy among the unknowns
+    ok, rn, it_total, rec_max = solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T_wi,
+                                             max_iter, tol, rounds, z, zlo, zhi, prof, plo, phi, M_g, False, x, dx, a, hg)
+    if not ok and rec_max > 0.95:
+        # a full receiver (at any round: the rounds can wander off it): its temperature sets
+        # how much floods the condenser, which feeds back on its subcooling; solve with the
+        # pool's enthalpy among the unknowns
         z[:], prof[:] = z0, prof0
-        ok, rn, its = solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T_wi, 2 * max_iter,
-                                   tol, rounds, z, zlo, zhi, prof, plo, phi, M_g, True, x, dx, a, hg)
+        ok, rn, its, _ = solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T_wi, 2 * max_iter,
+                                      tol, rounds, z, zlo, zhi, prof, plo, phi, M_g, True, x, dx, a, hg)
         it_total += its
     info[0] = 1.0 if ok else 0.0
     info[1] = rn
@@ -542,7 +553,7 @@ def solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T
                  z, zlo, zhi, prof, plo, phi, M_g, pool_lm, x, dx, a, hg):
     """The rounds of solve_one from the starting point ``z``, ``prof``: the stand
     (Levenberg-Marquardt), the exchanger profile, the receiver pool.  Fills ``x``,
-    ``a``; returns (converged, residual norm, iterations)."""
+    ``a``; returns (converged, residual norm, iterations, highest receiver level of the rounds)."""
     n = MX
     r = np.empty(NR + 1)
     relax = 1.0 if pool_lm else SETTLE_RELAX
@@ -552,6 +563,7 @@ def solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T
     M_suc = np.inf
     rn = np.inf
     rn_prev, stalled = np.inf, 0
+    rec_max = 0.0
     for rnd in range(rounds):
         rn, its = lm(p, tab, P_s, h_s, P_d, P_i, N, T_amb, T_wi, z, zlo, zhi, prof, M_g, charge, fill, use_fill,
                      max_iter, tol, x, dx, a, hg, NZL + 1 if pool_lm else NZL)
@@ -568,6 +580,7 @@ def solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T
         build_x(p, tab, P_s, h_s, P_d, P_i, N, z, prof, M_g, charge, fill, use_fill, x)
         rhs(x, z[:4], N, T_amb, T_wi, p, tab, False, dx, True, a, hg)
         M_g = a[A_M_g]
+        rec_max = max(rec_max, a[A_rec_level])
         dM = abs(a[A_M_s] - M_suc)
         M_suc = a[A_M_s]
         rm, rh = abs(dx[X_M_L]), abs(dx[X_H_L])
@@ -597,7 +610,7 @@ def solve_rounds(p, tab, P_s, h_s, P_d, P_i, N, charge, fill, use_fill, T_amb, T
     ok = rn <= tol and rm < POOL_TOL_M and rh < POOL_TOL_H and mix_ok and a[A_x_l1] > 1.0 and a[A_y_liq] <= p.y_flood
     for k in range(4):
         ok = ok and 1.5e-3 < z[k] < 0.999
-    return ok, rn, it_total
+    return ok, rn, it_total, rec_max
 
 
 def _solve_batch(P, tab, P_s, P_d, SH, N, P_i, charge, fill, use_fill, T_amb, T_wi, max_iter, tol, rounds,

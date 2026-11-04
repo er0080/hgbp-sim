@@ -170,6 +170,11 @@ from S1 up to S2 against the same walls. Heat transfer per cell:
   blend over 15 kJ/kg above the dew point, so the dry-out point moves smoothly through
   the cells.
 
+With `mixer = 1` a tee and a small brazed plate exchanger with both circuits in series take
+the mixing exchanger's place: the older stands' arrangement, worst case. Its cells carry the
+stream out of equilibrium (liquid in superheated vapor), see
+[suction-exchanger.md](suction-exchanger.md).
+
 ### Tee and suction probe
 Liquid leaving S4 travels as droplets that evaporate with the time constant
 `tee_tau_evap` (0.3 s) on the way along the suction line.

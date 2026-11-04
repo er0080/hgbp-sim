@@ -146,6 +146,27 @@ class PlantParams:
     mx_UA_a: float = 2.0        # mixing exchanger -> ambient conductance (insulated) [W/K]
     tee_tau_evap: float = 0.3   # evaporation time constant of liquid droplets from the quench outlet in the gas downstream of the tee [s]
 
+    # ------------------------------------------- suction exchanger (mixer = 1)
+    # The alternative arrangement: hot gas (valve 2) and quench (valve 3) join at a tee, and a
+    # small brazed-plate exchanger with both circuits piped in series mixes them: pass 1
+    # S1 (bottom) -> S2 (top), a jumper S2 -> S3, pass 2 S3 -> S4 (bottom), counterflow across
+    # the plates, then the suction line.  The stream arrives out of equilibrium (superheated
+    # vapor carrying quench droplets); the plates bring it to equilibrium (docs/suction-exchanger.md).
+    mixer: float = 0.0          # suction mixing arrangement: 0 the brazed-plate mixing exchanger, 1 a tee and the series suction exchanger below
+    bx_n_plates: float = 30.0   # suction exchanger plate count (plates - 1 channels: pass 1 on S1-S2 the larger half)
+    bx_L: float = 0.47          # suction exchanger effective channel length, port to port (also the port height) [m]
+    bx_W: float = 0.12          # suction exchanger effective channel width [m]
+    bx_b: float = 2.0e-3        # suction exchanger channel gap (pressing depth) [m]
+    bx_phi: float = 1.17        # suction exchanger plate surface enlargement factor (hydraulic diameter 2 b / phi)
+    bx_beta: float = 30.0       # suction exchanger corrugation angle to the flow (Martin: about 30 low-theta L channels, 60 high-theta H) [deg]
+    bx_d_port: float = 0.033    # suction exchanger port bore [m]
+    bx_d_conn: float = 0.0321   # suction exchanger connection bore (1-3/8 in) [m]
+    bx_mass: float = 8.0        # suction exchanger net weight, stainless plates and copper braze (estimate) [kg]
+    bx_F_wet: float = 0.5       # share of the plate area that the liquid wets while the stream carries liquid (the main uncertainty)
+    bx_alpha_e: float = 3000.0  # plate -> wetting liquid film heat transfer coefficient (evaporating) [W/m^2/K]
+    bx_L_jmp: float = 0.5       # jumper S2 -> S3 length, at the connection bore [m]
+    bx_K_jmp: float = 1.5       # jumper fittings loss (two bends) [velocity heads]
+
     # ------------------------------------------------------- pressure drops
     # The condenser sides and the mixing exchanger gas side are flow resistances sized like
     # a valve: dP = (mdot / (Kv / 36000))^2 / rho_m, plates and ports together, with the
@@ -396,7 +417,8 @@ def liquid_volume_for_level(p, level):
 # ---------------------------------------------------------------- metadata
 _GROUPS = [
     ("fluid", "Refrigerant"), ("V_disp", "Compressor"), ("D_dis", "Piping"), ("charge", "Charge"),
-    ("cond_n_plates", "Condenser"), ("rec_V", "Receiver"), ("mx_n_plates", "Mixing exchanger"), ("cond_Kv_r", "Pressure drops"),
+    ("cond_n_plates", "Condenser"), ("rec_V", "Receiver"), ("mx_n_plates", "Mixing exchanger"),
+    ("mixer", "Suction exchanger"), ("cond_Kv_r", "Pressure drops"),
     ("UA_sg", "Pipe walls"), ("Kv_dpv", "Valves"), ("tau_T", "Sensors"), ("P_d_max", "Safety limits"),
     ("dP_i_margin", "Baseline control"),
 ]
@@ -404,7 +426,8 @@ _GROUPS = [
 # next cold / warm start
 _REQUIRE_INIT = {"fluid", "charge", "charge_nominal", "cold_liquid_in_suction", "V_comp_suc", "V_comp_dis",
                  "cond_n_plates", "cond_V_ch", "cond_mass", "rec_V", "rec_dip", "rec_mass",
-                 "mx_n_plates", "mx_V_ch", "mx_A", "mx_mass", "cond_A", "rho_w", "cp_w", "w_loop"} \
+                 "mx_n_plates", "mx_V_ch", "mx_A", "mx_mass", "cond_A", "rho_w", "cp_w", "w_loop",
+                 "mixer", "bx_n_plates", "bx_L", "bx_W", "bx_b", "bx_phi", "bx_mass", "bx_d_conn", "bx_L_jmp"} \
     | {f"{a}_{k}" for a in ("D", "t", "L") for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")}
 # Editable range (min, max) enforced by the UI and by LiveStand.set_params.
 # Parameters that are not listed are unconstrained.
@@ -423,6 +446,10 @@ _RANGES: dict[str, tuple[float, float]] = {
     "cond_sc_film": (0.0, 0.5), "y_flood": (1e-4, 0.5), "tee_tau_evap": (0.01, 10.0), "comp_x_min": (0.0, 1.0),
     "V_comp_suc": (0.0, 0.1), "V_comp_dis": (0.0, 0.1), "rec_V": (1e-3, 1.0),
     "cond_tau_drain": (0.05, 60.0), "rec_tau_flash": (0.05, 60.0),
+    "mixer": (0.0, 1.0), "bx_n_plates": (4.0, 200.0), "bx_L": (0.05, 2.0), "bx_W": (0.02, 0.6),
+    "bx_b": (0.5e-3, 5e-3), "bx_phi": (1.0, 1.5), "bx_beta": (20.0, 70.0), "bx_d_port": (0.005, 0.2),
+    "bx_d_conn": (0.005, 0.2), "bx_mass": (0.1, 200.0), "bx_F_wet": (0.01, 1.0), "bx_alpha_e": (10.0, 1e5),
+    "bx_L_jmp": (0.0, 10.0), "bx_K_jmp": (0.0, 100.0),
     **{f"{a}_{k}": (0.0, 0.2 if a != "L" else 50.0) for a in ("D", "t", "L")
        for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")},
     **{f"K_{k}": (0.0, 100.0) for k in ("dis", "hdr", "bp", "q", "mo", "suc", "drn", "liq")},

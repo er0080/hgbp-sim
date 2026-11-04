@@ -45,7 +45,8 @@ CHAR_CODES = {"linear": 0, "eqpct": 1, "quick": 2}
 CHAR_FIELDS = {"dpv_char": "dpv_code", "spv_char": "spv_code", "stv_char": "stv_code", "w_char": "w_code"}
 # volumes and heat capacities added by geometry.derive (scalars per environment)
 DERIVED = ("V_cond", "V_cond_w", "V_mx_g", "V_mx_q", "V_d", "V_i", "V_L1", "V_L2", "V_s",
-           "A_mx_cell", "C_mw_cell", "C_cw", "C_sw", "C_dw", "C_rw")
+           "A_mx_cell", "C_mw_cell", "C_cw", "C_sw", "C_dw", "C_rw",
+           "bx_nch1", "bx_nch2", "A_b1_cell", "A_b2_cell", "bx_A")
 DERIVED_VEC = (("V_sc", MX + 2), ("V_gc", MX), ("seg_i", 6))
 
 
@@ -90,6 +91,9 @@ AUX_FIELDS = (
     # exchanger cells as displayed (h_q, x_q, T_q, h_g, T_g, h_c, x_c, T_c): the state leaving
     # each cell, at these pressures where it leaves
     ("P_cf", MX), ("P_qf", MX), ("P_gf", MX),
+    # vapor share leaving each gas cell (suction exchanger, pass 2; 1 for the mixing exchanger),
+    # liquid share entering (the tee) and leaving the suction exchanger, its pressure drop
+    ("x_g", MX), ("y_bi", 1), ("y_bo", 1), ("dP_bx", 1),
     ("Q_mx", 1), ("Q_q", 1), ("rho_s", 1), ("h_l1", 1), ("h_l2", 1), ("h_cin", 1), ("x_l2", 1),
     ("h_d", 1), ("h_i", 1), ("h_co", 1), ("h2", 1), ("h2_ad", 1), ("h_2f", 1), ("h_3f", 1), ("T2_ad", 1),
     ("P_tee", 1), ("dP_suc", 1), ("dP_dis", 1), ("dP_hdr", 1), ("dP_bp", 1), ("dP_mog", 1),

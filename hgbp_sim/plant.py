@@ -578,7 +578,8 @@ class HGBPPlant:
             high_T_s=a["T_s"] > p.T_s_max,              # the suction-line flow meter's inlet
             high_P_i=a["P_i"] > p.P_i_max,              # liquid pressure (receiver, liquid line)
             floodback=a["y_liq"] > p.y_flood,           # liquid reaching the compressor
-            mixer_wet=a["x_qo"] < 1.0,                  # quench liquid leaving the mixing exchanger
+            # liquid leaving the mixer: the mixing exchanger's quench side, or the suction exchanger
+            mixer_wet=np.where(p.mixer > 0.5, a["y_bo"] > 1e-3, a["x_qo"] < 1.0),
             no_liquid_seal=a["ll_fill"] < 0.5,          # undercharged: receiver below the dip tube
             receiver_full=a["rec_level"] > 0.9,         # overcharged: receiver above its rated fill
             condenser_flooded=a["cond_flood"] > 0.05,   # liquid backing up into the condenser

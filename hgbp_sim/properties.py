@@ -39,8 +39,9 @@ SAT_FIELDS = (
     "dhmax_v", "dhmax_l",
 )
 # Saturation transport properties (functions of P on the same grid): liquid and
-# vapor viscosity [Pa s], surface tension [N/m]; used by the pressure drop correlations
-TR_FIELDS = ("mu_l", "mu_v", "sigma")
+# vapor viscosity [Pa s], surface tension [N/m] (the pressure drop correlations) and the
+# vapor's thermal conductivity [W/m/K] (the suction exchanger's vapor heat transfer)
+TR_FIELDS = ("mu_l", "mu_v", "sigma", "k_v")
 # Single-phase region table fields
 REG_FIELDS = ("T", "rho", "s", "drho_dP", "drho_dh", "cp")
 
@@ -298,7 +299,7 @@ class RefrigerantTables:
             fluid=np.array(self.fluid), backend=np.array(self.backend))
 
     def _transport_rows(self, P, fluid: str | None = None):
-        """Viscosities and surface tension at saturation (CoolProp)."""
+        """Viscosities, surface tension and vapor conductivity at saturation (CoolProp)."""
         try:
             import CoolProp.CoolProp as CP
         except ImportError as exc:  # pragma: no cover
@@ -325,6 +326,14 @@ class RefrigerantTables:
                 ln_mu += xk * np.log(pk.viscosity())
             return float(np.exp(ln_mu))
 
+        def vapor_conductivity():
+            """NaN where CoolProp's conductivity model fails (as at low pressure for R32 and
+            its blends): such points are filled from the neighbouring pressures below."""
+            try:
+                return AS.conductivity()
+            except ValueError:
+                return np.nan
+
         def sigma(T):
             if len(comps) == 1:
                 return AS.surface_tension()
@@ -346,9 +355,17 @@ class RefrigerantTables:
                 tr[_TI["mu_l"], i], tr[_TI["sigma"], i] = liquid_viscosity(T), sigma(T)
                 _pq_update(AS, CP, float(p), 1.0, last)
                 tr[_TI["mu_v"], i] = AS.viscosity()
+                tr[_TI["k_v"], i] = vapor_conductivity()
             except ValueError:
                 tr[:, i] = np.nan          # as for the saturation rows: filled from the neighbours
         lp = np.log(np.asarray(P, float))
+        # the vapor conductivity has its own gaps: filled from its own valid points (held
+        # constant beyond them); it only enters a heat transfer coefficient
+        kv = tr[_TI["k_v"]]
+        okk = np.isfinite(kv)
+        if okk.sum() < 0.5 * len(P):
+            raise ValueError(f"{name}: vapor conductivity failed at {int((~okk).sum())} of {len(P)} pressures")
+        kv[~okk] = np.interp(lp[~okk], lp[okk], kv[okk])
         ok = np.isfinite(tr).all(axis=0)
         if (~ok).sum() > 0.05 * len(P):
             raise ValueError(f"{name}: transport properties failed at {int((~ok).sum())} of {len(P)} pressures")
@@ -365,8 +382,11 @@ class RefrigerantTables:
         self._sat = d["sat"]
         self._vap = d["vap"]
         self._liq = d["liq"]
-        # tables saved before the transport rows were added: compute them now
-        self._tr = d["tr"] if "tr" in d.files else self._transport_rows(np.exp(d["lp"]), fluid=str(d["fluid"]))
+        # tables saved before the transport rows (or some of them) were added: compute them now
+        tr = d["tr"] if "tr" in d.files else None
+        if tr is None or tr.shape[0] != len(TR_FIELDS):
+            tr = self._transport_rows(np.exp(d["lp"]), fluid=str(d["fluid"]))
+        self._tr = tr
         (self.p_min, self.p_max, self.t_min, self.t_max,
          self.T_crit, self.P_crit, self.M_molar) = (float(v) for v in d["meta"])
         self.n_p = len(self._lp)

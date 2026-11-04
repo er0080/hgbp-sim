@@ -16,8 +16,10 @@ export interface Snapshot {
   loops: Record<string, Loop>;
   meas: Record<string, number>;
   // true (model) values; x_q, T_q, T_g, T_mw are per mixing exchanger cell and x_c, T_c (refrigerant),
-  // T_wc (water), T_cwc (wall) per condenser cell, top -> bottom
-  true: Record<string, number> & { x_q: number[]; T_q: number[]; T_g: number[]; T_mw: number[];
+  // T_wc (water), T_cwc (wall) per condenser cell, top -> bottom.  With the suction exchanger
+  // (mixer 1) x_q, T_q are pass 1 (S1 -> S2) and x_g, T_g pass 2 (cell 4 at S3 -> cell 0 at S4):
+  // the vapor share actually leaving each cell and its vapor's temperature
+  true: Record<string, number> & { x_q: number[]; T_q: number[]; T_g: number[]; T_mw: number[]; x_g: number[];
     x_c: number[]; T_c: number[]; T_wc: number[]; T_cwc: number[] };
   alarms: Record<string, boolean>;
   limits: Record<string, number>;

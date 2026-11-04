@@ -17,7 +17,8 @@ const cells = (p: string, order: number[]) => order.map((j) => `${p}${j}`);
 const N_CELL = [0, 1, 2, 3, 4];
 
 /** Legs in flow order: points, start / end color, label of a valve on the leg. */
-const LEGS: { key: string; name: string; pts: string[]; from: keyof typeof COL; to: keyof typeof COL; valve?: string; arrow?: boolean }[] = [
+type Leg = { key: string; name: string; pts: string[]; from: keyof typeof COL; to: keyof typeof COL; valve?: string; arrow?: boolean };
+const COMMON_LEGS: Leg[] = [
   // suction port, motor heating, the polytropic path ("@comp"), the end of compression, the
   // shell, the discharge volume (straight 1 -> 2 when the compressor stands)
   { key: "comp", name: "compression", pts: ["suc", "cmh", "@comp", "c2a", "cout", "dis"], from: "suc", to: "hot", arrow: true },
@@ -27,6 +28,39 @@ const LEGS: { key: string; name: string; pts: string[]; from: keyof typeof COL; 
   { key: "cond", name: "condenser", pts: ["cin", ...cells("c", N_CELL)], from: "hot", to: "liq", arrow: true },
   { key: "drain", name: "drain, receiver", pts: ["c4", "rec"], from: "liq", to: "liq" },
   { key: "liq", name: "liquid line", pts: ["rec", "v3i"], from: "liq", to: "liq" },
+];
+const COMMON_POINTS: [string, string][] = [
+  ["suc", "compressor suction"], ["dis", "discharge (probe)"], ["v1i", "valve 1 inlet"], ["hdr", "hot gas header"],
+  ["cin", "condenser in (S3)"], ["rec", "receiver liquid"], ["v3i", "valve 3 inlet"], ["v3o", "valve 3 outlet"],
+];
+/** Inside the compressor (the model's stages) and the isentropic discharge state 2s. */
+const COMP_POINTS: [string, string][] = [
+  ["cmh", "motor-heated suction gas"], ["c2a", "compression end (adiabatic)"],
+  ["cout", "compressor outlet"], ["c2s", "isentropic discharge 2s"],
+];
+
+interface MixerTables {
+  legs: Leg[];
+  points: [string, string][];                                 // numbered state points
+  cells: [string, string, string[]][];                        // label tag, group label, cells in flow order
+  trail: string[];                                            // points with a trail
+  num: Record<string, number>;
+  name: Record<string, string>;
+}
+function tables(legs: Leg[], points: [string, string][], cellGroups: [string, string, string[]][], trail: string[]): MixerTables {
+  return {
+    legs, points, cells: cellGroups, trail,
+    num: Object.fromEntries(points.map(([k], i) => [k, i + 1])),
+    name: Object.fromEntries([
+      ...points, ...COMP_POINTS,
+      ...cellGroups.flatMap(([, label, ks]) => ks.map((k, i) => [k, `${label.split(" (")[0].replace(" cells", "")} cell ${i + 1}`])),
+    ]),
+  };
+}
+const COND_CELLS: [string, string, string[]] = ["c", "condenser cells (top → bottom)", cells("c", N_CELL)];
+/** The mixing exchanger (mixer 0): quench and bypass gas in counterflow, joined at the tee. */
+const MX_TABLES = tables([
+  ...COMMON_LEGS,
   { key: "v3", name: "valve 3, quench line", pts: ["v3i", "v3o", "qin"], from: "liq", to: "liq", valve: "V3", arrow: true },
   { key: "quench", name: "mixing exchanger, quench side", pts: ["qin", ...cells("q", N_CELL), "qout"], from: "liq", to: "suc", arrow: true },
   { key: "qo", name: "quench outlet", pts: ["qout", "tee"], from: "suc", to: "suc" },
@@ -34,36 +68,39 @@ const LEGS: { key: string; name: string; pts: string[]; from: keyof typeof COL; 
   { key: "gas", name: "mixing exchanger, gas side", pts: ["gin", ...cells("g", [4, 3, 2, 1, 0]), "gout"], from: "hot", to: "suc", arrow: true },
   { key: "go", name: "gas outlet", pts: ["gout", "tee"], from: "suc", to: "suc" },
   { key: "sucl", name: "suction line", pts: ["tee", "suc"], from: "suc", to: "suc", arrow: true },
-];
-
-/** Numbered state points (the exchanger cells are listed under their exchanger). */
-const KEY_POINTS: [string, string][] = [
-  ["suc", "compressor suction"], ["dis", "discharge (probe)"], ["v1i", "valve 1 inlet"], ["hdr", "hot gas header"],
-  ["cin", "condenser in (S3)"], ["rec", "receiver liquid"], ["v3i", "valve 3 inlet"], ["v3o", "valve 3 outlet"],
+], [
+  ...COMMON_POINTS,
   ["qin", "quench in (S3)"], ["qout", "quench out (S4)"], ["v2o", "valve 2 outlet"], ["gin", "bypass gas in (S1)"],
   ["gout", "bypass gas out (S2)"], ["tee", "tee (mixed)"],
-];
-const CELL_GROUPS: [string, string, string[]][] = [
-  ["c", "condenser cells (top → bottom)", cells("c", N_CELL)],
+], [
+  COND_CELLS,
   ["q", "quench cells (top → bottom)", cells("q", N_CELL)],
   ["g", "gas cells (bottom → top)", cells("g", [4, 3, 2, 1, 0])],
-];
-/** Inside the compressor (the model's stages) and the isentropic discharge state 2s. */
-const COMP_POINTS: [string, string][] = [
-  ["cmh", "motor-heated suction gas"], ["c2a", "compression end (adiabatic)"],
-  ["cout", "compressor outlet"], ["c2s", "isentropic discharge 2s"],
-];
-const NUM: Record<string, number> = Object.fromEntries(KEY_POINTS.map(([k], i) => [k, i + 1]));
-const NAME: Record<string, string> = Object.fromEntries([
-  ...KEY_POINTS, ...COMP_POINTS,
-  ...CELL_GROUPS.flatMap(([, label, ks]) => ks.map((k, i) => [k, `${label.split(" (")[0].replace(" cells", "")} cell ${i + 1}`])),
-]);
+], ["suc", "dis", "hdr", "rec", "qout", "gout"]);
+/** The tee and series suction exchanger (mixer 1): both valves into the tee, pass 1 up
+ *  (S1 -> S2), the jumper, pass 2 down (S3 -> S4).  The cells sit at the stream's mixture
+ *  enthalpy; out of equilibrium it carries liquid at enthalpies right of the dew line. */
+const BX_TABLES = tables([
+  ...COMMON_LEGS,
+  { key: "v3", name: "valve 3, quench line", pts: ["v3i", "v3o", "tee"], from: "liq", to: "liq", valve: "V3", arrow: true },
+  { key: "v2", name: "valve 2, bypass line", pts: ["hdr", "v2o", "tee"], from: "hot", to: "hot", valve: "V2", arrow: true },
+  { key: "bx1", name: "suction exchanger, pass 1", pts: ["tee", "bin", ...cells("q", N_CELL)], from: "suc", to: "suc", arrow: true },
+  { key: "bx2", name: "suction exchanger, pass 2", pts: ["q4", ...cells("g", [4, 3, 2, 1, 0]), "bout"], from: "suc", to: "suc", arrow: true },
+  { key: "sucl", name: "suction line", pts: ["bout", "suc"], from: "suc", to: "suc", arrow: true },
+], [
+  ...COMMON_POINTS,
+  ["v2o", "valve 2 outlet"], ["tee", "tee (hot gas + quench)"], ["bin", "suction exchanger in (S1)"],
+  ["bout", "suction exchanger out (S4)"],
+], [
+  COND_CELLS,
+  ["a", "pass 1 cells (S1 → S2)", cells("q", N_CELL)],
+  ["b", "pass 2 cells (S3 → S4)", cells("g", [4, 3, 2, 1, 0])],
+], ["suc", "dis", "hdr", "rec", "tee", "bout"]);
 
 // plot geometry (viewBox units)
 const W = 1000, H = 640, M = { l: 66, r: 92, t: 16, b: 46 };          // setpoint labels in the right margin
 const PW = W - M.l - M.r, PH = H - M.t - M.b;
 const TRAIL_N = 150;                                  // snapshots kept for the trail (about 15 s at 10/s)
-const TRAIL_PTS = ["suc", "dis", "hdr", "rec", "qout", "gout"];
 
 interface Range { h0: number; h1: number; P0: number; P1: number }   // base units: kJ/kg, bar
 
@@ -124,6 +161,8 @@ function stateText(u: Units, p: Pt) {
 }
 
 export default function PhTab({ snap }: { snap: Snapshot }) {
+  const TB = (snap.true.mixer ?? 0) > 0.5 ? BX_TABLES : MX_TABLES;
+  const { legs: LEGS, points: KEY_POINTS, cells: CELL_GROUPS, trail: TRAIL_PTS, num: NUM, name: NAME } = TB;
   const u = useUnits();
   const [base, setBase] = useState<PhChart | null>(null);       // whole dome (its extent; drawn until a view arrives)
   const [view, setView] = useState<PhChart | null>(null);       // background of the present view
@@ -347,8 +386,14 @@ export default function PhTab({ snap }: { snap: Snapshot }) {
     ["isentropic efficiency (1 → 2)", fmt(d("suc", "c2s") / d("suc", "dis"), 3)],
     ["polytropic efficiency (drawn path)", paths.eta_p !== undefined ? fmt(paths.eta_p, 3) : "--"],
     ["condenser Δh (S3 → receiver)", `${fmt(u.diff("h", d("cin", "rec")), 1)} ${hU}`],
-    ["bypass gas Δh (S1 → S2)", `${fmt(u.diff("h", d("gin", "gout")), 1)} ${hU}`],
-    ["quench Δh (S3 → S4)", `${fmt(u.diff("h", d("qin", "qout")), 1)} ${hU}`],
+    ...((snap.true.mixer ?? 0) > 0.5 ? [
+      ["suction exchanger Δh (S1 → S4)", `${fmt(u.diff("h", d("bin", "bout")), 1)} ${hU}`],
+      ["liquid in (tee) → out (S4)", `${fmt(snap.true.y_bi * 100, 1)} → ${fmt(snap.true.y_bo * 100, 2)} %`],
+      ["suction exchanger ΔP (S1 → S4)", u.fmtU("dP", snap.true.dP_bx)],
+    ] : [
+      ["bypass gas Δh (S1 → S2)", `${fmt(u.diff("h", d("gin", "gout")), 1)} ${hU}`],
+      ["quench Δh (S3 → S4)", `${fmt(u.diff("h", d("qin", "qout")), 1)} ${hU}`],
+    ]) as [string, string][],
     ["valve 1 flow", u.fmtU("mdot", m.mdot_1)],
     ["valve 2 (bypass) flow", u.fmtU("mdot", m.mdot_2)],
     ["valve 3 (quench) flow", u.fmtU("mdot", m.mdot_3)],

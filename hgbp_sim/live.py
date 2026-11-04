@@ -546,7 +546,7 @@ class LiveStand:
             valve2_open=f(aux["u2"]) >= 0.05, no_trip=not bool(self.interlock.tripped[0]),
             off_time_elapsed=bool(self.interlock.state[0] != ST_OFF or self.interlock.t_state[0] >= self.interlock.min_off_time),
         )
-        ph = state_points(aux, self.props)
+        ph = state_points(aux, self.props, bx=f(p.mixer) > 0.5)
         return dict(
             t=self.t, step=self.step_count, paused=self.paused, speed_factor=self.speed_factor,
             achieved_speed=self.achieved_speed, noise=self.noise,
@@ -569,6 +569,8 @@ class LiveStand:
                       rec_level=f(aux["rec_level"]), ll_fill=f(aux["ll_fill"]), cond_flood=f(aux["cond_flood"]),
                       x_qo=f(aux["x_qo"]), T_qo=f(aux["T_qo"]) - C2K, T_go=f(aux["T_go"]) - C2K,
                       M_q_liq=f(aux["M_q_liq"]), Q_mx=f(aux["Q_mx"]),
+                      mixer=f(p.mixer), y_bi=f(aux["y_bi"]), y_bo=f(aux["y_bo"]), dP_bx=f(aux["dP_bx"]) / 1e3,
+                      A_bx=f(p.bx_A), x_g=[float(v) for v in aux["x_g"][0]],
                       x_q=[float(v) for v in aux["x_q"][0]], T_q=[float(v) - C2K for v in aux["T_q"][0]],
                       T_g=[float(v) - C2K for v in aux["T_g"][0]], T_mw=[float(v) - C2K for v in aux["T_mw"][0]],
                       T_L=f(aux["T_L"]) - C2K, SC_L=f(aux["SC_L"]), M_L=f(aux["M_L"]), M_cl=f(aux["M_cl"]),

@@ -151,6 +151,16 @@ reference state (CoolProp's: for R410A and the single-component refrigerants IIR
 for saturated liquid at 0 °C; blends close to that). It is not the ASHRAE reference used by
 many US charts, so compare differences, not absolute values.
 
+
+With the suction exchanger (`mixer = 1`, [suction-exchanger.md](suction-exchanger.md)) the
+schematic draws the tee, pass 1 rising (S1 -> S2), the jumper and pass 2 falling (S3 -> S4).
+Each cell shows the vapor share actually leaving it while the stream still carries liquid,
+otherwise the vapor's temperature. On the P-h diagram both valves end at the tee, and the
+legs run through pass 1 and pass 2 to the suction line. The cells sit at the stream's
+mixture enthalpy, so liquid can travel at enthalpies right of the dew line. Their table rows
+give the vapor share and the vapor temperature. The cycle panel adds the liquid share in
+and out and the exchanger's pressure drop.
+
 ## Starting the compressor
 
 The loops run whenever they are in AUTO, compressor on or off, as the stand's controllers

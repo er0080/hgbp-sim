@@ -19,10 +19,10 @@ DT_L_DP, DH_L_DP, DH_V_DP, DRHO_L_DP, DRHO_V_DP, DHMAX_V, DHMAX_L = range(10, 17
 # single-phase region rows (order of properties.REG_FIELDS)
 R_T, R_RHO, R_S, R_DRHO_DP, R_DRHO_DH, R_CP = range(6)
 # transport rows (order of properties.TR_FIELDS)
-MU_L, MU_V, SIGMA = range(3)
+MU_L, MU_V, SIGMA, K_V = range(4)
 
 Tab = namedtuple("Tab", ["lp0", "inv_dlp", "p_min", "p_max", "n_p", "n_z", "sat", "tr", "vap", "liq", "P"])
-"""sat (17, n_p), tr (3, n_p): saturation rows on the log-P grid ``P``; vap, liq
+"""sat (17, n_p), tr (4, n_p): saturation rows on the log-P grid ``P``; vap, liq
 (6, n_p * n_z): region tables flattened as i * n_z + j."""
 
 # state at (P, h): phase-dependent T, rho, density derivatives, s, cp; saturation values
@@ -61,6 +61,13 @@ def transport(tab, P):
     tr = tab.tr
     return (tr[MU_L, i] * (1.0 - w) + tr[MU_L, i + 1] * w, tr[MU_V, i] * (1.0 - w) + tr[MU_V, i + 1] * w,
             tr[SIGMA, i] * (1.0 - w) + tr[SIGMA, i + 1] * w)
+
+
+@njit(cache=True)
+def k_vapor(tab, P):
+    """Saturated vapor thermal conductivity at ``P``."""
+    i, w = pidx(tab, P)
+    return tab.tr[K_V, i] * (1.0 - w) + tab.tr[K_V, i + 1] * w
 
 
 @njit(cache=True, inline="always")
@@ -217,6 +224,7 @@ def sat_row_array(tab, k, P, out):
 def transport_array(tab, P, out):
     for k in range(P.shape[0]):
         out[0, k], out[1, k], out[2, k] = transport(tab, P[k])
+        out[3, k] = k_vapor(tab, P[k])
 
 
 @njit(cache=True)

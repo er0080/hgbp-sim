@@ -5,7 +5,7 @@ const LABELS: Record<string, [string, "bad" | "warn"]> = {
   floodback: ["LIQUID AT COMPRESSOR INLET", "bad"],
   high_P_d_warning: ["DISCHARGE PRESSURE HIGH", "warn"],
   high_T_d_warning: ["DISCHARGE TEMPERATURE HIGH", "warn"],
-  mixer_wet: ["quench liquid leaving the mixing exchanger", "warn"],
+  mixer_wet: ["liquid leaving the mixer", "warn"],
   no_liquid_seal: ["receiver below dip tube: vapor in liquid line (undercharged)", "warn"],
   receiver_full: ["receiver above 90 % (overcharged)", "warn"],
   condenser_flooded: ["condenser flooding (overcharged)", "warn"],

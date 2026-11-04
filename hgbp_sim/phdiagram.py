@@ -37,9 +37,10 @@ def _f(aux, k):
     return float(np.asarray(aux[k]).ravel()[0])
 
 
-def state_points(aux, props) -> dict:
+def state_points(aux, props, bx: bool = False) -> dict:
     """Named state points ``name -> [P bar, h kJ/kg, T degC, x, dT K]`` of one stand
-    (row 0 of the outputs).  ``x`` is the vapor quality (below 0 subcooled, above 1
+    (row 0 of the outputs); ``bx``: the tee and suction exchanger (mixer 1) in place of the
+    mixing exchanger.  ``x`` is the vapor quality (below 0 subcooled, above 1
     superheated, by enthalpy); ``dT`` the subcooling (liquid) or superheat (vapor),
     0 inside the dome."""
     g = lambda k: _f(aux, k)
@@ -78,6 +79,18 @@ def state_points(aux, props) -> dict:
         pts[f"g{j}"] = (float(P_gf[j]), float(h_g[j]))
     pts["gout"] = (P_g2, float(h_g[0]))
     pts["tee"] = (P_tee, h_tee)
+    if bx:
+        # suction exchanger: both valves into the tee, pass 1 (the quench cells) from S1, pass 2
+        # (the gas cells) to S4; the outlet piping's two legs (dP_mog) taken as equal
+        P_tee = g("P_tee")
+        h_tee = (m2 * h_2f + m3 * h_3f) / (m2 + m3) if m2 + m3 > 1e-6 else float(h_q[0])
+        for k in ("qin", "qout", "gin", "gout"):
+            pts.pop(k)
+        pts["v3o"] = (P_tee + g("dP_q"), h_co)
+        pts["v2o"] = (P_tee + g("dP_bp"), h_2f)
+        pts["tee"] = (P_tee, h_tee)
+        pts["bin"] = (P_tee - 0.5 * g("dP_mog"), h_tee)
+        pts["bout"] = (P_s + g("dP_suc") + 0.5 * g("dP_mog"), float(h_g[0]))
     # inside the compressor (components.compressor_s): the suction gas heated by the motor,
     # the end of the (adiabatic) compression, the outlet after the shell's cooling; and the
     # isentropic discharge state from the suction port (2s)
@@ -96,7 +109,29 @@ def state_points(aux, props) -> dict:
     st = props.state(P, h)
     sat = props.sat(P)
     dT = np.where(st.x > 1.0, st.T - sat["T_v"], np.where(st.x < 0.0, sat["T_l"] - st.T, 0.0))
-    rows = np.round(np.stack([P / 1e5, h / 1e3, st.T - C2K, st.x, dT], axis=1), 5).tolist()
+    T, xq = st.T - C2K, np.array(st.x, float)
+    if bx:
+        # the suction exchanger's cells out of equilibrium: the vapor share actually leaving
+        # the cell and its vapor's temperature (superheated while liquid is still present)
+        x_q, T_q, x_g, T_g = vec("x_q"), vec("T_q"), vec("x_g"), vec("T_g")
+        # the tee and the exchanger's inlet: the quench's unflashed liquid in the gas, which
+        # is superheated by the mixture's enthalpy over its own share
+        y_t = g("y_bi")
+        for k in ("tee", "bin"):
+            i = names.index(k)
+            if y_t > 1e-4:
+                h_vap = sat["h_l"][i] + (h[i] - sat["h_l"][i]) / (1.0 - y_t)
+                Tv = float(props.T_vapor(P[i:i + 1], np.array([max(h_vap, sat["h_v"][i])]))[0])
+                T[i], xq[i], dT[i] = Tv - C2K, 1.0 - y_t, Tv - sat["T_v"][i]
+        for i, k in enumerate(names):
+            if k[0] in "qg" and k[1:].isdigit():
+                j = int(k[1:])
+                xv, Tv = (x_q[j], T_q[j]) if k[0] == "q" else (x_g[j], T_g[j])
+                T[i] = Tv - C2K
+                dT[i] = Tv - sat["T_v"][i]
+                if xv < 1.0:
+                    xq[i] = xv
+    rows = np.round(np.stack([P / 1e5, h / 1e3, T, xq, dT], axis=1), 5).tolist()
     return dict(zip(names, rows))
 
 

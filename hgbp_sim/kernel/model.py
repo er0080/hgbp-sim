@@ -27,11 +27,11 @@ from .layout import (A_M_L, A_M_cl, A_M_d, A_M_film, A_M_g, A_M_i, A_M_q_liq, A_
                      A_T_sat_s, A_T_sh, A_T_sw, A_T_wc, A_T_wo, A_Tm_co, A_Tm_d, A_Tm_s, A_W_el, A_W_shaft, A_Wm,
                      A_cond_flood, A_dP_bp, A_dP_cr, A_dP_cw, A_dP_dis, A_dP_drn, A_dP_hdr, A_dP_liq, A_dP_mg,
                      A_dP_mog, A_dP_moq, A_dP_mq, A_dP_mq_ch, A_dP_q, A_dP_q_dist, A_dP_q_in, A_dP_q_out, A_dP_qc,
-                     A_dP_suc, A_dx, A_eta_s, A_eta_v, A_fill_i, A_h2, A_h2_ad, A_h_2f, A_h_3f, A_h_L, A_h_c, A_h_cin,
+                     A_dP_bx, A_dP_suc, A_dx, A_eta_s, A_eta_v, A_fill_i, A_h2, A_h2_ad, A_h_2f, A_h_3f, A_h_L, A_h_c, A_h_cin,
                      A_h_co, A_h_d, A_h_g, A_h_go, A_h_i, A_h_l1, A_h_l2, A_h_q, A_ll_fill, A_mdot_1, A_mdot_2,
                      A_mdot_3, A_mdot_c, A_mdot_cr, A_mdot_drn, A_mdot_lv, A_mdot_w, A_mdot_whx, A_mm, A_rec_level, A_rho_s, A_u1,
                      A_T_win,
-                     A_x_c, A_x_i, A_x_l1, A_x_l2, A_x_out, A_x_q, A_x_qo, A_y_liq, MX, NX, X_HG, X_HQ, X_H_D, X_H_I,
+                     A_x_c, A_x_g, A_x_i, A_x_l1, A_x_l2, A_x_out, A_x_q, A_x_qo, A_y_bi, A_y_bo, A_y_liq, MX, NX, X_HG, X_HQ, X_H_D, X_H_I,
                      X_H_L, X_MM, X_M_D, X_M_I, X_M_L, X_M_S, X_N, X_P_D, X_P_I, X_P_S, X_TCW, X_TMW, X_TM_CO, X_TM_D,
                      X_TM_S, X_T_DW, X_T_RW, X_T_SH, X_T_SW, X_T_WL, X_U1, X_U_D, X_U_I, X_U_S, X_WM)
 # (layout's X_* state and A_* output indices are compile-time constants in the kernel)
@@ -47,11 +47,13 @@ MAX_DH_STEP = 40e3          # suction cell enthalpy change per sub-step above wh
 MAX_DP_STEP = 0.2           # relative pressure change per sub-step above which it is redone finer
 INTEGRATORS = {"rk4": 0, "heun": 1, "euler": 2}
 NS = MX + 2                 # dynamic suction side cells: quench cells, L1 (tee + suction line), L2 (compressor)
-RHS_ROWS = 30               # scratch rows of rhs (cell arrays of at most NS entries)
+RHS_ROWS = 44               # scratch rows of rhs (cell arrays of at most NS entries)
 CF_STAGNANT = 2e-3          # condenser flow below which its vapor counts as stagnant (the section's own) [kg/s]
 WET_BAND = 0.2              # wall temperature band around the condensing temperature over which a cell wets [K]
 POOL_FULL = 0.02            # receiver pool share of its capacity over which a full pool blocks the drain
 FLOOD_BAND = 0.01           # condenser volume share over which flooding sets in
+BX_Y_WET = 2e-3             # suction exchanger: liquid share below which the wetted plate area recedes
+BX_ALPHA_MIN = 20.0         # suction exchanger: vapor -> plate coefficient without flow (natural convection) [W/m^2/K]
 
 
 # ------------------------------------------------------------------ helpers
@@ -194,6 +196,83 @@ def _quench_heat(Hq, Tq, T_mw, H_up, dTs, phi_f, Q_2ph, UA_e, UA_v, h_vs):
     phi = min(phi_f, phi_h if Hq > H_up else 1.0)
     Q_dry = phi * Q_2ph + (1.0 - phi) * UA_v * (T_mw - Tq)
     return w_wet * UA_e * (T_mw - Tq) + (1.0 - w_wet) * Q_dry
+
+
+@njit(cache=True)
+def _bx_alpha(p, m_v, nch, mu_v, k_v, cp_v):
+    """Vapor -> plate heat transfer coefficient in the suction exchanger's channels (Martin
+    1996, VDI Heat Atlas: Nu = 0.122 Pr^1/3 (xi Re^2 sin 2 beta)^0.374, saturated vapor
+    properties) for vapor flow ``m_v`` through ``nch`` channels."""
+    dh = 2.0 * p.bx_b / p.bx_phi
+    G = max(m_v, 0.0) / (nch * p.bx_b * p.bx_W)
+    Re = max(G * dh / mu_v, 1.0)
+    xi = martin_xi(Re, p.bx_beta)
+    Pr = cp_v * mu_v / k_v
+    Nu = 0.122 * Pr ** (1.0 / 3.0) * (xi * Re * Re * math.sin(2.0 * math.radians(p.bx_beta))) ** 0.374
+    return max(Nu * k_v / dh, BX_ALPHA_MIN)
+
+
+@njit(cache=True)
+def _bx_cell(m, s_in, E, h_fg, cp, dTs, T_w, T_sat, aA_v, aA_e):
+    """Vapor share ``s`` (1 - liquid share) leaving a well-mixed suction exchanger cell and
+    the heat the wall gives the liquid film, for flow ``m`` entering with vapor share
+    ``s_in``.  The cell's mixture enthalpy is h_l + ``E``; out of equilibrium its vapor is
+    superheated by (E / s - h_fg) / cp over the dew point while the liquid boils at the
+    cell's saturation temperature (``T_sat`` + ``dTs``).  Liquid evaporates by the vapor's
+    heat to the film surface (``aA_v``, the wetted area) and the wall's heat to the film
+    (``aA_e``):  m (s - s_in) = [aA_v theta(s) + aA_e (T_w - T_sat - dTs)] / h_fg,  a
+    quadratic in s.  Never more vapor than in equilibrium."""
+    s_eq = _clip(E / h_fg, 0.0, 1.0)
+    if s_in >= s_eq or m <= 1e-9:
+        return s_eq, 0.0
+    c = aA_v / h_fg
+    qw = aA_e * max(T_w - T_sat - dTs, 0.0) / h_fg
+    C = c / cp * E
+    B = c / cp * h_fg + c * dTs - qw - m * s_in
+    disc = math.sqrt(max(B * B + 4.0 * m * C, 0.0))
+    s = 2.0 * C / (B + disc) if B > 0.0 else (disc - B) / (2.0 * m)
+    s = _clip(s, 0.0, s_eq)
+    ev = m * (s - s_in)                                 # evaporating [kg/s]
+    theta = (E / max(s, 1e-6) - h_fg) / cp - dTs
+    pot = c * max(theta, 0.0) + qw
+    Q_film = h_fg * qw * min(max(ev, 0.0) / max(pot, 1e-12), 1.0)
+    return s, Q_film
+
+
+@njit(cache=True)
+def _bx_drops(p, m, rho1, rho2, mu1, mu2, seg1, seg2):
+    """Pressure drops of the suction exchanger (both circuits in series) at flow ``m``:
+    fills ``seg1`` / ``seg2`` with each cell's drop P(entering) - P(leaving), friction
+    (Martin, homogeneous) and static head (pass 1 rising, pass 2 falling), and returns the
+    drops of the inlet (S1 connection and port), the jumper (S2 port, connection, pipe, S3
+    port) and the outlet (S4 port and connection, into the outlet piping)."""
+    n = MX
+    mm = abs(m)
+    sgn = 0.0 if m == 0.0 else math.copysign(1.0, m)
+    dh = 2.0 * p.bx_b / p.bx_phi
+    dz = p.bx_L / n
+    G1 = mm / (p.bx_nch1 * p.bx_b * p.bx_W)
+    G2 = mm / (p.bx_nch2 * p.bx_b * p.bx_W)
+    for j in range(n):
+        f1 = martin_xi(G1 * dh / mu1[j], p.bx_beta) * dz / dh * G1 * G1 / (2.0 * rho1[j])
+        f2 = martin_xi(G2 * dh / mu2[j], p.bx_beta) * dz / dh * G2 * G2 / (2.0 * rho2[j])
+        seg1[j] = sgn * f1 + G * dz * rho1[j]
+        seg2[j] = sgn * f2 - G * dz * rho2[j]
+    # ports (Shah & Focke: 0.75 velocity heads each), expansion from the connection into a
+    # port, contraction from a port into the connection; the jumper as a pipe
+    A_p, A_c = 0.25 * np.pi * p.bx_d_port ** 2, 0.25 * np.pi * p.bx_d_conn ** 2
+    a_cp = min((p.bx_d_conn / p.bx_d_port) ** 2, 1.0)
+    K_in = (1.0 - a_cp) ** 2
+    K_out = 0.5 * (1.0 - a_cp)
+    d_mo = max(p.D_mo - 2.0 * p.t_mo, p.bx_d_conn)
+    K_exp = (1.0 - (p.bx_d_conn / d_mo) ** 2) ** 2
+    q = m * mm / 2.0
+    inlet = q * (0.75 / (A_p * A_p) + K_in / (A_c * A_c)) / rho1[0]
+    jmp = (q * (0.75 / (A_p * A_p) + K_out / (A_c * A_c)) / rho1[n - 1]
+           + pipe_drop_s(m, p.bx_d_conn, p.bx_L_jmp, p.bx_K_jmp, rho1[n - 1], mu1[n - 1], PIPE_ROUGHNESS)
+           + q * (0.75 / (A_p * A_p) + K_in / (A_c * A_c)) / rho2[n - 1])
+    outlet = q * (0.75 / (A_p * A_p) + (K_out + K_exp) / (A_c * A_c)) / rho2[0]
+    return inlet, jmp, outlet
 
 
 @njit(cache=True)
@@ -402,11 +481,11 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     dP_hdr2 = _pipe(p.D_hdr, p.t_hdr, p.L_hdr, p.K_hdr, mdot_cr, rho_hg, mu_v_i, 0.5)
     P_h = max(P_i + dP_drn + dP_cr + dP_hdr2, tab.p_min * 1.001)   # hot gas header at the branch
 
-    # ---- suction side: P_s is the compressor suction port; the tee sits above it by the
-    # suction line's drop (compressor flow, the line's own mixture)
+    # ---- suction side: P_s is the compressor suction port; the suction line's drop
+    # (compressor flow, the line's own mixture) lies between it and the mixer
     mu_l1 = mixture_viscosity(c_x[n], mu_l_s, mu_v_s)
     dP_suc = _pipe(p.D_suc, p.t_suc, p.L_suc, p.K_suc, mdot_c, c_rho[n], mu_l1, 1.0)
-    P_tee = P_s + dP_suc
+    bx = p.mixer > 0.5                              # tee and suction exchanger in place of the mixing exchanger
 
     # ---- valve 1 (its train: control valves in split range and the manual bypass):
     # discharge -> header branch, in series with the discharge line and the
@@ -422,85 +501,160 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     dP_hdr1 = _pipe(p.D_hdr, p.t_hdr, p.L_hdr, p.K_hdr, mdot_1, rho_g, mu_v_i, 0.5)
     h_1f = h_d if mdot_1 >= 0.0 else h_iv
 
-    # ---- valve 2: header branch -> bypass line -> mixing exchanger gas side (S1 at the
-    # bottom, rising to S2) -> outlet leg -> tee, all in series
-    C2 = train_C(u2, p.Kv_spv, p.spv_code, p.spv_R, p.Kv_spv2, p.spv_split, p.Kv_spv_bp, p.spv_bp)
-    rho_gin = kp.vapor_props(tab, P_s, h_d)[1]                    # bypass gas after throttling
-    rho_gm = 2.0 / (1.0 / rho_gin + 1.0 / sat_s.rho_v)
-    head_g = G * p.mx_H * rho_gm
-    C_mg = kv_to_C(p.mx_Kv_g)
-    m0 = gas_valve_flow_s(C2, P_h, P_tee + head_g, rho_g, c_rho[n], p.kappa, p.xT, p.eps_valve, 0.0, 1.0)
-    dP0 = (_pipe(p.D_bp, p.t_bp, p.L_bp, p.K_bp, m0, rho_gin, mu_v_s, 1.0) + hx_drop(m0, C_mg, rho_gm)
-           + _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, m0, sat_s.rho_v, mu_v_s, 0.5))
-    mdot_2 = gas_valve_flow_s(C2, P_h, P_tee + head_g, rho_g, c_rho[n], p.kappa, p.xT, p.eps_valve,
-                              _equiv_C(m0, dP0, rho_gm), rho_gm)
-    dP_bp = _pipe(p.D_bp, p.t_bp, p.L_bp, p.K_bp, mdot_2, rho_gin, mu_v_s, 1.0)
-    dP_mog = _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, mdot_2, sat_s.rho_v, mu_v_s, 0.5)
-    dP_mg = hx_drop(mdot_2, C_mg, rho_gm) + head_g              # S1 above S2
-    m_from_inlet = max(min(mdot_2, max(mdot_1, 0.0)), 0.0)
-    fwd2 = mdot_2 > 0.0
-    if fwd2:
-        h_2f = (m_from_inlet * h_d + (max(mdot_2, 0.0) - m_from_inlet) * h_iv) / max(mdot_2, 1e-12)
-    else:
-        h_2f = h_l1
+    seg2, dP_gc, dTs2 = ws[35, :n], ws[36, :n], ws[37, :n]   # (suction exchanger: pass 2)
+    if not bx:
+        P_tee = P_s + dP_suc
+        dP_bx = 0.0
+        # ---- valve 2: header branch -> bypass line -> mixing exchanger gas side (S1 at the
+        # bottom, rising to S2) -> outlet leg -> tee, all in series
+        C2 = train_C(u2, p.Kv_spv, p.spv_code, p.spv_R, p.Kv_spv2, p.spv_split, p.Kv_spv_bp, p.spv_bp)
+        rho_gin = kp.vapor_props(tab, P_s, h_d)[1]                    # bypass gas after throttling
+        rho_gm = 2.0 / (1.0 / rho_gin + 1.0 / sat_s.rho_v)
+        head_g = G * p.mx_H * rho_gm
+        C_mg = kv_to_C(p.mx_Kv_g)
+        m0 = gas_valve_flow_s(C2, P_h, P_tee + head_g, rho_g, c_rho[n], p.kappa, p.xT, p.eps_valve, 0.0, 1.0)
+        dP0 = (_pipe(p.D_bp, p.t_bp, p.L_bp, p.K_bp, m0, rho_gin, mu_v_s, 1.0) + hx_drop(m0, C_mg, rho_gm)
+               + _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, m0, sat_s.rho_v, mu_v_s, 0.5))
+        mdot_2 = gas_valve_flow_s(C2, P_h, P_tee + head_g, rho_g, c_rho[n], p.kappa, p.xT, p.eps_valve,
+                                  _equiv_C(m0, dP0, rho_gm), rho_gm)
+        dP_bp = _pipe(p.D_bp, p.t_bp, p.L_bp, p.K_bp, mdot_2, rho_gin, mu_v_s, 1.0)
+        dP_mog = _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, mdot_2, sat_s.rho_v, mu_v_s, 0.5)
+        dP_mg = hx_drop(mdot_2, C_mg, rho_gm) + head_g              # S1 above S2
+        m_from_inlet = max(min(mdot_2, max(mdot_1, 0.0)), 0.0)
+        fwd2 = mdot_2 > 0.0
+        if fwd2:
+            h_2f = (m_from_inlet * h_d + (max(mdot_2, 0.0) - m_from_inlet) * h_iv) / max(mdot_2, 1e-12)
+        else:
+            h_2f = h_l1
 
-    # ---- valve 3: receiver / liquid line -> mixing exchanger quench side (S3 on top), in
-    # series with it (distributor, ports, channels; see _quench_drops).  The drop is not
-    # quadratic in the flow, so the series pair is solved with the side's equivalent
-    # resistance at the valve-alone flow (the valve takes almost all of the difference).
-    # Each cell adds its static head and boils at its own pressure; the distributor and
-    # the S3 port are ahead of the channels and do not raise the boiling pressure.
-    f3 = valve_fraction(u3, p.stv_code, p.stv_R)
-    rho_c, x_c = c_rho[:n], c_x[:n]
-    head_q = ws[7, :n]
-    head_sum = 0.0
-    for j in range(n):
-        head_q[j] = G * (p.mx_H / n) * rho_c[j]
-        head_sum += head_q[j]
-    S3 = kp.state(tab, P_s, h_cv_out)                             # valve 3 outlet, flashed
-    rho_3 = S3.rho
-    mu_3 = mixture_viscosity(S3.x, mu_l_s, mu_v_s)
-    mu_qo = mixture_viscosity(x_c[n - 1], mu_l_s, mu_v_s)
-    C3 = kv_to_C(p.Kv_stv) * f3
-    P_3dn = P_tee - head_sum
-    f_ch3 = liquid_choke_ratio(tab, p, P_i, S_co.T)
-    seg = ws[8, :n]
-    # liquid line, quench line, quench side, outlet leg at the valve-alone flow
-    m0 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], f_ch3, p.eps_valve, 0.0, 1.0)
-    _, q_in, q_out = _quench_drops(p, m0, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s, mu_v_s,
-                                   sigma_s, seg)
-    seg_sum = 0.0
-    for j in range(n):
-        seg_sum += seg[j]
-    dP0 = (_pipe(p.D_liq, p.t_liq, p.L_liq, p.K_liq, m0, rho_co, mu_co, 1.0)
-           + _pipe(p.D_q, p.t_q, p.L_q, p.K_q, m0, rho_3, mu_3, 1.0) + q_in + seg_sum + q_out
-           + _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, m0, rho_c[n - 1], mu_qo, 0.5))
-    mdot_3 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], f_ch3, p.eps_valve,
-                                 _equiv_C(m0, dP0, rho_3), rho_3)
-    fwd3 = mdot_3 >= 0.0
-    q_dist, q_in, q_out = _quench_drops(p, mdot_3, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s,
-                                        mu_v_s, sigma_s, seg)
-    dP_liq = _pipe(p.D_liq, p.t_liq, p.L_liq, p.K_liq, mdot_3, rho_co, mu_co, 1.0)
-    dP_q = _pipe(p.D_q, p.t_q, p.L_q, p.K_q, mdot_3, rho_3, mu_3, 1.0)
-    dP_moq = _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, mdot_3, rho_c[n - 1], mu_qo, 0.5)
-    # cell centres above the compressor port: suction line, outlet leg, S4 port, cells below;
-    # boiling temperature shift of each cell (Clausius-Clapeyron at P_s)
-    seg_q = ws[9, :n]
-    seg_q_sum = 0.0
-    for j in range(n):
-        seg_q[j] = seg[j] - head_q[j]                          # P(top of cell) - P(bottom of cell)
-        seg_q_sum += seg_q[j]
-    dTs_dP = sat_s.T_v * (1.0 / sat_s.rho_v - 1.0 / sat_s.rho_l) / max(sat_s.h_v - sat_s.h_l, 1e3)
-    dP_qc = ws[10, :n]
-    dTs = ws[11, :n]
-    below = 0.0
-    base = dP_suc + dP_moq + q_out
-    for j in range(n - 1, -1, -1):
-        below += seg_q[j]
-        dP_qc[j] = base + below - 0.5 * seg_q[j]
-        dTs[j] = dTs_dP * dP_qc[j]
-    dP_mq = q_in + seg_q_sum + q_out                           # S3 (ahead of the distributor) above S4
-    dP_mq_ch = seg_q_sum                                       # across the channels
+        # ---- valve 3: receiver / liquid line -> mixing exchanger quench side (S3 on top), in
+        # series with it (distributor, ports, channels; see _quench_drops).  The drop is not
+        # quadratic in the flow, so the series pair is solved with the side's equivalent
+        # resistance at the valve-alone flow (the valve takes almost all of the difference).
+        # Each cell adds its static head and boils at its own pressure; the distributor and
+        # the S3 port are ahead of the channels and do not raise the boiling pressure.
+        f3 = valve_fraction(u3, p.stv_code, p.stv_R)
+        rho_c, x_c = c_rho[:n], c_x[:n]
+        head_q = ws[7, :n]
+        head_sum = 0.0
+        for j in range(n):
+            head_q[j] = G * (p.mx_H / n) * rho_c[j]
+            head_sum += head_q[j]
+        S3 = kp.state(tab, P_s, h_cv_out)                             # valve 3 outlet, flashed
+        rho_3 = S3.rho
+        mu_3 = mixture_viscosity(S3.x, mu_l_s, mu_v_s)
+        mu_qo = mixture_viscosity(x_c[n - 1], mu_l_s, mu_v_s)
+        C3 = kv_to_C(p.Kv_stv) * f3
+        P_3dn = P_tee - head_sum
+        f_ch3 = liquid_choke_ratio(tab, p, P_i, S_co.T)
+        seg = ws[8, :n]
+        # liquid line, quench line, quench side, outlet leg at the valve-alone flow
+        m0 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], f_ch3, p.eps_valve, 0.0, 1.0)
+        _, q_in, q_out = _quench_drops(p, m0, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s, mu_v_s,
+                                       sigma_s, seg)
+        seg_sum = 0.0
+        for j in range(n):
+            seg_sum += seg[j]
+        dP0 = (_pipe(p.D_liq, p.t_liq, p.L_liq, p.K_liq, m0, rho_co, mu_co, 1.0)
+               + _pipe(p.D_q, p.t_q, p.L_q, p.K_q, m0, rho_3, mu_3, 1.0) + q_in + seg_sum + q_out
+               + _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, m0, rho_c[n - 1], mu_qo, 0.5))
+        mdot_3 = liquid_valve_flow_s(C3, P_i, P_3dn, rho_co, rho_c[0], f_ch3, p.eps_valve,
+                                     _equiv_C(m0, dP0, rho_3), rho_3)
+        fwd3 = mdot_3 >= 0.0
+        q_dist, q_in, q_out = _quench_drops(p, mdot_3, rho_3, rho_c, x_c, sat_s.rho_l, sat_s.rho_v, mu_l_s,
+                                            mu_v_s, sigma_s, seg)
+        dP_liq = _pipe(p.D_liq, p.t_liq, p.L_liq, p.K_liq, mdot_3, rho_co, mu_co, 1.0)
+        dP_q = _pipe(p.D_q, p.t_q, p.L_q, p.K_q, mdot_3, rho_3, mu_3, 1.0)
+        dP_moq = _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, mdot_3, rho_c[n - 1], mu_qo, 0.5)
+        # cell centres above the compressor port: suction line, outlet leg, S4 port, cells below;
+        # boiling temperature shift of each cell (Clausius-Clapeyron at P_s)
+        seg_q = ws[9, :n]
+        seg_q_sum = 0.0
+        for j in range(n):
+            seg_q[j] = seg[j] - head_q[j]                          # P(top of cell) - P(bottom of cell)
+            seg_q_sum += seg_q[j]
+        dTs_dP = sat_s.T_v * (1.0 / sat_s.rho_v - 1.0 / sat_s.rho_l) / max(sat_s.h_v - sat_s.h_l, 1e3)
+        dP_qc = ws[10, :n]
+        dTs = ws[11, :n]
+        below = 0.0
+        base = dP_suc + dP_moq + q_out
+        for j in range(n - 1, -1, -1):
+            below += seg_q[j]
+            dP_qc[j] = base + below - 0.5 * seg_q[j]
+            dTs[j] = dTs_dP * dP_qc[j]
+        dP_mq = q_in + seg_q_sum + q_out                           # S3 (ahead of the distributor) above S4
+        dP_mq_ch = seg_q_sum                                       # across the channels
+
+    else:
+        # ---- suction exchanger (mixer = 1): the hot gas and the quench join at a tee, the
+        # stream rises through pass 1 (cells 0 -> n-1, the quench cells' states), the jumper
+        # takes it to pass 2, which falls (cells n-1 -> 0, quasi-steady: the gas cells) into
+        # the outlet leg and the suction line.  Drops at the compressor flow, from the
+        # suction port upstream; every cell boils at its own pressure (Clausius-Clapeyron).
+        rho1, mu1, rho2, mu2 = ws[30, :n], ws[31, :n], ws[32, :n], ws[33, :n]
+        seg1 = ws[34, :n]
+        # (pass 2 at pass 1's outlet state: the stream is close to equilibrium there, and
+        # out of equilibrium its homogeneous density hardly differs - evaporating liquid
+        # cools the vapor while adding to it)
+        for j in range(n):
+            rho1[j] = c_rho[j]
+            mu1[j] = mixture_viscosity(_clip(c_x[j], 0.0, 1.0), mu_l_s, mu_v_s)
+            rho2[j] = c_rho[n - 1]
+            mu2[j] = mixture_viscosity(_clip(c_x[n - 1], 0.0, 1.0), mu_l_s, mu_v_s)
+        bx_in, bx_jmp, bx_out = _bx_drops(p, mdot_c, rho1, rho2, mu1, mu2, seg1, seg2)
+        leg_out = _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, mdot_c, c_rho[n], mu_l1, 0.5)
+        dTs_dP = sat_s.T_v * (1.0 / sat_s.rho_v - 1.0 / sat_s.rho_l) / max(sat_s.h_v - sat_s.h_l, 1e3)
+        dP_qc, dTs = ws[10, :n], ws[11, :n]
+        acc = dP_suc + leg_out + bx_out
+        for j in range(n):                          # pass 2: outlet cell 0 up to its inlet cell n-1
+            dP_gc[j] = acc + 0.5 * seg2[j]
+            dTs2[j] = dTs_dP * dP_gc[j]
+            acc += seg2[j]
+        acc += bx_jmp
+        for j in range(n - 1, -1, -1):              # pass 1: outlet cell n-1 up to the inlet cell 0
+            dP_qc[j] = acc + 0.5 * seg1[j]
+            dTs[j] = dTs_dP * dP_qc[j]
+            acc += seg1[j]
+        acc += bx_in
+        leg_in = _pipe(p.D_mo, p.t_mo, p.L_mo, p.K_mo, mdot_c, c_rho[0], mu1[0], 0.5)
+        P_tee = P_s + acc + leg_in
+        dP_bx = acc - dP_suc - leg_out              # S1 connection -> S4 connection
+        # valve 2: header branch -> bypass line -> tee
+        C2 = train_C(u2, p.Kv_spv, p.spv_code, p.spv_R, p.Kv_spv2, p.spv_split, p.Kv_spv_bp, p.spv_bp)
+        rho_gin = kp.vapor_props(tab, P_s, h_d)[1]                # bypass gas after throttling
+        m0 = gas_valve_flow_s(C2, P_h, P_tee, rho_g, c_rho[0], p.kappa, p.xT, p.eps_valve, 0.0, 1.0)
+        dP0 = _pipe(p.D_bp, p.t_bp, p.L_bp, p.K_bp, m0, rho_gin, mu_v_s, 1.0)
+        mdot_2 = gas_valve_flow_s(C2, P_h, P_tee, rho_g, c_rho[0], p.kappa, p.xT, p.eps_valve,
+                                  _equiv_C(m0, dP0, rho_gin), rho_gin)
+        dP_bp = _pipe(p.D_bp, p.t_bp, p.L_bp, p.K_bp, mdot_2, rho_gin, mu_v_s, 1.0)
+        dP_mog, dP_mg = leg_in + leg_out, dP_bx     # (the outlet piping's two legs; the exchanger)
+        m_from_inlet = max(min(mdot_2, max(mdot_1, 0.0)), 0.0)
+        fwd2 = mdot_2 > 0.0
+        if fwd2:
+            h_2f = (m_from_inlet * h_d + (max(mdot_2, 0.0) - m_from_inlet) * h_iv) / max(mdot_2, 1e-12)
+        else:
+            h_2f = H[0]
+        # valve 3: receiver / liquid line -> valve -> quench line -> tee
+        f3 = valve_fraction(u3, p.stv_code, p.stv_R)
+        S3 = kp.state(tab, P_s, h_cv_out)                         # valve 3 outlet, flashed
+        rho_3 = S3.rho
+        mu_3 = mixture_viscosity(S3.x, mu_l_s, mu_v_s)
+        C3 = kv_to_C(p.Kv_stv) * f3
+        f_ch3 = liquid_choke_ratio(tab, p, P_i, S_co.T)
+        m0 = liquid_valve_flow_s(C3, P_i, P_tee, rho_co, rho_3, f_ch3, p.eps_valve, 0.0, 1.0)
+        dP0 = (_pipe(p.D_liq, p.t_liq, p.L_liq, p.K_liq, m0, rho_co, mu_co, 1.0)
+               + _pipe(p.D_q, p.t_q, p.L_q, p.K_q, m0, rho_3, mu_3, 1.0))
+        mdot_3 = liquid_valve_flow_s(C3, P_i, P_tee, rho_co, rho_3, f_ch3, p.eps_valve,
+                                     _equiv_C(m0, dP0, rho_3), rho_3)
+        fwd3 = mdot_3 >= 0.0
+        q_dist, q_in, q_out = 0.0, 0.0, 0.0
+        dP_liq = _pipe(p.D_liq, p.t_liq, p.L_liq, p.K_liq, mdot_3, rho_co, mu_co, 1.0)
+        dP_q = _pipe(p.D_q, p.t_q, p.L_q, p.K_q, mdot_3, rho_3, mu_3, 1.0)
+        dP_moq = 0.0
+        seg_q = ws[9, :n]
+        for j in range(n):
+            seg_q[j] = seg1[j]
+        dP_mq, dP_mq_ch = 0.0, 0.0
 
     # ---- walls of suction and discharge lines, receiver shell
     Q_sg = p.UA_sg * (T_sw - c_T[n])                  # suction line wall -> refrigerant
@@ -610,57 +764,137 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     else:
         dT_wl = T_wi - T_wl
 
-    # ---- mixing exchanger, gas side: quasi-steady march from S1 (bottom cell n-1)
-    # up to S2 against the plate walls; the gas does not condense (walls below
-    # saturation are clamped)
-    m2p = max(mdot_2, 0.0)
-    UA_g = p.mx_alpha_g0 * p.A_mx_cell * (max(m2p, 1e-3 * p.mx_mdot_g_ref) / p.mx_mdot_g_ref) ** 0.8
-    hg = h_2f
-    Q_g, T_gc, rho_gc = ws[17, :n], ws[18, :n], ws[19, :n]
-    Q_g_sum = 0.0
-    T_up = kp.T_vapor(tab, P_s, hg)
-    for j in range(n - 1, -1, -1):
-        Tw_eff = max(T_mw[j], T_sat_s)
-        # vapor at the wall temperature (linearized from the dew point; an effectiveness target)
-        h_eq = h_vs + sat_s.cp_v * max(Tw_eff - sat_s.T_v, 0.0)
-        dT = T_up - Tw_eff
-        dh = hg - h_eq
-        cp_s = _clip(dh / dT if abs(dT) > 0.05 else 1100.0, 300.0, 1e5)
-        Q = (1.0 - math.exp(-UA_g / max(m2p * cp_s, 1e-9))) * m2p * dh
-        hg = hg - Q / max(m2p, 1e-12)
-        Q_g[j] = Q
-        hg_out[j] = hg
-        T_up, rho_gc[j] = kp.vapor_props(tab, P_s, hg)      # leaving the cell: entering the next
-        T_gc[j] = T_up
-    for j in range(n):
-        Q_g_sum += Q_g[j]
-    h_go = hg                                        # leaving at S2
-    Fg_b = 0.0
-    for j in range(n):
-        Fg_b += p.V_gc[j] * (1.2 * rho_gc[j] / P_s)   # drho/dP|h of the vapor (ideal-gas-like)
-    Fg_b = -Fg_b
+    sv1, Tv1, sv2, Tv2, dQdh, x_g = ws[38, :n], ws[39, :n], ws[40, :n], ws[41, :n], ws[42, :n], ws[43, :n]
+    y_bi, y_bo = 0.0, 0.0
+    if not bx:
+        # ---- mixing exchanger, gas side: quasi-steady march from S1 (bottom cell n-1)
+        # up to S2 against the plate walls; the gas does not condense (walls below
+        # saturation are clamped)
+        m2p = max(mdot_2, 0.0)
+        UA_g = p.mx_alpha_g0 * p.A_mx_cell * (max(m2p, 1e-3 * p.mx_mdot_g_ref) / p.mx_mdot_g_ref) ** 0.8
+        hg = h_2f
+        Q_g, T_gc, rho_gc = ws[17, :n], ws[18, :n], ws[19, :n]
+        Q_g_sum = 0.0
+        T_up = kp.T_vapor(tab, P_s, hg)
+        for j in range(n - 1, -1, -1):
+            Tw_eff = max(T_mw[j], T_sat_s)
+            # vapor at the wall temperature (linearized from the dew point; an effectiveness target)
+            h_eq = h_vs + sat_s.cp_v * max(Tw_eff - sat_s.T_v, 0.0)
+            dT = T_up - Tw_eff
+            dh = hg - h_eq
+            cp_s = _clip(dh / dT if abs(dT) > 0.05 else 1100.0, 300.0, 1e5)
+            Q = (1.0 - math.exp(-UA_g / max(m2p * cp_s, 1e-9))) * m2p * dh
+            hg = hg - Q / max(m2p, 1e-12)
+            Q_g[j] = Q
+            hg_out[j] = hg
+            T_up, rho_gc[j] = kp.vapor_props(tab, P_s, hg)      # leaving the cell: entering the next
+            T_gc[j] = T_up
+        for j in range(n):
+            Q_g_sum += Q_g[j]
+        h_go = hg                                        # leaving at S2
+        Fg_b = 0.0
+        for j in range(n):
+            Fg_b += p.V_gc[j] * (1.2 * rho_gc[j] / P_s)   # drho/dP|h of the vapor (ideal-gas-like)
+        Fg_b = -Fg_b
 
-    # ---- mixing exchanger, quench side: plate -> quench, by flow regime
-    m3p = max(mdot_3, 0.0)
-    fq = max(m3p / p.mx_mdot_q_ref, 0.04)
-    UA_e = p.mx_alpha_e * p.A_mx_cell * math.sqrt(fq)
-    UA_v = p.mx_alpha_v0 * p.A_mx_cell * fq ** 0.8
-    # stream entering each cell (upwind): valve 3 / the cell above, or from below on reverse flow
-    H_up, phi_f, Q_2ph = ws[20, :n], ws[21, :n], ws[22, :n]
-    Q_q, dT_mw = ws[23, :n], ws[24, :n]
-    Q_q_sum = 0.0
-    for j in range(n):
-        if fwd3:
-            H_up[j] = h_3f if j == 0 else H[j - 1]
-        else:
-            H_up[j] = H[j + 1] if j < n - 1 else h_l1
-        dT_sat = T_mw[j] - (T_sat_s + dTs[j])
-        Q_2ph[j] = UA_e * dT_sat
-        need = abs(mdot_3) * max(h_vs - H_up[j], 0.0)
-        phi_f[j] = _clip(need / max(UA_e * max(dT_sat, 0.0), 1e-9), 0.0, 1.0)
-        Q_q[j] = _quench_heat(H[j], c_T[j], T_mw[j], H_up[j], dTs[j], phi_f[j], Q_2ph[j], UA_e, UA_v, h_vs)
-        Q_q_sum += Q_q[j]
-        dT_mw[j] = (Q_g[j] - Q_q[j] + (p.mx_UA_a / n) * (T_amb - T_mw[j])) / p.C_mw_cell
+        # ---- mixing exchanger, quench side: plate -> quench, by flow regime
+        m3p = max(mdot_3, 0.0)
+        fq = max(m3p / p.mx_mdot_q_ref, 0.04)
+        UA_e = p.mx_alpha_e * p.A_mx_cell * math.sqrt(fq)
+        UA_v = p.mx_alpha_v0 * p.A_mx_cell * fq ** 0.8
+        # stream entering each cell (upwind): valve 3 / the cell above, or from below on reverse flow
+        H_up, phi_f, Q_2ph = ws[20, :n], ws[21, :n], ws[22, :n]
+        Q_q, dT_mw = ws[23, :n], ws[24, :n]
+        Q_q_sum = 0.0
+        for j in range(n):
+            if fwd3:
+                H_up[j] = h_3f if j == 0 else H[j - 1]
+            else:
+                H_up[j] = H[j + 1] if j < n - 1 else h_l1
+            dT_sat = T_mw[j] - (T_sat_s + dTs[j])
+            Q_2ph[j] = UA_e * dT_sat
+            need = abs(mdot_3) * max(h_vs - H_up[j], 0.0)
+            phi_f[j] = _clip(need / max(UA_e * max(dT_sat, 0.0), 1e-9), 0.0, 1.0)
+            Q_q[j] = _quench_heat(H[j], c_T[j], T_mw[j], H_up[j], dTs[j], phi_f[j], Q_2ph[j], UA_e, UA_v, h_vs)
+            Q_q_sum += Q_q[j]
+            dT_mw[j] = (Q_g[j] - Q_q[j] + (p.mx_UA_a / n) * (T_amb - T_mw[j])) / p.C_mw_cell
+
+    else:
+        # ---- suction exchanger, both passes.  The stream leaves the tee out of equilibrium:
+        # the quench's unflashed liquid (at the saturation temperature) in the hot gas and
+        # flash gas (mixed, superheated).  Each cell carries its mixture enthalpy (pass 1: the
+        # dynamic cells; pass 2: marched, quasi-steady) and, quasi-steady, the vapor share
+        # leaving it (_bx_cell).  On the wetted share bx_F_wet of the plates the vapor heats
+        # the liquid film's surface and the wall heats the film; on the dry share the wall
+        # exchanges heat with the vapor.  The two passes share the plate walls, counterflow.
+        m_b = max(mdot_2, 0.0) + max(mdot_3, 0.0)        # the stream through both passes
+        m2f, m3f = max(mdot_2, 0.0), max(mdot_3, 0.0)
+        h_fg = max(h_vs - h_ls, 1e3)
+        k_v = kp.k_vapor(tab, P_s)
+        cp_s = _clip(sat_s.cp_v, 500.0, 5000.0)
+        sv1, Tv1, sv2, Tv2 = ws[38, :n], ws[39, :n], ws[40, :n], ws[41, :n]
+        dQdh, x_g = ws[42, :n], ws[43, :n]
+        y_bi = m3f * (1.0 - _clip(S3.x, 0.0, 1.0)) / m_b if m_b > 1e-9 else 0.0
+        h_t = (m2f * h_2f + m3f * h_3f) / m_b if m_b > 1e-9 else H[0]
+        s_in = 1.0 - y_bi
+        h_vin = h_ls + (h_t - h_ls) / max(s_in, 1e-3)
+        T_vin = kp.vapor_props(tab, P_s, max(h_vin, h_vs))[0] if s_in > 1e-3 else T_sat_s
+        Q_q, dT_mw = ws[23, :n], ws[24, :n]
+        H_up, phi_f, Q_2ph = ws[20, :n], ws[21, :n], ws[22, :n]
+        Q_q_sum = 0.0
+        for j in range(n):                                 # pass 1 (dynamic cells)
+            dTv = T_vin - T_sat_s
+            cp = _clip((h_vin - h_vs) / dTv, 500.0, 5000.0) if dTv > 0.5 else cp_s
+            Fw = p.bx_F_wet * smoothstep((1.0 - s_in) / BX_Y_WET)
+            a_v = _bx_alpha(p, m_b * s_in, p.bx_nch1, mu_v_s, k_v, cp_s)
+            A = p.A_b1_cell
+            E = H[j] - h_ls
+            sj, Q_f = _bx_cell(m_b, s_in, E, h_fg, cp, dTs[j], T_mw[j], T_sat_s, a_v * Fw * A, p.bx_alpha_e * Fw * A)
+            h_vj = h_ls + E / sj if sj > 1e-3 else h_vs
+            T_vj = kp.vapor_props(tab, P_s, max(h_vj, h_vs))[0] if sj > 1e-3 else T_sat_s
+            Q_q[j] = Q_f + a_v * (1.0 - Fw) * A * (T_mw[j] - T_vj)      # wall -> cell
+            dQdh[j] = a_v * (1.0 - Fw) * A / (cp * max(sj, 0.1))
+            sv1[j], Tv1[j] = sj, T_vj
+            Q_q_sum += Q_q[j]
+            H_up[j] = h_t if j == 0 else H[j - 1]
+            s_in, h_vin, T_vin = sj, h_vj, T_vj
+        Q_g, T_gc, rho_gc = ws[17, :n], ws[18, :n], ws[19, :n]
+        Q_g_sum = 0.0
+        Fg_b = 0.0
+        hg = H[n - 1]
+        for j in range(n - 1, -1, -1):                     # pass 2 (marched from its inlet, cell n-1)
+            dTv = T_vin - T_sat_s
+            cp = _clip((h_vin - h_vs) / dTv, 500.0, 5000.0) if dTv > 0.5 else cp_s
+            Fw = p.bx_F_wet * smoothstep((1.0 - s_in) / BX_Y_WET)
+            a_v = _bx_alpha(p, m_b * s_in, p.bx_nch2, mu_v_s, k_v, cp_s)
+            A = p.A_b2_cell
+            if m_b > 1e-6:
+                mv = m_b * s_in
+                eps_c = 1.0 - math.exp(-a_v * (1.0 - Fw) * A / max(mv * cp, 1e-9))
+                Q_c = eps_c * mv * cp * (T_mw[j] - T_vin)                 # wall -> vapor (dry share)
+                q_pot = p.bx_alpha_e * Fw * A * max(T_mw[j] - T_sat_s - dTs2[j], 0.0)
+                sj, Q_f = _bx_cell(m_b, s_in, hg + (Q_c + q_pot) / m_b - h_ls, h_fg, cp, dTs2[j], T_mw[j], T_sat_s,
+                                   a_v * Fw * A, p.bx_alpha_e * Fw * A)
+                hg = hg + (Q_c + Q_f) / m_b
+                sj = min(sj, _clip((hg - h_ls) / h_fg, 0.0, 1.0))
+            else:
+                Q_c, Q_f = 0.0, 0.0
+                sj = _clip((hg - h_ls) / h_fg, 0.0, 1.0)
+            h_vj = h_ls + (hg - h_ls) / sj if sj > 1e-3 else h_vs
+            T_vj = kp.vapor_props(tab, P_s, max(h_vj, h_vs))[0] if sj > 1e-3 else T_sat_s
+            Q_g[j] = -(Q_c + Q_f)                                          # cell -> wall
+            hg_out[j] = hg
+            Sg = kp.state(tab, P_s, hg)
+            rho_gc[j], T_gc[j] = Sg.rho, T_vj
+            Fg_b -= p.V_gc[j] * Sg.drho_dP
+            sv2[j], Tv2[j], x_g[j] = sj, T_vj, sj
+            Q_g_sum += Q_g[j]
+            s_in, h_vin, T_vin = sj, h_vj, T_vj
+        h_go = hg                                         # leaving pass 2 at S4
+        y_bo = 1.0 - s_in
+        for j in range(n):
+            dT_mw[j] = (Q_g[j] - Q_q[j] + (p.mx_UA_a / n) * (T_amb - T_mw[j])) / p.C_mw_cell
+        UA_e, UA_v = 0.0, 0.0
 
     # ---- lumped-pressure balances of the suction side.  In every cell
     #   M dh/dt = F_in (h_in - h) + Q + V dP/dt,   dM/dt = V (rho_P dP/dt + rho_h dh/dt)
@@ -671,29 +905,39 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # its isentropic capacitance V (rho_P + rho_h / rho) > 0, so the pressure solve
     # stays well posed even where cold liquid enters a vapor-filled cell.
     A_face, B_face = ws[25, :n + 1], ws[26, :n + 1]
-    a_f, b_f = mdot_3, 0.0                           # flow entering the current quench cell
-    A_face[0], B_face[0] = mdot_3, 0.0
+    # flow entering the first cell: the quench (mixing exchanger) or the tee (both valves)
+    F_0 = mdot_2 + mdot_3 if bx else mdot_3
+    fwd_c = F_0 >= 0.0 if bx else fwd3              # direction through the dynamic cells
+    a_f, b_f = F_0, 0.0                              # flow entering the current cell
+    A_face[0], B_face[0] = F_0, 0.0
     for j in range(n):
-        if fwd3:
-            h_up = h_3f if j == 0 else H[j - 1]
-            adv_a = a_f
+        if fwd_c:
+            if j == 0 and bx:                        # the tee: each valve's own stream
+                adv = max(mdot_2, 0.0) * (h_2f - H[0]) + max(mdot_3, 0.0) * (h_3f - H[0])
+            else:
+                adv = a_f * ((h_3f if j == 0 else H[j - 1]) - H[j])
         else:
-            h_up = H[j + 1] if j < n - 1 else h_l1
-            adv_a = -mdot_3
-        c = (adv_a * (h_up - H[j]) + Q_q[j]) / M_c[j]
+            adv = -F_0 * ((H[j + 1] if j < n - 1 else h_l1) - H[j])
+        c = (adv + Q_q[j]) / M_c[j]
         d = Vc[j] / M_c[j]
         a_f = a_f - Vc[j] * rho_h[j] * c
         b_f = b_f - Vc[j] * (rho_P[j] + rho_h[j] * d)
         A_face[j + 1], B_face[j + 1] = a_f, b_f
-    Fq_a, Fq_b = a_f, b_f                            # quench outlet (S4) -> tee
-    Fg_a = mdot_2                                    # gas outlet (S2) -> tee
-    wq = 1.0 if fwd3 else 0.0
-    wg = 1.0 if fwd2 else 0.0
-    dhq, dhg = H[n - 1] - h_l1, h_go - h_l1
+    if bx:
+        # pass 1's outlet through pass 2 (its hold-up changing with the pressure) into L1
+        Fq_a, Fq_b = a_f, b_f + Fg_b
+        Fg_a, Fg_bc = 0.0, 0.0
+        dhq, dhg = h_go - h_l1, 0.0
+    else:
+        Fq_a, Fq_b = a_f, b_f                        # quench outlet (S4) -> tee
+        Fg_a, Fg_bc = mdot_2, Fg_b                   # gas outlet (S2) -> tee
+        dhq, dhg = H[n - 1] - h_l1, h_go - h_l1
+    wq = 1.0 if fwd_c else 0.0
+    wg = 1.0 if (fwd2 and not bx) else 0.0
     c = (wg * Fg_a * dhg + wq * Fq_a * dhq + Q_sg) / M_c[n]
     d = Vc[n] / M_c[n]
     F12_a = Fg_a + Fq_a - Vc[n] * rho_h[n] * c
-    F12_b = Fg_b + Fq_b - Vc[n] * (rho_P[n] + rho_h[n] * d)
+    F12_b = Fg_bc + Fq_b - Vc[n] * (rho_P[n] + rho_h[n] * d)
     w12 = 1.0 if F12_a > 0.0 else 0.0
     c = (w12 * F12_a * (h_l1 - h_l2) - mdot_c * (h_cin - h_l2)) / M_c[n + 1]
     d = Vc[n + 1] / M_c[n + 1]
@@ -706,16 +950,22 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     Pr = 0.0 if hold_P_s else dP_s
     F = ws[27, :n + 1]
     for j in range(n + 1):
-        F[j] = A_face[j] + B_face[j] * Pr             # into quench cell j through its top face j
-    Fg_now = Fg_a + Fg_b * Pr
+        F[j] = A_face[j] + B_face[j] * Pr             # into cell j through its inlet face j
     F12 = F12_a + F12_b * Pr
     for j in range(n):
-        h_above = h_3f if j == 0 else H[j - 1]
         h_below = H[j + 1] if j < n - 1 else h_l1
-        dx[X_HQ + j] = (max(F[j], 0.0) * (h_above - H[j]) + max(-F[j + 1], 0.0) * (h_below - H[j])
-                        + Q_q[j] + Vc[j] * Pr) / M_c[j]
-    dx[X_HQ + n] = (max(Fg_now, 0.0) * dhg + max(F[n], 0.0) * dhq + max(-F12, 0.0) * (h_l2 - h_l1)
-                    + Q_sg + Vc[n] * Pr) / M_c[n]
+        if j == 0 and bx:
+            adv_in = max(mdot_2, 0.0) * (h_2f - H[0]) + max(mdot_3, 0.0) * (h_3f - H[0])
+        else:
+            adv_in = max(F[j], 0.0) * ((h_3f if j == 0 else H[j - 1]) - H[j])
+        dx[X_HQ + j] = (adv_in + max(-F[j + 1], 0.0) * (h_below - H[j]) + Q_q[j] + Vc[j] * Pr) / M_c[j]
+    if bx:
+        F_L1 = F[n] + Fg_b * Pr                       # leaving pass 2
+        dx[X_HQ + n] = (max(F_L1, 0.0) * dhq + max(-F12, 0.0) * (h_l2 - h_l1) + Q_sg + Vc[n] * Pr) / M_c[n]
+    else:
+        Fg_now = Fg_a + Fg_b * Pr
+        dx[X_HQ + n] = (max(Fg_now, 0.0) * dhg + max(F[n], 0.0) * dhq + max(-F12, 0.0) * (h_l2 - h_l1)
+                        + Q_sg + Vc[n] * Pr) / M_c[n]
     dx[X_HQ + n + 1] = (max(F12, 0.0) * (h_l1 - h_l2) - mdot_c * (h_cin - h_l2) + Vc[n + 1] * Pr) / M_c[n + 1]
 
     # ---- fastest local rates (1/s) for the integrator's step subdivision: valve
@@ -733,11 +983,14 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     lam = _nanmax(_nanmax(k1 / C_d, (k1 + k2 + k3) / C_i), (k2 + k3 + mdot_c / P_s) / C_s)
     lam_q = 0.0
     for j in range(n):
-        dT_fd = dh_fd / 1100.0 if c_x[j] >= 1.0 else 0.0
-        dQ = _quench_heat(H[j] + dh_fd, c_T[j] + dT_fd, T_mw[j], H_up[j], dTs[j], phi_f[j], Q_2ph[j],
-                          UA_e, UA_v, h_vs) - Q_q[j]
+        if bx:
+            dQ_dh = dQdh[j]
+        else:
+            dT_fd = dh_fd / 1100.0 if c_x[j] >= 1.0 else 0.0
+            dQ_dh = abs(_quench_heat(H[j] + dh_fd, c_T[j] + dT_fd, T_mw[j], H_up[j], dTs[j], phi_f[j], Q_2ph[j],
+                                     UA_e, UA_v, h_vs) - Q_q[j]) / dh_fd
         F_cell = max(abs(F[j]), abs(F[j + 1]))
-        r = (F_cell + abs(dQ) / dh_fd) / M_c[j]
+        r = (F_cell + dQ_dh) / M_c[j]
         lam_q = r if j == 0 else _nanmax(lam_q, r)
     lam = _nanmax(lam, lam_q)
     # condensate drain; flashing of a superheated pool, sped up by the pressure it raises
@@ -749,11 +1002,15 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
 
     # ---- tee and suction line: droplets from the quench outlet evaporate on the way to
     # the probe; the probe reads the vapor temperature
+    # (suction exchanger: the liquid still in the stream leaving pass 2)
     Fq = max(Fq_a + Fq_b * dP_s, 0.0) * wq
-    Fg = max(Fg_a + Fg_b * dP_s, 0.0) * wg
+    Fg = max(Fg_a + Fg_bc * dP_s, 0.0) * wg
     F_in = Fq + Fg
-    x_qo = x_c[n - 1]
-    y_in = _clip(1.0 - x_qo, 0.0, 1.0) * Fq / max(F_in, 1e-9)
+    x_qo = c_x[n - 1]
+    if bx:
+        y_in = _clip(y_bo, 0.0, 1.0)
+    else:
+        y_in = _clip(1.0 - x_qo, 0.0, 1.0) * Fq / max(F_in, 1e-9)
     t_res = M_c[n] / max(F_in, 1e-6)
     y_eq = _clip(1.0 - c_x[n], 0.0, 1.0)
     y_liq = max(y_in * math.exp(-t_res / p.tee_tau_evap), y_eq)
@@ -840,16 +1097,28 @@ def rhs(x, u_cmd, N_cmd, T_amb, T_wi, p, tab, hold_P_s, dx, want_aux, a, hg_out)
     # exchanger cells as displayed: the state leaving each cell, at the pressure where it
     # leaves (the quench side's last cell including the S4 port, so that it is the
     # exchanger's outlet; the gas side's last cell is S2)
-    face = P_s + dP_suc + dP_moq + q_out                 # quench: below the last channel
-    for j in range(n - 1, -1, -1):
-        Pq = P_s + dP_suc + dP_moq if j == n - 1 else face
-        face += seg_q[j]
-        Sq = kp.state(tab, Pq, H[j])
-        a[A_P_qf + j], a[A_h_q + j], a[A_x_q + j], a[A_T_q + j] = Pq, H[j], Sq.x, Sq.T
-    for j in range(n):
-        Pg = P_tee + dP_mog + dP_mg * j / n               # gas: rising, leaving cell j at its top
-        a[A_P_gf + j], a[A_T_g + j] = Pg, kp.vapor_props(tab, Pg, hg_out[j])[0]
-        a[A_h_g + j], a[A_T_mw + j], a[A_dP_qc + j] = hg_out[j], T_mw[j], dP_qc[j]
+    if bx:
+        # suction exchanger: pass 1 in the quench cells' places, pass 2 in the gas cells';
+        # x is the vapor share actually leaving the cell (out of equilibrium: below 1 while
+        # it carries liquid, whatever the enthalpy), T the vapor's temperature
+        for j in range(n):
+            Pq = P_s + dP_qc[j] - 0.5 * seg_q[j]
+            a[A_P_qf + j], a[A_h_q + j], a[A_x_q + j], a[A_T_q + j] = Pq, H[j], sv1[j], Tv1[j]
+            a[A_P_gf + j], a[A_T_g + j], a[A_x_g + j] = P_s + dP_gc[j] - 0.5 * seg2[j], Tv2[j], sv2[j]
+            a[A_h_g + j], a[A_T_mw + j], a[A_dP_qc + j] = hg_out[j], T_mw[j], dP_qc[j]
+    else:
+        face = P_s + dP_suc + dP_moq + q_out                 # quench: below the last channel
+        for j in range(n - 1, -1, -1):
+            Pq = P_s + dP_suc + dP_moq if j == n - 1 else face
+            face += seg_q[j]
+            Sq = kp.state(tab, Pq, H[j])
+            a[A_P_qf + j], a[A_h_q + j], a[A_x_q + j], a[A_T_q + j] = Pq, H[j], Sq.x, Sq.T
+        for j in range(n):
+            Pg = P_tee + dP_mog + dP_mg * j / n               # gas: rising, leaving cell j at its top
+            a[A_P_gf + j], a[A_T_g + j] = Pg, kp.vapor_props(tab, Pg, hg_out[j])[0]
+            a[A_h_g + j], a[A_T_mw + j], a[A_dP_qc + j] = hg_out[j], T_mw[j], dP_qc[j]
+            a[A_x_g + j] = 1.0
+    a[A_y_bi], a[A_y_bo], a[A_dP_bx] = y_bi, y_bo, dP_bx
     a[A_T_qo], a[A_T_go] = a[A_T_q + n - 1], a[A_T_g]   # the outlets S4, S2: the last cells
     a[A_Q_mx], a[A_Q_q] = Q_g_sum, Q_q_sum
     a[A_rho_s], a[A_h_l1], a[A_h_l2], a[A_h_cin], a[A_x_l2] = Cin.rho, h_l1, h_l2, h_cin, c_x[n + 1]
@@ -907,10 +1176,15 @@ def suction_inventory(x, p, tab, delta):
         UPc += S.drho_dP * V * H
         Ud += (S.rho + S.drho_dh * H) * V
     Mg = Ug = MPg = UPg = 0.0
+    bx = p.mixer > 0.5
     for j in range(MX):
         Hg = x[X_HG + j]
-        rho_g = kp.vapor_props(tab, P, Hg)[1]
-        rP_g = 1.2 * rho_g / P
+        if bx:                       # suction exchanger, pass 2: may hold two-phase mixture
+            Sg = kp.state(tab, P, Hg)
+            rho_g, rP_g = Sg.rho, Sg.drho_dP
+        else:
+            rho_g = kp.vapor_props(tab, P, Hg)[1]
+            rP_g = 1.2 * rho_g / P
         Vg = p.V_gc[j]
         Mg += rho_g * Vg
         Ug += rho_g * Vg * Hg
